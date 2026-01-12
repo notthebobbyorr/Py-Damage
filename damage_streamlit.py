@@ -25,6 +25,16 @@ def ensure_streamlit() -> None:
 ensure_streamlit()
 
 st.set_page_config(page_title="Profiles", layout="wide")
+st.markdown(
+    """
+    <style>
+    .stDataFrame, .stDataFrame * {
+        color: #000000 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 @st.cache_data
@@ -187,6 +197,7 @@ def render_table(
         med = df[format_cols].median()
         cmap = colors.LinearSegmentedColormap.from_list("rwgn", ["#c75c5c", "#f7f7f7", "#5cb85c"])
         cmap_rev = colors.LinearSegmentedColormap.from_list("gnrw", ["#5cb85c", "#f7f7f7", "#c75c5c"])
+        alpha = 0.9
 
         def style_column(col: pd.Series) -> list[str]:
             vmin = q10[col.name]
@@ -199,7 +210,15 @@ def render_table(
             vals = np.clip(vals, vmin, vmax)
             col_cmap = cmap_rev if col.name in reverse_cols else cmap
             return [
-                "" if pd.isna(val) else f"background-color: {colors.to_hex(col_cmap(norm(val)))}"
+                ""
+                if pd.isna(val)
+                else (
+                    "background-color: "
+                    f"rgba({int(colors.to_rgb(col_cmap(norm(val)))[0] * 255)},"
+                    f"{int(colors.to_rgb(col_cmap(norm(val)))[1] * 255)},"
+                    f"{int(colors.to_rgb(col_cmap(norm(val)))[2] * 255)},"
+                    f"{alpha}); color: #000000"
+                )
                 for val in vals
             ]
 
