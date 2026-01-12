@@ -145,7 +145,7 @@ def render_table(
     page_size_option = st.selectbox(
         "Rows per page",
         options=["All", 25, 50, 100, 200],
-        index=1,
+        index=2,
         key=f"{table_key}_page_size",
     )
     total_rows = len(df)
