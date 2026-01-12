@@ -10,6 +10,7 @@ from matplotlib import colors
 
 DATA_DIR = Path(__file__).resolve().parent
 _TABLE_COUNTER = 0
+DEFAULT_NO_FORMAT_COLS = {"Season", "PA", "BBE", "TBF", "IP"}
 
 def ensure_streamlit() -> None:
     try:
@@ -44,6 +45,18 @@ def load_damage_df() -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def season_options(df: pd.DataFrame, column: str = "season") -> list:
+    if df.empty or column not in df.columns:
+        return ["All"]
+    values = pd.Series(df[column].dropna().unique())
+    numeric = pd.to_numeric(values, errors="coerce")
+    if numeric.notna().all():
+        sorted_vals = values.loc[numeric.sort_values(ascending=False).index].tolist()
+    else:
+        sorted_vals = values.sort_values(ascending=False).tolist()
+    return ["All"] + sorted_vals
+
+
 def filter_by_values(df: pd.DataFrame, column: str, values: list) -> pd.DataFrame:
     if df.empty or "All" in values:
         return df
@@ -63,7 +76,11 @@ def download_button(df: pd.DataFrame, label: str, key: str) -> None:
     st.download_button(label, data=csv, file_name=f"{label}.csv", key=key)
 
 
-def render_table(df: pd.DataFrame) -> None:
+def render_table(
+    df: pd.DataFrame,
+    reverse_cols: set[str] | None = None,
+    no_format_cols: set[str] | None = None,
+) -> None:
     if df.empty:
         st.info("No data available yet.")
         return
@@ -72,24 +89,27 @@ def render_table(df: pd.DataFrame) -> None:
     table_key = f"table_{_TABLE_COUNTER}"
     _TABLE_COUNTER += 1
 
-    page_size = st.number_input(
+    page_size_option = st.selectbox(
         "Rows per page",
-        min_value=10,
-        max_value=500,
-        value=25,
-        step=5,
+        options=["All", 25, 50, 100, 200],
+        index=1,
         key=f"{table_key}_page_size",
     )
     total_rows = len(df)
-    total_pages = max(1, (total_rows + page_size - 1) // page_size)
-    page = st.number_input(
-        "Page",
-        min_value=1,
-        max_value=int(total_pages),
-        value=1,
-        step=1,
-        key=f"{table_key}_page",
-    )
+    if page_size_option == "All":
+        page_size = total_rows
+        page = 1
+    else:
+        page_size = int(page_size_option)
+        total_pages = max(1, (total_rows + page_size - 1) // page_size)
+        page = st.number_input(
+            "Page",
+            min_value=1,
+            max_value=int(total_pages),
+            value=1,
+            step=1,
+            key=f"{table_key}_page",
+        )
 
     start = (page - 1) * page_size
     end = start + page_size
@@ -97,12 +117,23 @@ def render_table(df: pd.DataFrame) -> None:
 
     max_elements = pd.get_option("styler.render.max_elements")
     total_cells = df_page.shape[0] * df_page.shape[1]
+    reverse_cols = reverse_cols or set()
+    no_format_cols = no_format_cols or DEFAULT_NO_FORMAT_COLS
     numeric_cols = df.select_dtypes(include="number").columns
-    if len(numeric_cols) > 0 and total_cells <= max_elements:
-        q10 = df[numeric_cols].quantile(0.05)
-        q90 = df[numeric_cols].quantile(0.95)
-        med = df[numeric_cols].median()
+    float_cols = df.select_dtypes(include="floating").columns
+    format_cols = [col for col in numeric_cols if col not in no_format_cols]
+
+    if len(numeric_cols) > 0:
+        df_page[numeric_cols] = df_page[numeric_cols].round(1)
+    if len(float_cols) > 0:
+        df_page[float_cols] = df_page[float_cols].round(1)
+
+    if len(format_cols) > 0 and total_cells <= max_elements:
+        q10 = df[format_cols].quantile(0.05)
+        q90 = df[format_cols].quantile(0.95)
+        med = df[format_cols].median()
         cmap = colors.LinearSegmentedColormap.from_list("rwgn", ["#c75c5c", "#f7f7f7", "#5cb85c"])
+        cmap_rev = colors.LinearSegmentedColormap.from_list("gnrw", ["#5cb85c", "#f7f7f7", "#c75c5c"])
 
         def style_column(col: pd.Series) -> list[str]:
             vmin = q10[col.name]
@@ -113,15 +144,23 @@ def render_table(df: pd.DataFrame) -> None:
             norm = colors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
             vals = col.to_numpy(dtype=float)
             vals = np.clip(vals, vmin, vmax)
+            col_cmap = cmap_rev if col.name in reverse_cols else cmap
             return [
-                "" if pd.isna(val) else f"background-color: {colors.to_hex(cmap(norm(val)))}"
+                "" if pd.isna(val) else f"background-color: {colors.to_hex(col_cmap(norm(val)))}"
                 for val in vals
             ]
 
-        styler = df_page.style.apply(style_column, subset=numeric_cols, axis=0)
+        styler = df_page.style.apply(style_column, subset=format_cols, axis=0)
+        if len(float_cols) > 0:
+            styler = styler.format({col: "{:.1f}" for col in float_cols})
         st.dataframe(styler, width="stretch", hide_index=True)
         return
-    st.dataframe(df_page, width="stretch", hide_index=True)
+    df_page_display = df_page.copy()
+    if len(float_cols) > 0:
+        df_page_display[float_cols] = df_page_display[float_cols].applymap(
+            lambda x: f"{x:.1f}" if pd.notna(x) else x
+        )
+    st.dataframe(df_page_display, width="stretch", hide_index=True)
 
 
 # Load datasets
@@ -202,10 +241,10 @@ with main_tabs[1]:
             level = st.selectbox("Select Level", ["All", "MLB", "Triple-A", "Low-A", "Low Minors"], index=1)
             season = st.multiselect(
                 "Select Season",
-                ["All"] + sorted(damage_df["season"].dropna().unique().tolist()),
+                season_options(damage_df),
                 default=["All"],
             )
-            min_value = st.number_input("Minimum Value", min_value=0, max_value=500, value=1, step=1)
+            min_value = st.number_input("Minimum Value", min_value=0, max_value=500, value=100, step=1)
             value_type = st.selectbox("Filter By", ["PA", "BBE"], index=1)
             team = st.multiselect(
                 "Select Team",
@@ -282,7 +321,10 @@ with main_tabs[1]:
                 }
             )
             df = df.sort_values(by="Damage/BBE (%)", ascending=False)
-            render_table(df)
+            render_table(
+                df,
+                reverse_cols={"Hittable Pitch Take (%)", "Chase (%)", "Whiff vs. Secondaries (%)"},
+            )
             download_button(df, "hitters", "hitters_download")
 
 with main_tabs[2]:
@@ -301,7 +343,7 @@ with main_tabs[2]:
             )
             season = st.multiselect(
                 "Select Season",
-                ["All"] + sorted(hitter_pct["season"].dropna().unique().tolist()),
+                season_options(hitter_pct),
                 default=["All"],
                 key="hit_pct_season",
             )
@@ -380,11 +422,11 @@ with main_tabs[3]:
             level = st.selectbox("Select Level", ["All", "MLB", "Triple-A", "Low-A", "Low Minors"], index=1, key="pit_level")
             season = st.multiselect(
                 "Select Season",
-                ["All"] + sorted(pitcher_df["season"].dropna().unique().tolist()),
+                season_options(pitcher_df),
                 default=["All"],
                 key="pit_season",
             )
-            min_value = st.number_input("Minimum Value", min_value=0, max_value=1000, value=10, step=1, key="pit_min")
+            min_value = st.number_input("Minimum Value", min_value=0, max_value=1000, value=100, step=1, key="pit_min")
             filter_type = st.selectbox("Filter By", ["IP", "TBF"], index=1, key="pit_filter")
             per_game_min = st.number_input(
                 "Min TBF per Game", min_value=0, max_value=30, value=0, step=1, key="pit_tbf_per_game_min"
@@ -470,7 +512,10 @@ with main_tabs[3]:
                 }
             )
             df = df.sort_values(by="Pitch Quality", ascending=False)
-            render_table(df)
+            render_table(
+                df,
+                reverse_cols={"FA VAA", "Ball (%)", "Z-Contact (%)"},
+            )
             download_button(df, "pitchers", "pitchers_download")
 
 with main_tabs[4]:
@@ -489,7 +534,7 @@ with main_tabs[4]:
             )
             season = st.multiselect(
                 "Select Season",
-                ["All"] + sorted(pitcher_pct["season"].dropna().unique().tolist()),
+                season_options(pitcher_pct),
                 default=["All"],
                 key="pit_pct_season",
             )
@@ -579,7 +624,7 @@ with main_tabs[5]:
             )
             season = st.multiselect(
                 "Select Season",
-                ["All"] + sorted(pitch_types["season"].dropna().unique().tolist()),
+                season_options(pitch_types),
                 default=["All"],
                 key="pt_season",
             )
@@ -609,7 +654,7 @@ with main_tabs[5]:
                 key="pt_tag",
             )
             min_pitches = st.number_input(
-                "Minimum Pitches", min_value=0, max_value=3000, value=10, step=1, key="pt_min"
+                "Minimum Pitches", min_value=0, max_value=3000, value=100, step=1, key="pt_min"
             )
         with right:
             level_map = {
@@ -680,7 +725,10 @@ with main_tabs[5]:
                 }
             )
             df = df.sort_values(by="Pitch Quality", ascending=False)
-            render_table(df)
+            render_table(
+                df,
+                reverse_cols={"Z-Contact (%)", "Ball (%)"},
+            )
             download_button(df, "pitch_types", "pitch_types_download")
 
 with main_tabs[6]:
@@ -699,7 +747,7 @@ with main_tabs[6]:
             )
             season = st.multiselect(
                 "Select Season",
-                ["All"] + sorted(pitch_types_pct["season"].dropna().unique().tolist()),
+                season_options(pitch_types_pct),
                 default=["All"],
                 key="pt_pct_season",
             )
@@ -800,7 +848,7 @@ with main_tabs[7]:
             level = st.selectbox("Select Level", ["MLB", "Triple-A", "Low-A", "Low Minors"], index=0, key="team_hit_level")
             season = st.multiselect(
                 "Select Season",
-                ["All"] + sorted(team_damage["season"].dropna().unique().tolist()),
+                season_options(team_damage),
                 default=["All"],
                 key="team_hit_season",
             )
@@ -856,7 +904,10 @@ with main_tabs[7]:
                 }
             )
             df = df.sort_values(by="Damage/BBE (%)", ascending=False)
-            render_table(df)
+            render_table(
+                df,
+                reverse_cols={"Hittable Pitch Take (%)", "Chase (%)", "Whiff vs. Secondaries (%)"},
+            )
             download_button(df, "team_hitting", "team_hitting_download")
 
 with main_tabs[8]:
@@ -874,7 +925,7 @@ with main_tabs[8]:
             )
             season = st.multiselect(
                 "Select Season",
-                ["All"] + sorted(team_stuff["season"].dropna().unique().tolist()),
+                season_options(team_stuff),
                 default=["All"],
                 key="team_pitch_season",
             )
@@ -929,7 +980,10 @@ with main_tabs[8]:
                 }
             )
             df = df.sort_values(by="Pitch Quality", ascending=False)
-            render_table(df)
+            render_table(
+                df,
+                reverse_cols={"FA VAA", "Ball (%)", "Z-Contact (%)"},
+            )
             download_button(df, "team_pitching", "team_pitching_download")
 
 with main_tabs[9]:
@@ -941,7 +995,7 @@ with main_tabs[9]:
         with left:
             season = st.multiselect(
                 "Select Season",
-                ["All"] + sorted(hitting_avg["season"].dropna().unique().tolist()),
+                season_options(hitting_avg),
                 default=["All"],
                 key="lg_hit_season",
             )
@@ -1001,7 +1055,7 @@ with main_tabs[10]:
             )
             season = st.multiselect(
                 "Select Season",
-                ["All"] + sorted(pitching_avg["season"].dropna().unique().tolist()),
+                season_options(pitching_avg),
                 default=["All"],
                 key="lg_pitch_season",
             )
