@@ -175,8 +175,6 @@ team_damage = load_csv("new_team_damage.csv")
 team_stuff = load_csv("new_team_stuff.csv")
 pitch_types = load_csv("new_pitch_types.csv")
 pitch_types_pct = load_csv("pitch_types_pctiles.csv")
-hitting_cor = load_csv("hitting_cor.csv")
-pitching_cor = load_csv("pitching_cor2.csv")
 
 if not pitch_types.empty and "pitch_group" not in pitch_types.columns and "pitch_tag" in pitch_types.columns:
     pitch_types = pitch_types.assign(
@@ -208,9 +206,6 @@ main_tabs = st.tabs(
         "League Averages - Pitching",
         "Glossary - Hitting",
         "Glossary - Pitching",
-        "PA & R/RBI Calculator",
-        "Hitting Correlations",
-        "Pitching Correlations",
     ]
 )
 
@@ -1132,25 +1127,3 @@ release height/width, extension, and handedness.
 """
     )
 
-with main_tabs[13]:
-    st.subheader("PA & R/RBI Calculator")
-    st.info(
-        "This calculator relies on RDS models (PA_estimate.rds, runs_per_pa.rds, rbi_per_pa.rds).\n"
-        "Convert those models to Python or provide a CSV-based formula to enable it here."
-    )
-
-with main_tabs[14]:
-    st.subheader("Hitting Correlations")
-    st.caption(
-        "Weighted correlations of key metrics on current and next season statistics among hitters with 200+ PA in consecutive seasons. Data from 2021-2023 seasons."
-    )
-    render_table(hitting_cor)
-    download_button(hitting_cor, "hitting_correlations", "hit_cor_download")
-
-with main_tabs[15]:
-    st.subheader("Pitching Correlations")
-    st.caption(
-        "Weighted correlations of key metrics on current and next season statistics among pitchers with 40+ IP in consecutive seasons. Data from 2021-2023 seasons."
-    )
-    render_table(pitching_cor)
-    download_button(pitching_cor, "pitching_correlations", "pitch_cor_download")
