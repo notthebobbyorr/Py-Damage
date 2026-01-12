@@ -76,6 +76,54 @@ def download_button(df: pd.DataFrame, label: str, key: str) -> None:
     st.download_button(label, data=csv, file_name=f"{label}.csv", key=key)
 
 
+def apply_column_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
+    if df.empty:
+        return df
+    with st.expander("Column filters", expanded=False):
+        filtered = df
+        for col in df.columns:
+            col_key = f"{key_prefix}_{col}"
+            if pd.api.types.is_numeric_dtype(df[col]):
+                op = st.selectbox(
+                    f"{col} filter",
+                    options=["(no filter)", "=", "<", "<=", ">", ">=", "between"],
+                    key=f"{col_key}_op",
+                )
+                if op == "(no filter)":
+                    continue
+                if op == "between":
+                    low = st.number_input(f"{col} min", key=f"{col_key}_min", value=0.0)
+                    high = st.number_input(f"{col} max", key=f"{col_key}_max", value=0.0)
+                    filtered = filtered[(filtered[col] >= low) & (filtered[col] <= high)]
+                else:
+                    value = st.number_input(f"{col} value", key=f"{col_key}_val", value=0.0)
+                    if op == "=":
+                        filtered = filtered[filtered[col] == value]
+                    elif op == "<":
+                        filtered = filtered[filtered[col] < value]
+                    elif op == "<=":
+                        filtered = filtered[filtered[col] <= value]
+                    elif op == ">":
+                        filtered = filtered[filtered[col] > value]
+                    elif op == ">=":
+                        filtered = filtered[filtered[col] >= value]
+            else:
+                op = st.selectbox(
+                    f"{col} filter",
+                    options=["(no filter)", "=", "contains"],
+                    key=f"{col_key}_op",
+                )
+                if op == "(no filter)":
+                    continue
+                value = st.text_input(f"{col} value", key=f"{col_key}_val", value="")
+                if value:
+                    if op == "=":
+                        filtered = filtered[filtered[col] == value]
+                    else:
+                        filtered = filtered[filtered[col].astype(str).str.contains(value, case=False, na=False)]
+        return filtered
+
+
 def render_table(
     df: pd.DataFrame,
     reverse_cols: set[str] | None = None,
@@ -88,6 +136,11 @@ def render_table(
     global _TABLE_COUNTER
     table_key = f"table_{_TABLE_COUNTER}"
     _TABLE_COUNTER += 1
+
+    df = apply_column_filters(df, table_key)
+    if df.empty:
+        st.info("No data after filters.")
+        return
 
     page_size_option = st.selectbox(
         "Rows per page",
