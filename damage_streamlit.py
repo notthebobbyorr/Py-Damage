@@ -621,7 +621,14 @@ with main_tabs[2]:
                 "season",
                 "PA",
                 "bbe",
-                *feature_cols,
+                "damage_rate",
+                "EV90th",
+                "pull_FB_pct",
+                "selection_skill",
+                "hittable_pitches_taken",
+                "chase",
+                "z_con",
+                "secondary_whiff_pct",
                 "__season",
                 "__level",
             ]
@@ -638,7 +645,9 @@ with main_tabs[2]:
                     "pull_FB_pct": "Pulled FB (%)",
                     "selection_skill": "Selectivity (%)",
                     "hittable_pitches_taken": "Hittable Pitch Take (%)",
+                    "chase": "Chase (%)",
                     "z_con": "Z-Contact (%)",
+                    "secondary_whiff_pct": "Whiff vs. Secondaries (%)",
                     "contact_vs_avg": "Contact Over Expected (%)",
                 }
             )
