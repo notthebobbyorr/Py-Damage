@@ -207,36 +207,52 @@ def render_table(
 
     if len(format_cols) > 0 and total_cells <= max_elements:
         stats_source = stats_df if stats_df is not None else df
-        format_cols = [col for col in format_cols if col in stats_source.columns]
-        if not format_cols:
+        similarity_cols = [col for col in format_cols if col.startswith("Similarity")]
+        stats_format_cols = [col for col in format_cols if col in stats_source.columns]
+        if not stats_format_cols and not similarity_cols:
             st.dataframe(df_page_display, width="stretch", hide_index=True)
             return
+        similarity_medians: dict[str, float] = {}
+        for col in similarity_cols:
+            if col in stats_source.columns:
+                similarity_medians[col] = stats_source[col].median()
+            else:
+                similarity_medians[col] = df[col].median()
         group_cols = group_cols or []
         group_cols = [col for col in group_cols if col in stats_source.columns]
         if group_cols:
-            q10 = stats_source.groupby(group_cols)[format_cols].quantile(0.05)
-            q90 = stats_source.groupby(group_cols)[format_cols].quantile(0.95)
-            med = stats_source.groupby(group_cols)[format_cols].median()
+            if stats_format_cols:
+                q10 = stats_source.groupby(group_cols)[stats_format_cols].quantile(0.05)
+                q90 = stats_source.groupby(group_cols)[stats_format_cols].quantile(0.95)
+                med = stats_source.groupby(group_cols)[stats_format_cols].median()
+            else:
+                q10 = q90 = med = None
         else:
-            q10 = stats_source[format_cols].quantile(0.05)
-            q90 = stats_source[format_cols].quantile(0.95)
-            med = stats_source[format_cols].median()
+            if stats_format_cols:
+                q10 = stats_source[stats_format_cols].quantile(0.05)
+                q90 = stats_source[stats_format_cols].quantile(0.95)
+                med = stats_source[stats_format_cols].median()
+            else:
+                q10 = q90 = med = None
         cmap = colors.LinearSegmentedColormap.from_list("rwgn", ["#c75c5c", "#f7f7f7", "#5cb85c"])
         cmap_rev = colors.LinearSegmentedColormap.from_list("gnrw", ["#5cb85c", "#f7f7f7", "#c75c5c"])
         alpha = 0.9
 
         def style_row(row: pd.Series) -> list[str]:
             if group_cols:
-                group_vals = df_page_full.loc[row.name, group_cols]
-                if isinstance(group_vals, pd.Series):
-                    group_key = tuple(group_vals.values.tolist())
+                if q10 is None:
+                    row_q10 = row_q90 = row_med = None
                 else:
-                    group_key = group_vals
-                if group_key not in q10.index:
-                    return [""] * len(row)
-                row_q10 = q10.loc[group_key]
-                row_q90 = q90.loc[group_key]
-                row_med = med.loc[group_key]
+                    group_vals = df_page_full.loc[row.name, group_cols]
+                    if isinstance(group_vals, pd.Series):
+                        group_key = tuple(group_vals.values.tolist())
+                    else:
+                        group_key = group_vals
+                    if group_key not in q10.index:
+                        return [""] * len(row)
+                    row_q10 = q10.loc[group_key]
+                    row_q90 = q90.loc[group_key]
+                    row_med = med.loc[group_key]
             else:
                 row_q10 = q10
                 row_q90 = q90
@@ -247,9 +263,20 @@ def render_table(
                 if col not in format_cols:
                     styles.append("")
                     continue
-                vmin = row_q10[col]
-                vmax = row_q90[col]
-                vcenter = row_med[col]
+                if col in similarity_medians:
+                    vmin = 0
+                    vmax = 99
+                    vcenter = similarity_medians[col]
+                else:
+                    if col not in stats_format_cols or row_q10 is None:
+                        styles.append("")
+                        continue
+                    if row_q10 is None:
+                        styles.append("")
+                        continue
+                    vmin = row_q10[col]
+                    vmax = row_q90[col]
+                    vcenter = row_med[col]
                 if pd.isna(vmin) or pd.isna(vmax) or vmin == vmax:
                     styles.append("")
                     continue
@@ -492,6 +519,7 @@ with main_tabs[2]:
             "hittable_pitches_taken",
             "chase",
             "z_con",
+            "secondary_whiff_pct",
         ]
         eligible_comp = eligible_all.dropna(subset=feature_cols)
         eligible_comp = eligible_comp[eligible_comp["PA"] >= 300]
