@@ -350,6 +350,7 @@ main_tabs = st.tabs(
         "Hitters - Comparisons",
         "Hitters - Percentiles",
         "Pitchers",
+        "Pitchers - Comparisons",
         "Pitchers - Percentiles",
         "Individual Pitches",
         "Individual Pitches - Percentiles",
@@ -873,6 +874,139 @@ with main_tabs[4]:
             download_button(df, "pitchers", "pitchers_download")
 
 with main_tabs[5]:
+    st.subheader("Pitchers - Comparisons")
+    eligible_all = pitcher_df.copy()
+    eligible_all = eligible_all[eligible_all["level_id"] == 1]
+    if eligible_all.empty:
+        st.info("No eligible MLB pitcher seasons (min 40 IP).")
+    else:
+        seasons = season_options(eligible_all, "season")[1:]
+        season_choice = st.selectbox("Season", seasons, index=0, key="pit_comp_season")
+        season_df = eligible_all[eligible_all["season"] == season_choice]
+        players = sorted(season_df["name"].dropna().unique().tolist())
+        player_choice = st.selectbox("Pitcher", players, index=0, key="pit_comp_player")
+        player_df = season_df[season_df["name"] == player_choice]
+        teams = sorted(player_df["pitching_code"].dropna().unique().tolist())
+        team_choice = (
+            st.selectbox("Team", teams, index=0, key="pit_comp_team")
+            if len(teams) > 1
+            else (teams[0] if teams else None)
+        )
+        if team_choice:
+            player_df = player_df[player_df["pitching_code"] == team_choice]
+
+        feature_cols = [
+            "fastball_velo",
+            "fastball_vaa",
+            "SwStr",
+            "Ball_pct",
+            "Chase",
+            "Z_Contact",
+            "rel_z",
+            "rel_x",
+            "ext",
+        ]
+        eligible_comp = eligible_all.dropna(subset=feature_cols)
+        eligible_comp = eligible_comp[eligible_comp["IP"] >= 40]
+        if player_df.empty:
+            st.info("No season row found for that selection.")
+        else:
+            stats = eligible_comp[feature_cols]
+            means = stats.mean()
+            stds = stats.std(ddof=0).replace(0, np.nan)
+            zscores = (stats - means) / stds
+            zscores = zscores.fillna(0)
+            target_vec = ((player_df[feature_cols] - means) / stds).fillna(0).iloc[0].to_numpy()
+            distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
+            max_dist = distances.max() if len(distances) else 0.0
+            if max_dist == 0:
+                similarity = np.full_like(distances, 100.0, dtype=float)
+            else:
+                similarity = 100 * (1 - (distances / max_dist))
+            eligible_comp = eligible_comp.copy()
+            eligible_comp["similarity_score"] = similarity.round(0)
+            eligible_comp = eligible_comp.sort_values("similarity_score", ascending=False)
+
+            display_cols = [
+                "name",
+                "pitching_code",
+                "season",
+                "TBF",
+                "IP",
+                "similarity_score",
+                *feature_cols,
+            ]
+            eligible_comp = eligible_comp.assign(__season=eligible_comp["season"], __level=eligible_comp["level_id"])
+            display_cols += ["__season", "__level"]
+            df = eligible_comp[display_cols].copy()
+            rename_map = {
+                "name": "Name",
+                "pitching_code": "Team",
+                "season": "Season",
+                "fastball_velo": "FA mph",
+                "fastball_vaa": "FA VAA",
+                "SwStr": "SwStr (%)",
+                "Ball_pct": "Ball (%)",
+                "Chase": "Chase (%)",
+                "Z_Contact": "Z-Contact (%)",
+                "rel_z": "Vertical Release (ft.)",
+                "rel_x": "Horizontal Release (ft.)",
+                "ext": "Extension (ft.)",
+                "similarity_score": "Similarity (0-100)",
+            }
+            df = df.rename(columns=rename_map)
+            stats_df = pitcher_df.copy()
+            stats_df = stats_df.assign(__season=stats_df["season"], __level=stats_df["level_id"])
+            stats_df = stats_df[
+                [
+                    "name",
+                    "pitching_code",
+                    "season",
+                    "TBF",
+                    "IP",
+                    "fastball_velo",
+                    "fastball_vaa",
+                    "SwStr",
+                    "Ball_pct",
+                    "Chase",
+                    "Z_Contact",
+                    "rel_z",
+                    "rel_x",
+                    "ext",
+                    "__season",
+                    "__level",
+                ]
+            ].rename(columns=rename_map)
+            target_display_cols = [
+                "name",
+                "pitching_code",
+                "season",
+                "TBF",
+                "IP",
+                *feature_cols,
+                "__season",
+                "__level",
+            ]
+            target_df = player_df.assign(__season=player_df["season"], __level=player_df["level_id"])
+            target_df = target_df[[col for col in target_display_cols if col in target_df.columns]].copy()
+            target_df = target_df.rename(columns=rename_map)
+            st.caption("Selected season")
+            render_table(
+                target_df,
+                reverse_cols={"FA VAA", "Ball (%)", "Z-Contact (%)"},
+                group_cols=["__season", "__level"],
+                stats_df=stats_df,
+                show_controls=False,
+            )
+            st.caption("Most similar MLB seasons (IP >= 40)")
+            render_table(
+                df,
+                reverse_cols={"FA VAA", "Ball (%)", "Z-Contact (%)"},
+                group_cols=["__season", "__level"],
+                stats_df=stats_df,
+            )
+
+with main_tabs[6]:
     st.subheader("Percentile Rankings - Pitchers")
     st.caption("min. 100 pitches thrown at respective level")
     if pitcher_pct.empty:
@@ -971,7 +1105,7 @@ with main_tabs[5]:
             )
             download_button(df, "pitcher_percentiles", "pitcher_pct_download")
 
-with main_tabs[6]:
+with main_tabs[7]:
     st.subheader("Individual Pitches")
     if pitch_types.empty:
         st.info("Missing new_pitch_types.csv")
@@ -1099,7 +1233,7 @@ with main_tabs[6]:
             )
             download_button(df, "pitch_types", "pitch_types_download")
 
-with main_tabs[7]:
+with main_tabs[8]:
     st.subheader("Percentile Rankings - Pitch Types")
     st.caption("min. 50 pitches thrown. Percentiles are within pitch type at respective level.")
     if pitch_types_pct.empty:
@@ -1214,7 +1348,7 @@ with main_tabs[7]:
             )
             download_button(df, "pitch_types_percentiles", "pitch_types_pct_download")
 
-with main_tabs[8]:
+with main_tabs[9]:
     st.subheader("Team Hitting")
     if team_damage.empty:
         st.info("Missing new_team_damage.csv")
@@ -1292,7 +1426,7 @@ with main_tabs[8]:
             )
             download_button(df, "team_hitting", "team_hitting_download")
 
-with main_tabs[9]:
+with main_tabs[10]:
     st.subheader("Team Pitching")
     if team_stuff.empty:
         st.info("Missing new_team_stuff.csv")
@@ -1374,7 +1508,7 @@ with main_tabs[9]:
             )
             download_button(df, "team_pitching", "team_pitching_download")
 
-with main_tabs[10]:
+with main_tabs[11]:
     st.subheader("League Averages - Hitting")
     if hitting_avg.empty:
         st.info("Missing new_hitting_lg_avg.csv")
@@ -1436,7 +1570,7 @@ with main_tabs[10]:
             )
             download_button(df, "league_hitting", "league_hitting_download")
 
-with main_tabs[11]:
+with main_tabs[12]:
     st.subheader("League Averages - Pitching")
     if pitching_avg.empty:
         st.info("Missing new_lg_stuff.csv")
@@ -1500,7 +1634,7 @@ with main_tabs[11]:
             )
             download_button(df, "league_pitching", "league_pitching_download")
 
-with main_tabs[12]:
+with main_tabs[13]:
     st.subheader("Hitting Metrics")
     st.markdown(
         """
@@ -1521,7 +1655,7 @@ Tracked per batted ball.
 """
     )
 
-with main_tabs[13]:
+with main_tabs[14]:
     st.subheader("Pitching Metrics")
     st.markdown(
         """
