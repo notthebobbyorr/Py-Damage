@@ -4,12 +4,6 @@ start.time <- Sys.time()
 require(RPostgres)
 require(tidyverse)
 require(data.table)
- 
-# access to PI SQL database
-Server <- 'scully.baseballprospectus.com'
-Database <-  'cage'
-User <-  'rorr'
-Password <- 'Kyle#12Schwarber'
 
 # connection
 con <- dbConnect(RPostgres::Postgres(), user = User,
