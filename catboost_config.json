@@ -1,0 +1,177 @@
+{
+  "data": {
+    "data_file": "seasons_df_lwt.parquet",
+    "target_col": "event_rv",
+    "features": [
+      "avg_release_z",
+      "avg_release_x",
+      "avg_ext",
+      "pitch_velo",
+      "rpm",
+      "inf_rpm",
+      "vbreak",
+      "hbreak",
+      "axis",
+      "inf_axis",
+      "spin_efficiency",
+      "z_angle_release",
+      "x_angle_release",
+      "loc_adj_vaa",
+      "haa",
+      "primary_velo",
+      "primary_vbreak",
+      "primary_hbreak",
+      "primary_loc_adj_vaa",
+      "primary_z_release",
+      "primary_x_release",
+      "primary_rpm",
+      "primary_axis"
+    ],
+    "categorical_features": [
+      "throws",
+      "stands",
+      "count"
+    ],
+    "group_cols": {
+      "season": "game_year",
+      "throws": "throws",
+      "gameday_zone": "gameday_zone",
+      "n_thruorder_pitcher": "n_thruorder_pitcher",
+      "pitch_group": "pitch_group"
+    },
+    "pitch_group_mapping": {
+      "FA": [
+        "FA"
+      ],
+      "BR": [
+        "CU",
+        "SL"
+      ],
+      "OFF": [
+        "CH"
+      ],
+      "XX": "other"
+    },
+    "pitch_group_source_col": "pi_pitch_group",
+    "required_features": [
+      "pitch_velo",
+      "primary_velo"
+    ],
+    "boruta_selected_features": [
+      "avg_release_z",
+      "avg_release_x",
+      "avg_ext",
+      "pitch_velo",
+      "rpm",
+      "inf_rpm",
+      "vbreak",
+      "hbreak",
+      "axis",
+      "inf_axis",
+      "spin_efficiency",
+      "z_angle_release",
+      "x_angle_release",
+      "loc_adj_vaa",
+      "haa",
+      "primary_velo",
+      "primary_vbreak",
+      "primary_hbreak",
+      "primary_loc_adj_vaa",
+      "primary_z_release",
+      "primary_x_release",
+      "primary_rpm",
+      "primary_axis"
+    ]
+  },
+  "sampling": {
+    "enabled": true,
+    "stratify_cols": [
+      "game_year",
+      "throws",
+      "gameday_zone",
+      "pitch_group",
+      "n_thruorder_pitcher"
+    ],
+    "train_sample_size": 500000,
+    "boruta_sample_size": 50000,
+    "optuna_sample_size": 50000
+  },
+  "preprocessing": {
+    "test_size": 0.25,
+    "random_state": 17
+  },
+  "filters": {
+    "enabled": true,
+    "conditions": [
+      {
+        "column": "pitch_group",
+        "operator": "in",
+        "value": [
+          "FA",
+          "BR",
+          "OFF"
+        ]
+      },
+      {
+        "column": "pitch_velo",
+        "operator": ">=",
+        "value": 60
+      },
+      {
+        "column": "home_team",
+        "operator": "!=",
+        "value": "COL"
+      },
+      {
+        "column": "swing_type",
+        "operator": "in",
+        "value": [
+          "take",
+          "swing"
+        ]
+      },
+      {
+        "column": "pitch_outcome",
+        "operator": "not_in",
+        "value": [
+          "RBOE",
+          "F",
+          "NIP",
+          "HBP"
+        ]
+      },
+      {
+        "column": "strikes",
+        "operator": "==",
+        "value": 2
+      }
+    ]
+  },
+  "boruta": {
+    "enabled": false,
+    "max_iter": 50,
+    "include_tentative": true,
+    "alpha": 0.1,
+    "random_state": 17,
+    "verbose": 1
+  },
+  "optuna": {
+    "enabled": true,
+    "n_trials": 30,
+    "timeout": null,
+    "study_name": "catboost_baseball_optimization",
+    "early_stopping_rounds": 20
+  },
+  "catboost": {
+    "iterations": 1000,
+    "early_stopping_rounds": 50,
+    "verbose": 100,
+    "task_type": "CPU",
+    "random_seed": 17
+  },
+  "output": {
+    "model_path": "catboost_baseball_model.cbm",
+    "feature_importance_path": "catboost_feature_importance.csv",
+    "metrics_path": "catboost_metrics.json"
+  }
+}

@@ -11,6 +11,17 @@ from matplotlib import colors
 DATA_DIR = Path(__file__).resolve().parent
 _TABLE_COUNTER = 0
 DEFAULT_NO_FORMAT_COLS = {"Season", "PA", "BBE", "TBF", "IP"}
+# Columns where higher values are worse (red=high, green=low) - inverted color scale
+HIGHER_IS_WORSE_COLS = {
+    "Chase (%)",
+    "Ball (%)",
+    "Z-Contact (%)",
+    "Hittable Pitch Take (%)",
+    "Whiff vs. Secondaries (%)",
+    "Whiff vs. 95+ (%)",
+    "GB (%)",
+}
+
 
 def ensure_streamlit() -> None:
     try:
@@ -46,9 +57,15 @@ def load_csv(name: str) -> pd.DataFrame:
 
 
 def load_damage_df() -> pd.DataFrame:
-    preferred = DATA_DIR / "damage_pos_2021_2024.csv"
-    if preferred.exists():
-        return pd.read_csv(preferred)
+    # Prefer the most comprehensive file with newest data
+    preferred_files = [
+        DATA_DIR / "damage_pos_2020_2025.csv",
+        DATA_DIR / "damage_pos_2025_2025.csv",
+        DATA_DIR / "damage_pos_2021_2024.csv",
+    ]
+    for preferred in preferred_files:
+        if preferred.exists():
+            return pd.read_csv(preferred)
     candidates = sorted(DATA_DIR.glob("damage_pos_*.csv"))
     if candidates:
         return pd.read_csv(candidates[-1])
@@ -105,10 +122,16 @@ def apply_column_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
                     continue
                 if op == "between":
                     low = st.number_input(f"{col} min", key=f"{col_key}_min", value=0.0)
-                    high = st.number_input(f"{col} max", key=f"{col_key}_max", value=0.0)
-                    filtered = filtered[(filtered[col] >= low) & (filtered[col] <= high)]
+                    high = st.number_input(
+                        f"{col} max", key=f"{col_key}_max", value=0.0
+                    )
+                    filtered = filtered[
+                        (filtered[col] >= low) & (filtered[col] <= high)
+                    ]
                 else:
-                    value = st.number_input(f"{col} value", key=f"{col_key}_val", value=0.0)
+                    value = st.number_input(
+                        f"{col} value", key=f"{col_key}_val", value=0.0
+                    )
                     if op == "=":
                         filtered = filtered[filtered[col] == value]
                     elif op == "<":
@@ -132,7 +155,11 @@ def apply_column_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
                     if op == "=":
                         filtered = filtered[filtered[col] == value]
                     else:
-                        filtered = filtered[filtered[col].astype(str).str.contains(value, case=False, na=False)]
+                        filtered = filtered[
+                            filtered[col]
+                            .astype(str)
+                            .str.contains(value, case=False, na=False)
+                        ]
         return filtered
 
 
@@ -234,8 +261,12 @@ def render_table(
                 med = stats_source[stats_format_cols].median()
             else:
                 q10 = q90 = med = None
-        cmap = colors.LinearSegmentedColormap.from_list("rwgn", ["#c75c5c", "#f7f7f7", "#5cb85c"])
-        cmap_rev = colors.LinearSegmentedColormap.from_list("gnrw", ["#5cb85c", "#f7f7f7", "#c75c5c"])
+        cmap = colors.LinearSegmentedColormap.from_list(
+            "rwgn", ["#c75c5c", "#f7f7f7", "#5cb85c"]
+        )
+        cmap_rev = colors.LinearSegmentedColormap.from_list(
+            "gnrw", ["#5cb85c", "#f7f7f7", "#c75c5c"]
+        )
         alpha = 0.9
 
         def style_row(row: pd.Series) -> list[str]:
@@ -328,16 +359,40 @@ team_stuff = load_csv("new_team_stuff.csv")
 pitch_types = load_csv("new_pitch_types.csv")
 pitch_types_pct = load_csv("pitch_types_pctiles.csv")
 
-if not pitch_types.empty and "pitch_group" not in pitch_types.columns and "pitch_tag" in pitch_types.columns:
+
+# Normalize team column names: new CSVs use "team", old use "pitching_code"/"hitting_code"
+def _normalize_team_col(df: pd.DataFrame, old_col: str) -> pd.DataFrame:
+    """If 'team' column exists, rename it to old_col for backward compatibility."""
+    if df.empty:
+        return df
+    if "team" in df.columns and old_col not in df.columns:
+        return df.rename(columns={"team": old_col})
+    return df
+
+
+damage_df = _normalize_team_col(damage_df, "hitting_code")
+hitter_pct = _normalize_team_col(hitter_pct, "hitting_code")
+pitcher_df = _normalize_team_col(pitcher_df, "pitching_code")
+pitcher_pct = _normalize_team_col(pitcher_pct, "pitching_code")
+pitch_types = _normalize_team_col(pitch_types, "pitching_code")
+pitch_types_pct = _normalize_team_col(pitch_types_pct, "pitching_code")
+
+if (
+    not pitch_types.empty
+    and "pitch_group" not in pitch_types.columns
+    and "pitch_tag" in pitch_types.columns
+):
     pitch_types = pitch_types.assign(
         pitch_group=pitch_types["pitch_tag"].map(
-            lambda tag: "FA"
-            if tag in {"FA", "HC", "SI"}
-            else "BR"
-            if tag in {"SL", "SW", "CU"}
-            else "OFF"
-            if tag in {"CH", "FS"}
-            else "OTHER"
+            lambda tag: (
+                "FA"
+                if tag in {"FA", "HC", "SI"}
+                else (
+                    "BR"
+                    if tag in {"SL", "SW", "CU"}
+                    else "OFF" if tag in {"CH", "FS"} else "OTHER"
+                )
+            )
         )
     )
 
@@ -387,13 +442,19 @@ with main_tabs[1]:
     else:
         left, right = st.columns([1, 3])
         with left:
-            level = st.selectbox("Select Level", ["All", "MLB", "Triple-A", "Low-A", "Low Minors"], index=1)
+            level = st.selectbox(
+                "Select Level",
+                ["All", "MLB", "Triple-A", "Low-A", "Low Minors"],
+                index=1,
+            )
             season = st.multiselect(
                 "Select Season",
                 season_options(damage_df),
                 default=["All"],
             )
-            min_value = st.number_input("Minimum Value", min_value=0, max_value=500, value=100, step=1)
+            min_value = st.number_input(
+                "Minimum Value", min_value=0, max_value=500, value=100, step=1
+            )
             value_type = st.selectbox("Filter By", ["PA", "BBE"], index=1)
             team = st.multiselect(
                 "Select Team",
@@ -405,7 +466,11 @@ with main_tabs[1]:
                 ["All"] + sorted(damage_df["hitter_name"].dropna().unique().tolist()),
                 default=["All"],
             )
-            positions = st.multiselect("Select Positions", ["C", "1B", "2B", "SS", "3B", "OF", "UT", "P"], default=[])
+            positions = st.multiselect(
+                "Select Positions",
+                ["C", "1B", "2B", "SS", "3B", "OF", "UT", "P"],
+                default=[],
+            )
         with right:
             level_map = {
                 "All": [1, 11, 14, 16],
@@ -415,7 +480,9 @@ with main_tabs[1]:
                 "Low Minors": [16],
             }
             base_stats = damage_df.copy()
-            base_stats = base_stats.assign(__season=base_stats["season"], __level=base_stats["level_id"])
+            base_stats = base_stats.assign(
+                __season=base_stats["season"], __level=base_stats["level_id"]
+            )
             df = damage_df.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
@@ -428,7 +495,16 @@ with main_tabs[1]:
             else:
                 df = numeric_filter(df, "bbe", min_value)
 
-            pos_map = {"C": "C", "1B": "X1B", "2B": "X2B", "3B": "X3B", "SS": "SS", "OF": "OF", "UT": "UT", "P": "P"}
+            pos_map = {
+                "C": "C",
+                "1B": "X1B",
+                "2B": "X2B",
+                "3B": "X3B",
+                "SS": "SS",
+                "OF": "OF",
+                "UT": "UT",
+                "P": "P",
+            }
             for pos in positions:
                 col = pos_map.get(pos)
                 if col and col in df.columns:
@@ -444,21 +520,20 @@ with main_tabs[1]:
                 "EV90th",
                 "max_EV",
                 "pull_FB_pct",
+                "FB_pct",
+                "GB_pct",
                 "SEAGER",
                 "selection_skill",
                 "hittable_pitches_taken",
                 "chase",
                 "z_con",
                 "secondary_whiff_pct",
+                "whiffs_vs_95",
                 "contact_vs_avg",
                 "__season",
                 "__level",
             ]
-            df = df[
-                [
-                    col for col in columns if col in df.columns
-                ]
-            ].copy()
+            df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
                 "hitter_name": "Name",
                 "hitting_code": "Team",
@@ -468,11 +543,14 @@ with main_tabs[1]:
                 "EV90th": "90th Pctile EV",
                 "max_EV": "Max EV",
                 "pull_FB_pct": "Pulled FB (%)",
+                "FB_pct": "FB (%)",
+                "GB_pct": "GB (%)",
                 "selection_skill": "Selectivity (%)",
                 "hittable_pitches_taken": "Hittable Pitch Take (%)",
                 "chase": "Chase (%)",
                 "z_con": "Z-Contact (%)",
                 "secondary_whiff_pct": "Whiff vs. Secondaries (%)",
+                "whiffs_vs_95": "Whiff vs. 95+ (%)",
                 "contact_vs_avg": "Contact Over Expected (%)",
             }
             df = df.rename(
@@ -486,7 +564,13 @@ with main_tabs[1]:
             ].rename(columns=rename_map)
             render_table(
                 df,
-                reverse_cols={"Hittable Pitch Take (%)", "Chase (%)", "Whiff vs. Secondaries (%)"},
+                reverse_cols={
+                    "Hittable Pitch Take (%)",
+                    "Chase (%)",
+                    "Whiff vs. Secondaries (%)",
+                    "Whiff vs. 95+ (%)",
+                    "GB (%)",
+                },
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
             )
@@ -496,7 +580,9 @@ with main_tabs[2]:
     st.subheader("Hitters - Comparisons")
     eligible_all = damage_df.copy()
     eligible_all = eligible_all[
-        (eligible_all["level_id"] == 1) & (eligible_all["PA"] >= 100) & (eligible_all["bbe"] >= 100)
+        (eligible_all["level_id"] == 1)
+        & (eligible_all["PA"] >= 100)
+        & (eligible_all["bbe"] >= 100)
     ]
     if eligible_all.empty:
         st.info("No eligible MLB hitter seasons (min 100 PA and 100 BBE).")
@@ -508,7 +594,11 @@ with main_tabs[2]:
         player_choice = st.selectbox("Player", players, index=0)
         player_df = season_df[season_df["hitter_name"] == player_choice]
         teams = sorted(player_df["hitting_code"].dropna().unique().tolist())
-        team_choice = st.selectbox("Team", teams, index=0) if len(teams) > 1 else (teams[0] if teams else None)
+        team_choice = (
+            st.selectbox("Team", teams, index=0)
+            if len(teams) > 1
+            else (teams[0] if teams else None)
+        )
         if team_choice:
             player_df = player_df[player_df["hitting_code"] == team_choice]
 
@@ -516,14 +606,19 @@ with main_tabs[2]:
             "damage_rate",
             "EV90th",
             "pull_FB_pct",
+            "FB_pct",
+            "GB_pct",
             "selection_skill",
             "hittable_pitches_taken",
             "chase",
             "z_con",
             "secondary_whiff_pct",
+            "whiffs_vs_95",
         ]
+        # Filter to only include columns that exist in the dataframe
+        feature_cols = [c for c in feature_cols if c in eligible_all.columns]
         eligible_comp = eligible_all.dropna(subset=feature_cols)
-        eligible_comp = eligible_comp[eligible_comp["PA"] >= 300]
+        eligible_comp = eligible_comp[eligible_comp["PA"] >= 200]
         if player_df.empty:
             st.info("No season row found for that selection.")
         else:
@@ -533,7 +628,9 @@ with main_tabs[2]:
             stds = stats.std(ddof=0).replace(0, np.nan)
             zscores = (stats - means) / stds
             zscores = zscores.fillna(0)
-            target_vec = ((player_df[feature_cols] - means) / stds).fillna(0).iloc[0].to_numpy()
+            target_vec = (
+                ((player_df[feature_cols] - means) / stds).fillna(0).iloc[0].to_numpy()
+            )
             distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
             max_dist = distances.max() if len(distances) else 0.0
             if max_dist == 0:
@@ -542,7 +639,9 @@ with main_tabs[2]:
                 similarity = 100 * (1 - (distances / max_dist))
             eligible_comp = eligible_comp.copy()
             eligible_comp["similarity_score"] = similarity.round(0)
-            eligible_comp = eligible_comp.sort_values("similarity_score", ascending=False)
+            eligible_comp = eligible_comp.sort_values(
+                "similarity_score", ascending=False
+            )
 
             display_cols = [
                 "hitter_name",
@@ -553,7 +652,9 @@ with main_tabs[2]:
                 "similarity_score",
                 *feature_cols,
             ]
-            eligible_comp = eligible_comp.assign(__season=eligible_comp["season"], __level=eligible_comp["level_id"])
+            eligible_comp = eligible_comp.assign(
+                __season=eligible_comp["season"], __level=eligible_comp["level_id"]
+            )
             display_cols += ["__season", "__level"]
             df = eligible_comp[display_cols].copy()
             df = df.rename(
@@ -573,10 +674,15 @@ with main_tabs[2]:
                     "secondary_whiff_pct": "Whiff vs. Secondaries (%)",
                     "contact_vs_avg": "Contact Over Expected (%)",
                     "similarity_score": "Similarity (0-100)",
+                    "FB_pct": "FB (%)",
+                    "GB_pct": "GB (%)",
+                    "whiffs_vs_95": "Whiff vs. 95+ (%)",
                 }
             )
             stats_df = damage_df.copy()
-            stats_df = stats_df.assign(__season=stats_df["season"], __level=stats_df["level_id"])
+            stats_df = stats_df.assign(
+                __season=stats_df["season"], __level=stats_df["level_id"]
+            )
             stats_df = stats_df[
                 [
                     "hitter_name",
@@ -588,12 +694,15 @@ with main_tabs[2]:
                     "EV90th",
                     "max_EV",
                     "pull_FB_pct",
+                    "FB_pct",
+                    "GB_pct",
                     "SEAGER",
                     "selection_skill",
                     "hittable_pitches_taken",
                     "chase",
                     "z_con",
                     "secondary_whiff_pct",
+                    "whiffs_vs_95",
                     "contact_vs_avg",
                     "__season",
                     "__level",
@@ -608,11 +717,14 @@ with main_tabs[2]:
                     "EV90th": "90th Pctile EV",
                     "max_EV": "Max EV",
                     "pull_FB_pct": "Pulled FB (%)",
+                    "FB_pct": "FB (%)",
+                    "GB_pct": "GB (%)",
                     "selection_skill": "Selectivity (%)",
                     "hittable_pitches_taken": "Hittable Pitch Take (%)",
                     "chase": "Chase (%)",
                     "z_con": "Z-Contact (%)",
                     "secondary_whiff_pct": "Whiff vs. Secondaries (%)",
+                    "whiffs_vs_95": "Whiff vs. 95+ (%)",
                     "contact_vs_avg": "Contact Over Expected (%)",
                 }
             )
@@ -625,16 +737,23 @@ with main_tabs[2]:
                 "damage_rate",
                 "EV90th",
                 "pull_FB_pct",
+                "FB_pct",
+                "GB_pct",
                 "selection_skill",
                 "hittable_pitches_taken",
                 "chase",
                 "z_con",
                 "secondary_whiff_pct",
+                "whiffs_vs_95",
                 "__season",
                 "__level",
             ]
-            target_df = player_df.assign(__season=player_df["season"], __level=player_df["level_id"])
-            target_df = target_df[[col for col in target_display_cols if col in target_df.columns]].copy()
+            target_df = player_df.assign(
+                __season=player_df["season"], __level=player_df["level_id"]
+            )
+            target_df = target_df[
+                [col for col in target_display_cols if col in target_df.columns]
+            ].copy()
             target_df = target_df.rename(
                 columns={
                     "hitter_name": "Name",
@@ -649,21 +768,36 @@ with main_tabs[2]:
                     "chase": "Chase (%)",
                     "z_con": "Z-Contact (%)",
                     "secondary_whiff_pct": "Whiff vs. Secondaries (%)",
+                    "whiffs_vs_95": "Whiff vs. 95+ (%)",
                     "contact_vs_avg": "Contact Over Expected (%)",
+                    "FB_pct": "FB (%)",
+                    "GB_pct": "GB (%)",
                 }
             )
             st.caption("Selected season")
             render_table(
                 target_df,
-                reverse_cols={"Hittable Pitch Take (%)", "Chase (%)", "Whiff vs. Secondaries (%)"},
+                reverse_cols={
+                    "Hittable Pitch Take (%)",
+                    "Chase (%)",
+                    "Whiff vs. Secondaries (%)",
+                    "Whiff vs. 95+ (%)",
+                    "GB (%)",
+                },
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
                 show_controls=False,
             )
-            st.caption("Most similar MLB seasons (PA >= 300)")
+            st.caption("Most similar MLB seasons (PA >= 200)")
             render_table(
                 df,
-                reverse_cols={"Hittable Pitch Take (%)", "Chase (%)", "Whiff vs. Secondaries (%)"},
+                reverse_cols={
+                    "Hittable Pitch Take (%)",
+                    "Chase (%)",
+                    "Whiff vs. Secondaries (%)",
+                    "Whiff vs. 95+ (%)",
+                    "GB (%)",
+                },
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
             )
@@ -709,7 +843,9 @@ with main_tabs[3]:
                 "Low Minors": [16],
             }
             base_stats = hitter_pct.copy()
-            base_stats = base_stats.assign(__season=base_stats["season"], __level=base_stats["level_id"])
+            base_stats = base_stats.assign(
+                __season=base_stats["season"], __level=base_stats["level_id"]
+            )
             df = hitter_pct.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
@@ -721,16 +857,16 @@ with main_tabs[3]:
                 "season",
                 "hitting_code",
                 "SEAGER_pctile",
-                "selection_pctile",
-                "hittable_pitches_pctile",
-                "damage_pctile",
-                "EV90_pctile",
-                "max_pctile",
-                "pfb_pctile",
+                "selection_skill_pctile",
+                "hittable_pitches_taken_pctile",
+                "damage_rate_pctile",
+                "EV90th_pctile",
+                "max_EV_pctile",
+                "pull_FB_pct_pctile",
                 "chase_pctile",
                 "z_con_pctile",
-                "sec_whiff_pctile",
-                "c_vs_avg_pctile",
+                "secondary_whiff_pct_pctile",
+                "contact_vs_avg_pctile",
                 "__season",
                 "__level",
             ]
@@ -740,20 +876,22 @@ with main_tabs[3]:
                 "hitting_code": "Team",
                 "season": "Season",
                 "SEAGER_pctile": "SEAGER",
-                "selection_pctile": "Selection Skill",
-                "hittable_pitches_pctile": "Hittable Pitch Take",
-                "damage_pctile": "Damage Rate",
-                "EV90_pctile": "90th Pctile EV",
-                "max_pctile": "Max EV",
-                "pfb_pctile": "Pulled FB",
+                "selection_skill_pctile": "Selection Skill",
+                "hittable_pitches_taken_pctile": "Hittable Pitch Take",
+                "damage_rate_pctile": "Damage Rate",
+                "EV90th_pctile": "90th Pctile EV",
+                "max_EV_pctile": "Max EV",
+                "pull_FB_pct_pctile": "Pulled FB",
                 "chase_pctile": "Chase",
                 "z_con_pctile": "Z-Contact",
-                "sec_whiff_pctile": "Whiff vs Secondaries",
-                "c_vs_avg_pctile": "Contact Over Expected",
+                "secondary_whiff_pct_pctile": "Whiff vs Secondaries",
+                "contact_vs_avg_pctile": "Contact Over Expected",
             }
             df = df.rename(columns=rename_map)
             df = df.sort_values(by="SEAGER", ascending=False)
-            stats_df = base_stats[[col for col in columns if col in base_stats.columns]].rename(columns=rename_map)
+            stats_df = base_stats[
+                [col for col in columns if col in base_stats.columns]
+            ].rename(columns=rename_map)
             render_table(
                 df,
                 group_cols=["__season", "__level"],
@@ -768,25 +906,52 @@ with main_tabs[4]:
     else:
         left, right = st.columns([1, 3])
         with left:
-            level = st.selectbox("Select Level", ["All", "MLB", "Triple-A", "Low-A", "Low Minors"], index=1, key="pit_level")
+            level = st.selectbox(
+                "Select Level",
+                ["All", "MLB", "Triple-A", "Low-A", "Low Minors"],
+                index=1,
+                key="pit_level",
+            )
             season = st.multiselect(
                 "Select Season",
                 season_options(pitcher_df),
                 default=["All"],
                 key="pit_season",
             )
-            min_value = st.number_input("Minimum Value", min_value=0, max_value=1000, value=100, step=1, key="pit_min")
-            filter_type = st.selectbox("Filter By", ["IP", "TBF"], index=1, key="pit_filter")
+            min_value = st.number_input(
+                "Minimum Value",
+                min_value=0,
+                max_value=1000,
+                value=100,
+                step=1,
+                key="pit_min",
+            )
+            filter_type = st.selectbox(
+                "Filter By", ["IP", "TBF"], index=1, key="pit_filter"
+            )
             per_game_min = st.number_input(
-                "Min TBF per Game", min_value=0, max_value=30, value=0, step=1, key="pit_tbf_per_game_min"
+                "Min TBF per Game",
+                min_value=0,
+                max_value=30,
+                value=0,
+                step=1,
+                key="pit_tbf_per_game_min",
             )
             per_game_max = st.number_input(
-                "Max TBF per Game", min_value=0, max_value=30, value=30, step=1, key="pit_tbf_per_game_max"
+                "Max TBF per Game",
+                min_value=0,
+                max_value=30,
+                value=30,
+                step=1,
+                key="pit_tbf_per_game_max",
             )
-            hand = st.selectbox("Select Pitcher Hand", ["Both", "LHP", "RHP"], key="pit_hand")
+            hand = st.selectbox(
+                "Select Pitcher Hand", ["Both", "LHP", "RHP"], key="pit_hand"
+            )
             team = st.multiselect(
                 "Select Team",
-                ["All"] + sorted(pitcher_df["pitching_code"].dropna().unique().tolist()),
+                ["All"]
+                + sorted(pitcher_df["pitching_code"].dropna().unique().tolist()),
                 default=["All"],
                 key="pit_team",
             )
@@ -806,14 +971,18 @@ with main_tabs[4]:
             }
             hand_map = {"Both": ["L", "R"], "LHP": ["L"], "RHP": ["R"]}
             base_stats = pitcher_df.copy()
-            base_stats = base_stats.assign(__season=base_stats["season"], __level=base_stats["level_id"])
+            base_stats = base_stats.assign(
+                __season=base_stats["season"], __level=base_stats["level_id"]
+            )
             df = pitcher_df.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = df[df["pitcher_hand"].isin(hand_map[hand])]
             df = filter_by_values(df, "season", season)
             df = filter_by_values(df, "pitching_code", team)
             df = filter_by_values(df, "name", player)
-            df = df[(df["TBF_per_G"] >= per_game_min) & (df["TBF_per_G"] <= per_game_max)]
+            df = df[
+                (df["TBF_per_G"] >= per_game_min) & (df["TBF_per_G"] <= per_game_max)
+            ]
             df = df.assign(__season=df["season"], __level=df["level_id"])
             if filter_type == "IP":
                 df = numeric_filter(df, "IP", min_value)
@@ -825,17 +994,18 @@ with main_tabs[4]:
                 "pitching_code",
                 "TBF",
                 "IP",
-                "std.ZQ",
-                "std.DMG",
-                "std.NRV",
+                "stuff",
                 "fastball_velo",
                 "max_velo",
                 "fastball_vaa",
+                "FA_pct",
+                "BB_rpm",
                 "SwStr",
                 "Ball_pct",
                 "Z_Contact",
                 "Chase",
                 "CSW",
+                "GB_pct",
                 "rel_z",
                 "rel_x",
                 "ext",
@@ -843,28 +1013,36 @@ with main_tabs[4]:
                 "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
+            # Round BB_rpm and stuff to integers
+            if "BB_rpm" in df.columns:
+                df["BB_rpm"] = df["BB_rpm"].round(0)
+            if "stuff" in df.columns:
+                df["stuff"] = df["stuff"].round(0)
             rename_map = {
                 "name": "Name",
                 "pitching_code": "Team",
                 "season": "Season",
-                "std.ZQ": "Pitch Quality",
-                "std.DMG": "Damage Suppression",
-                "std.NRV": "Non-BIP Skill",
+                "stuff": "Pitch Grade",
                 "fastball_velo": "FA mph",
                 "max_velo": "Max FA mph",
                 "fastball_vaa": "FA VAA",
+                "FA_pct": "FA Usage (%)",
+                "BB_rpm": "BB Spin",
                 "SwStr": "SwStr (%)",
                 "Ball_pct": "Ball (%)",
                 "Z_Contact": "Z-Contact (%)",
                 "Chase": "Chase (%)",
                 "CSW": "CSW (%)",
+                "GB_pct": "GB (%)",
                 "rel_z": "Vertical Release (ft.)",
                 "rel_x": "Horizontal Release (ft.)",
                 "ext": "Extension (ft.)",
             }
             df = df.rename(columns=rename_map)
-            df = df.sort_values(by="Pitch Quality", ascending=False)
-            stats_df = base_stats[[col for col in columns if col in base_stats.columns]].rename(columns=rename_map)
+            df = df.sort_values(by="Pitch Grade", ascending=False)
+            stats_df = base_stats[
+                [col for col in columns if col in base_stats.columns]
+            ].rename(columns=rename_map)
             render_table(
                 df,
                 reverse_cols={"FA VAA", "Ball (%)", "Z-Contact (%)"},
@@ -896,16 +1074,22 @@ with main_tabs[5]:
             player_df = player_df[player_df["pitching_code"] == team_choice]
 
         feature_cols = [
+            "stuff",
             "fastball_velo",
             "fastball_vaa",
+            "FA_pct",
+            "BB_rpm",
             "SwStr",
             "Ball_pct",
-            "Chase",
             "Z_Contact",
+            "Chase",
+            "GB_pct",
             "rel_z",
             "rel_x",
             "ext",
         ]
+        # Filter to only include columns that exist in the dataframe
+        feature_cols = [c for c in feature_cols if c in eligible_all.columns]
         eligible_comp = eligible_all.dropna(subset=feature_cols)
         eligible_comp = eligible_comp[eligible_comp["IP"] >= 40]
         if player_df.empty:
@@ -916,7 +1100,9 @@ with main_tabs[5]:
             stds = stats.std(ddof=0).replace(0, np.nan)
             zscores = (stats - means) / stds
             zscores = zscores.fillna(0)
-            target_vec = ((player_df[feature_cols] - means) / stds).fillna(0).iloc[0].to_numpy()
+            target_vec = (
+                ((player_df[feature_cols] - means) / stds).fillna(0).iloc[0].to_numpy()
+            )
             distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
             max_dist = distances.max() if len(distances) else 0.0
             if max_dist == 0:
@@ -925,7 +1111,9 @@ with main_tabs[5]:
                 similarity = 100 * (1 - (distances / max_dist))
             eligible_comp = eligible_comp.copy()
             eligible_comp["similarity_score"] = similarity.round(0)
-            eligible_comp = eligible_comp.sort_values("similarity_score", ascending=False)
+            eligible_comp = eligible_comp.sort_values(
+                "similarity_score", ascending=False
+            )
 
             display_cols = [
                 "name",
@@ -936,9 +1124,19 @@ with main_tabs[5]:
                 "similarity_score",
                 *feature_cols,
             ]
-            eligible_comp = eligible_comp.assign(__season=eligible_comp["season"], __level=eligible_comp["level_id"])
+            for col in ["stuff", "stuff_z"]:
+                if col in eligible_comp.columns and col not in display_cols:
+                    display_cols.append(col)
+            eligible_comp = eligible_comp.assign(
+                __season=eligible_comp["season"], __level=eligible_comp["level_id"]
+            )
             display_cols += ["__season", "__level"]
             df = eligible_comp[display_cols].copy()
+            # Round BB_rpm and stuff to integers
+            if "BB_rpm" in df.columns:
+                df["BB_rpm"] = df["BB_rpm"].round(0)
+            if "stuff" in df.columns:
+                df["stuff"] = df["stuff"].round(0)
             rename_map = {
                 "name": "Name",
                 "pitching_code": "Team",
@@ -949,33 +1147,47 @@ with main_tabs[5]:
                 "Ball_pct": "Ball (%)",
                 "Chase": "Chase (%)",
                 "Z_Contact": "Z-Contact (%)",
+                "GB_pct": "GB (%)",
                 "rel_z": "Vertical Release (ft.)",
                 "rel_x": "Horizontal Release (ft.)",
                 "ext": "Extension (ft.)",
                 "similarity_score": "Similarity (0-100)",
+                "stuff": "Pitch Grade",
+                "stuff_z": "Pitch Grade Z",
+                "FA_pct": "FA Usage (%)",
+                "BB_rpm": "BB Spin",
             }
             df = df.rename(columns=rename_map)
             stats_df = pitcher_df.copy()
-            stats_df = stats_df.assign(__season=stats_df["season"], __level=stats_df["level_id"])
+            stats_df = stats_df.assign(
+                __season=stats_df["season"], __level=stats_df["level_id"]
+            )
+            stats_columns = [
+                "name",
+                "pitching_code",
+                "season",
+                "TBF",
+                "IP",
+                "stuff",
+                "fastball_velo",
+                "max_velo",
+                "fastball_vaa",
+                "FA_pct",
+                "BB_rpm",
+                "SwStr",
+                "Ball_pct",
+                "Z_Contact",
+                "Chase",
+                "CSW",
+                "GB_pct",
+                "rel_z",
+                "rel_x",
+                "ext",
+                "__season",
+                "__level",
+            ]
             stats_df = stats_df[
-                [
-                    "name",
-                    "pitching_code",
-                    "season",
-                    "TBF",
-                    "IP",
-                    "fastball_velo",
-                    "fastball_vaa",
-                    "SwStr",
-                    "Ball_pct",
-                    "Chase",
-                    "Z_Contact",
-                    "rel_z",
-                    "rel_x",
-                    "ext",
-                    "__season",
-                    "__level",
-                ]
+                [col for col in stats_columns if col in stats_df.columns]
             ].rename(columns=rename_map)
             target_display_cols = [
                 "name",
@@ -984,11 +1196,16 @@ with main_tabs[5]:
                 "TBF",
                 "IP",
                 *feature_cols,
+                "stuff_z",
                 "__season",
                 "__level",
             ]
-            target_df = player_df.assign(__season=player_df["season"], __level=player_df["level_id"])
-            target_df = target_df[[col for col in target_display_cols if col in target_df.columns]].copy()
+            target_df = player_df.assign(
+                __season=player_df["season"], __level=player_df["level_id"]
+            )
+            target_df = target_df[
+                [col for col in target_display_cols if col in target_df.columns]
+            ].copy()
             target_df = target_df.rename(columns=rename_map)
             st.caption("Selected season")
             render_table(
@@ -1028,7 +1245,8 @@ with main_tabs[6]:
             )
             team = st.multiselect(
                 "Select Team",
-                ["All"] + sorted(pitcher_pct["pitching_code"].dropna().unique().tolist()),
+                ["All"]
+                + sorted(pitcher_pct["pitching_code"].dropna().unique().tolist()),
                 default=["All"],
                 key="pit_pct_team",
             )
@@ -1047,7 +1265,9 @@ with main_tabs[6]:
                 "Low Minors": [16],
             }
             base_stats = pitcher_pct.copy()
-            base_stats = base_stats.assign(__season=base_stats["season"], __level=base_stats["level_id"])
+            base_stats = base_stats.assign(
+                __season=base_stats["season"], __level=base_stats["level_id"]
+            )
             df = pitcher_pct.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
@@ -1058,19 +1278,19 @@ with main_tabs[6]:
                 "name",
                 "season",
                 "pitching_code",
-                "PQ_pctile",
-                "DMG_pctile",
-                "NRV_pctile",
-                "FA_velo_pctile",
-                "FA_max_pctile",
-                "FA_vaa_pctile",
+                "stuff",
+                "stuff_z",
+                "stuff_pctile",
+                "fastball_velo_pctile",
+                "max_velo_pctile",
+                "fastball_vaa_pctile",
                 "SwStr_pctile",
-                "Ball_pctile",
-                "Z_con_pctile",
+                "Ball_pct_pctile",
+                "Z_Contact_pctile",
                 "Chase_pctile",
                 "CSW_pctile",
-                "rZ_pctile",
-                "rX_pctile",
+                "rel_z_pctile",
+                "rel_x_pctile",
                 "ext_pctile",
                 "__season",
                 "__level",
@@ -1080,24 +1300,26 @@ with main_tabs[6]:
                 "name": "Name",
                 "pitching_code": "Team",
                 "season": "Season",
-                "PQ_pctile": "Pitch Quality",
-                "DMG_pctile": "Damage Suppression",
-                "NRV_pctile": "Non-BIP Skill",
-                "FA_velo_pctile": "Avg FA mph",
-                "FA_max_pctile": "Max FA mph",
-                "FA_vaa_pctile": "FA VAA",
+                "stuff": "Pitch Grade",
+                "stuff_z": "Pitch Grade Z",
+                "stuff_pctile": "Pitch Grade Pctile",
+                "fastball_velo_pctile": "Avg FA mph",
+                "max_velo_pctile": "Max FA mph",
+                "fastball_vaa_pctile": "FA VAA",
                 "SwStr_pctile": "SwStr (%)",
-                "Ball_pctile": "Ball (%)",
-                "Z_con_pctile": "Z-Contact (%)",
+                "Ball_pct_pctile": "Ball (%)",
+                "Z_Contact_pctile": "Z-Contact (%)",
                 "Chase_pctile": "Chase (%)",
                 "CSW_pctile": "CSW (%)",
-                "rZ_pctile": "Vertical Release (ft.)",
-                "rX_pctile": "Horizontal Release (ft.)",
+                "rel_z_pctile": "Vertical Release (ft.)",
+                "rel_x_pctile": "Horizontal Release (ft.)",
                 "ext_pctile": "Extension (ft.)",
             }
             df = df.rename(columns=rename_map)
-            df = df.sort_values(by="Pitch Quality", ascending=False)
-            stats_df = base_stats[[col for col in columns if col in base_stats.columns]].rename(columns=rename_map)
+            df = df.sort_values(by="Pitch Grade", ascending=False)
+            stats_df = base_stats[
+                [col for col in columns if col in base_stats.columns]
+            ].rename(columns=rename_map)
             render_table(
                 df,
                 group_cols=["__season", "__level"],
@@ -1124,10 +1346,13 @@ with main_tabs[7]:
                 default=["All"],
                 key="pt_season",
             )
-            hand = st.selectbox("Select Pitcher Hand", ["Both", "LHP", "RHP"], key="pt_hand")
+            hand = st.selectbox(
+                "Select Pitcher Hand", ["Both", "LHP", "RHP"], key="pt_hand"
+            )
             team = st.multiselect(
                 "Select Team",
-                ["All"] + sorted(pitch_types["pitching_code"].dropna().unique().tolist()),
+                ["All"]
+                + sorted(pitch_types["pitching_code"].dropna().unique().tolist()),
                 default=["All"],
                 key="pt_team",
             )
@@ -1150,7 +1375,12 @@ with main_tabs[7]:
                 key="pt_tag",
             )
             min_pitches = st.number_input(
-                "Minimum Pitches", min_value=0, max_value=3000, value=100, step=1, key="pt_min"
+                "Minimum Pitches",
+                min_value=0,
+                max_value=3000,
+                value=100,
+                step=1,
+                key="pt_min",
             )
         with right:
             level_map = {
@@ -1162,7 +1392,9 @@ with main_tabs[7]:
             }
             hand_map = {"Both": ["L", "R"], "LHP": ["L"], "RHP": ["R"]}
             base_stats = pitch_types.copy()
-            base_stats = base_stats.assign(__season=base_stats["season"], __level=base_stats["level_id"])
+            base_stats = base_stats.assign(
+                __season=base_stats["season"], __level=base_stats["level_id"]
+            )
             df = pitch_types.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = df[df["pitcher_hand"].isin(hand_map[hand])]
@@ -1180,15 +1412,13 @@ with main_tabs[7]:
                 "pitch_tag",
                 "pitches",
                 "pct",
-                "std.ZQ",
-                "std.DMG",
-                "std.NRV",
+                "stuff",
                 "velo",
                 "max_velo",
                 "vaa",
                 "haa",
-                "ivb",
-                "hb",
+                "vbreak",
+                "hbreak",
                 "SwStr",
                 "Z_Contact",
                 "Ball_pct",
@@ -1199,6 +1429,9 @@ with main_tabs[7]:
                 "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
+            # Round stuff to integer
+            if "stuff" in df.columns:
+                df["stuff"] = df["stuff"].round(0)
             rename_map = {
                 "name": "Name",
                 "pitching_code": "Team",
@@ -1206,15 +1439,13 @@ with main_tabs[7]:
                 "pitch_tag": "Pitch Type",
                 "pitches": "#",
                 "pct": "Usage (%)",
-                "std.ZQ": "Pitch Quality",
-                "std.NRV": "Non-BIP Skill",
-                "std.DMG": "Damage Suppression",
+                "stuff": "Pitch Grade",
                 "velo": "Velo",
                 "max_velo": "Max Velo",
                 "vaa": "VAA",
                 "haa": "HAA",
-                "ivb": "IVB (in.)",
-                "hb": "HB (in.)",
+                "vbreak": "IVB (in.)",
+                "hbreak": "HB (in.)",
                 "CSW": "CSW (%)",
                 "SwStr": "SwStr (%)",
                 "Z_Contact": "Z-Contact (%)",
@@ -1223,8 +1454,10 @@ with main_tabs[7]:
                 "Ball_pct": "Ball (%)",
             }
             df = df.rename(columns=rename_map)
-            df = df.sort_values(by="Pitch Quality", ascending=False)
-            stats_df = base_stats[[col for col in columns if col in base_stats.columns]].rename(columns=rename_map)
+            df = df.sort_values(by="Pitch Grade", ascending=False)
+            stats_df = base_stats[
+                [col for col in columns if col in base_stats.columns]
+            ].rename(columns=rename_map)
             render_table(
                 df,
                 reverse_cols={"Z-Contact (%)", "Ball (%)"},
@@ -1235,7 +1468,9 @@ with main_tabs[7]:
 
 with main_tabs[8]:
     st.subheader("Percentile Rankings - Pitch Types")
-    st.caption("min. 50 pitches thrown. Percentiles are within pitch type at respective level.")
+    st.caption(
+        "min. 50 pitches thrown. Percentiles are within pitch type at respective level."
+    )
     if pitch_types_pct.empty:
         st.info("Missing pitch_types_pctiles.csv")
     else:
@@ -1253,10 +1488,13 @@ with main_tabs[8]:
                 default=["All"],
                 key="pt_pct_season",
             )
-            hand = st.selectbox("Select Pitcher Hand", ["Both", "LHP", "RHP"], key="pt_pct_hand")
+            hand = st.selectbox(
+                "Select Pitcher Hand", ["Both", "LHP", "RHP"], key="pt_pct_hand"
+            )
             team = st.multiselect(
                 "Select Team",
-                ["All"] + sorted(pitch_types_pct["pitching_code"].dropna().unique().tolist()),
+                ["All"]
+                + sorted(pitch_types_pct["pitching_code"].dropna().unique().tolist()),
                 default=["All"],
                 key="pt_pct_team",
             )
@@ -1268,7 +1506,8 @@ with main_tabs[8]:
             )
             pitch_tag = st.multiselect(
                 "Select Pitch Type",
-                ["All"] + sorted(pitch_types_pct["pitch_tag"].dropna().unique().tolist()),
+                ["All"]
+                + sorted(pitch_types_pct["pitch_tag"].dropna().unique().tolist()),
                 default=["All"],
                 key="pt_pct_tag",
             )
@@ -1282,7 +1521,9 @@ with main_tabs[8]:
             }
             hand_map = {"Both": ["L", "R"], "LHP": ["L"], "RHP": ["R"]}
             base_stats = pitch_types_pct.copy()
-            base_stats = base_stats.assign(__season=base_stats["season"], __level=base_stats["level_id"])
+            base_stats = base_stats.assign(
+                __season=base_stats["season"], __level=base_stats["level_id"]
+            )
             df = pitch_types_pct.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = df[df["pitcher_hand"].isin(hand_map[hand])]
@@ -1296,20 +1537,19 @@ with main_tabs[8]:
                 "pitching_code",
                 "season",
                 "pitch_tag",
-                "usage_pctile",
-                "PQ_pctile",
-                "DMG_pctile",
-                "NRV_pctile",
+                "pct_pctile",
+                "stuff",
+                "stuff_z",
+                "stuff_pctile",
                 "velo_pctile",
                 "max_velo_pctile",
                 "vaa_pctile",
                 "haa_pctile",
-                "ivb_pctile",
-                "hb_pctile",
+                "vbreak_pctile",
+                "hbreak_pctile",
                 "SwStr_pctile",
-                "Ball_pctile",
-                "zone_pctile",
-                "Z_con_pctile",
+                "Ball_pct_pctile",
+                "Z_Contact_pctile",
                 "Chase_pctile",
                 "CSW_pctile",
                 "__season",
@@ -1321,26 +1561,27 @@ with main_tabs[8]:
                 "pitching_code": "Team",
                 "season": "Season",
                 "pitch_tag": "Pitch Type",
-                "usage_pctile": "Usage (%)",
-                "PQ_pctile": "Pitch Quality",
-                "NRV_pctile": "Non-BIP Skill",
-                "DMG_pctile": "Damage Suppression",
+                "pct_pctile": "Usage (%)",
+                "stuff": "Pitch Grade",
+                "stuff_z": "Pitch Grade Z",
+                "stuff_pctile": "Pitch Grade Pctile",
                 "velo_pctile": "Velo",
                 "max_velo_pctile": "Max Velo",
                 "vaa_pctile": "VAA",
                 "haa_pctile": "HAA",
-                "ivb_pctile": "IVB (in.)",
-                "hb_pctile": "HB (in.)",
+                "vbreak_pctile": "IVB (in.)",
+                "hbreak_pctile": "HB (in.)",
                 "CSW_pctile": "CSW (%)",
                 "SwStr_pctile": "SwStr (%)",
-                "Z_con_pctile": "Z-Contact (%)",
+                "Z_Contact_pctile": "Z-Contact (%)",
                 "Chase_pctile": "Chase (%)",
-                "zone_pctile": "Zone (%)",
-                "Ball_pctile": "Ball (%)",
+                "Ball_pct_pctile": "Ball (%)",
             }
             df = df.rename(columns=rename_map)
-            df = df.sort_values(by="Pitch Quality", ascending=False)
-            stats_df = base_stats[[col for col in columns if col in base_stats.columns]].rename(columns=rename_map)
+            df = df.sort_values(by="Pitch Grade", ascending=False)
+            stats_df = base_stats[
+                [col for col in columns if col in base_stats.columns]
+            ].rename(columns=rename_map)
             render_table(
                 df,
                 group_cols=["__season", "__level"],
@@ -1355,7 +1596,12 @@ with main_tabs[9]:
     else:
         left, right = st.columns([1, 3])
         with left:
-            level = st.selectbox("Select Level", ["MLB", "Triple-A", "Low-A", "Low Minors"], index=0, key="team_hit_level")
+            level = st.selectbox(
+                "Select Level",
+                ["MLB", "Triple-A", "Low-A", "Low Minors"],
+                index=0,
+                key="team_hit_level",
+            )
             season = st.multiselect(
                 "Select Season",
                 season_options(team_damage),
@@ -1364,7 +1610,8 @@ with main_tabs[9]:
             )
             team = st.multiselect(
                 "Select Team",
-                ["All"] + sorted(team_damage["hitting_code"].dropna().unique().tolist()),
+                ["All"]
+                + sorted(team_damage["hitting_code"].dropna().unique().tolist()),
                 default=["All"],
                 key="team_hit_team",
             )
@@ -1376,7 +1623,9 @@ with main_tabs[9]:
                 "Low Minors": [16],
             }
             base_stats = team_damage.copy()
-            base_stats = base_stats.assign(__season=base_stats["season"], __level=base_stats["level_id"])
+            base_stats = base_stats.assign(
+                __season=base_stats["season"], __level=base_stats["level_id"]
+            )
             df = team_damage.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
@@ -1390,6 +1639,8 @@ with main_tabs[9]:
                 "damage_rate",
                 "EV90th",
                 "pull_FB_pct",
+                "FB_pct",
+                "GB_pct",
                 "SEAGER",
                 "selection_skill",
                 "hittable_pitches_taken",
@@ -1408,6 +1659,8 @@ with main_tabs[9]:
                 "damage_rate": "Damage/BBE (%)",
                 "EV90th": "90th Pctile EV",
                 "pull_FB_pct": "Pulled FB (%)",
+                "FB_pct": "FB (%)",
+                "GB_pct": "GB (%)",
                 "selection_skill": "Selectivity (%)",
                 "hittable_pitches_taken": "Hittable Pitch Take (%)",
                 "chase": "Chase (%)",
@@ -1417,10 +1670,17 @@ with main_tabs[9]:
             }
             df = df.rename(columns=rename_map)
             df = df.sort_values(by="Damage/BBE (%)", ascending=False)
-            stats_df = base_stats[[col for col in columns if col in base_stats.columns]].rename(columns=rename_map)
+            stats_df = base_stats[
+                [col for col in columns if col in base_stats.columns]
+            ].rename(columns=rename_map)
             render_table(
                 df,
-                reverse_cols={"Hittable Pitch Take (%)", "Chase (%)", "Whiff vs. Secondaries (%)"},
+                reverse_cols={
+                    "Hittable Pitch Take (%)",
+                    "Chase (%)",
+                    "Whiff vs. Secondaries (%)",
+                    "GB (%)",
+                },
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
             )
@@ -1447,7 +1707,8 @@ with main_tabs[10]:
             )
             team = st.multiselect(
                 "Select Team",
-                ["All"] + sorted(team_stuff["pitching_code"].dropna().unique().tolist()),
+                ["All"]
+                + sorted(team_stuff["pitching_code"].dropna().unique().tolist()),
                 default=["All"],
                 key="team_pitch_team",
             )
@@ -1459,7 +1720,9 @@ with main_tabs[10]:
                 "Low Minors": [16],
             }
             base_stats = team_stuff.copy()
-            base_stats = base_stats.assign(__season=base_stats["season"], __level=base_stats["level_id"])
+            base_stats = base_stats.assign(
+                __season=base_stats["season"], __level=base_stats["level_id"]
+            )
             df = team_stuff.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
@@ -1469,9 +1732,7 @@ with main_tabs[10]:
                 "pitching_code",
                 "season",
                 "IP",
-                "std.ZQ",
-                "std.DMG",
-                "std.NRV",
+                "stuff",
                 "fastball_velo",
                 "fastball_vaa",
                 "SwStr",
@@ -1479,27 +1740,32 @@ with main_tabs[10]:
                 "Z_Contact",
                 "Chase",
                 "CSW",
+                "GB_pct",
                 "__season",
                 "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
+            # Round stuff to integer
+            if "stuff" in df.columns:
+                df["stuff"] = df["stuff"].round(0)
             rename_map = {
                 "pitching_code": "Team",
                 "season": "Season",
-                "std.ZQ": "Pitch Quality",
-                "std.NRV": "Non-BIP Skill",
-                "std.DMG": "Damage Suppression",
+                "stuff": "Pitch Grade",
+                "fastball_velo": "FA mph",
+                "fastball_vaa": "FA VAA",
                 "SwStr": "SwStr (%)",
                 "Ball_pct": "Ball (%)",
                 "Z_Contact": "Z-Contact (%)",
                 "Chase": "Chase (%)",
                 "CSW": "CSW (%)",
-                "fastball_velo": "FA mph",
-                "fastball_vaa": "FA VAA",
+                "GB_pct": "GB (%)",
             }
             df = df.rename(columns=rename_map)
-            df = df.sort_values(by="Pitch Quality", ascending=False)
-            stats_df = base_stats[[col for col in columns if col in base_stats.columns]].rename(columns=rename_map)
+            df = df.sort_values(by="Pitch Grade", ascending=False)
+            stats_df = base_stats[
+                [col for col in columns if col in base_stats.columns]
+            ].rename(columns=rename_map)
             render_table(
                 df,
                 reverse_cols={"FA VAA", "Ball (%)", "Z-Contact (%)"},
@@ -1525,10 +1791,14 @@ with main_tabs[11]:
             df = hitting_avg.copy()
             df = filter_by_values(df, "season", season)
             df = df.assign(
-                Level=df["level_id"].map({1: "MLB", 11: "Triple-A", 14: "Low-A", 16: "Low Minors"})
+                Level=df["level_id"].map(
+                    {1: "MLB", 11: "Triple-A", 14: "Low-A", 16: "Low Minors"}
+                )
             )
             base_stats = hitting_avg.copy()
-            base_stats = base_stats.assign(__season=base_stats["season"], __level=base_stats["level_id"])
+            base_stats = base_stats.assign(
+                __season=base_stats["season"], __level=base_stats["level_id"]
+            )
             df = df.assign(__season=df["season"], __level=df["level_id"])
             columns = [
                 "Level",
@@ -1562,7 +1832,9 @@ with main_tabs[11]:
             }
             df = df.rename(columns=rename_map)
             df = df.sort_values(by="Damage/BBE (%)", ascending=False)
-            stats_df = base_stats[[col for col in columns if col in base_stats.columns]].rename(columns=rename_map)
+            stats_df = base_stats[
+                [col for col in columns if col in base_stats.columns]
+            ].rename(columns=rename_map)
             render_table(
                 df,
                 group_cols=["__season", "__level"],
@@ -1597,13 +1869,17 @@ with main_tabs[12]:
                 "Low Minors": [16],
             }
             base_stats = pitching_avg.copy()
-            base_stats = base_stats.assign(__season=base_stats["season"], __level=base_stats["level_id"])
+            base_stats = base_stats.assign(
+                __season=base_stats["season"], __level=base_stats["level_id"]
+            )
             df = pitching_avg.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
             df = df.assign(__season=df["season"], __level=df["level_id"])
             columns = [
                 "season",
+                "stuff",
+                "stuff_z",
                 "fastball_velo",
                 "fastball_vaa",
                 "SwStr",
@@ -1611,6 +1887,7 @@ with main_tabs[12]:
                 "Z_Contact",
                 "Chase",
                 "CSW",
+                "GB_pct",
                 "__season",
                 "__level",
             ]
@@ -1624,9 +1901,14 @@ with main_tabs[12]:
                 "Chase": "Chase (%)",
                 "fastball_velo": "FA mph",
                 "fastball_vaa": "FA VAA",
+                "stuff": "Pitch Grade",
+                "stuff_z": "Pitch Grade Z",
+                "GB_pct": "GB (%)",
             }
             df = df.rename(columns=rename_map)
-            stats_df = base_stats[[col for col in columns if col in base_stats.columns]].rename(columns=rename_map)
+            stats_df = base_stats[
+                [col for col in columns if col in base_stats.columns]
+            ].rename(columns=rename_map)
             render_table(
                 df,
                 group_cols=["__season", "__level"],
@@ -1659,14 +1941,9 @@ with main_tabs[14]:
     st.subheader("Pitching Metrics")
     st.markdown(
         """
-**Pitch Quality** - A blend of Non-BIP Skill and Damage Suppression, each weighted by that pitcher's tendency to allow or avoid balls in play.
-
-**Non-BIP Skill** - Expected run values of outcomes on non-balls in play based on pitch traits only.
-
-**Damage Suppression** - Ability to avoid damage on balls in play based on pitch traits only.
-
 Pitch model features include Velocity, IVB, HB, VAA, HAA, release angles, spin efficiency, spin axis, RPM,
 release height/width, extension, and handedness.
+
+**Pitch Grade** - CatBoost-based run value model prediction scaled to a 20-80 scouting grade by season and pitch type.
 """
     )
-

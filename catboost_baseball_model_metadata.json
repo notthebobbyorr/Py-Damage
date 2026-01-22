@@ -1,0 +1,87 @@
+{
+  "features": [
+    "avg_release_z",
+    "avg_release_x",
+    "avg_ext",
+    "pitch_velo",
+    "rpm",
+    "inf_rpm",
+    "vbreak",
+    "hbreak",
+    "axis",
+    "inf_axis",
+    "spin_efficiency",
+    "z_angle_release",
+    "x_angle_release",
+    "loc_adj_vaa",
+    "haa",
+    "primary_velo",
+    "primary_vbreak",
+    "primary_hbreak",
+    "primary_loc_adj_vaa",
+    "primary_z_release",
+    "primary_x_release",
+    "primary_rpm",
+    "primary_axis",
+    "throws",
+    "stands"
+  ],
+  "categorical_features": [
+    "throws",
+    "stands"
+  ],
+  "boruta_selected_features": [
+    "avg_release_z",
+    "avg_release_x",
+    "avg_ext",
+    "pitch_velo",
+    "rpm",
+    "inf_rpm",
+    "vbreak",
+    "hbreak",
+    "axis",
+    "inf_axis",
+    "spin_efficiency",
+    "z_angle_release",
+    "x_angle_release",
+    "loc_adj_vaa",
+    "haa",
+    "primary_velo",
+    "primary_vbreak",
+    "primary_hbreak",
+    "primary_loc_adj_vaa",
+    "primary_z_release",
+    "primary_x_release",
+    "primary_rpm",
+    "primary_axis"
+  ],
+  "target_col": "event_rv",
+  "pitch_group_mapping": {
+    "FA": [
+      "FA"
+    ],
+    "BR": [
+      "CU",
+      "SL"
+    ],
+    "OFF": [
+      "CH"
+    ],
+    "XX": "other"
+  },
+  "pitch_group_source_col": "pi_pitch_group",
+  "metrics": {
+    "train": {
+      "rmse": 0.06472794369983377,
+      "r2": 0.10250942143034625,
+      "mae": 0.054018969669431094
+    },
+    "test": {
+      "rmse": 0.06526619917447632,
+      "r2": 0.08756967267098104,
+      "mae": 0.05448728971747406
+    },
+    "best_iteration": 903,
+    "n_features": 25
+  }
+}

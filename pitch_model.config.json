@@ -1,0 +1,34 @@
+{
+  "target": "delta_run_pred",
+  "numerical_features": [
+    "avg_release_z",
+    "avg_release_x",
+    "avg_ext",
+    "pitch_velo",
+    "rpm",
+    "vbreak",
+    "hbreak",
+    "axis",
+    "spin_efficiency",
+    "z_angle_release",
+    "x_angle_release",
+    "vaa",
+    "haa",
+    "primary_velo",
+    "primary_loc_adj_vaa",
+    "primary_z_release",
+    "primary_x_release",
+    "primary_rpm",
+    "primary_axis"
+  ],
+  "categorical_features": [
+    "balls",
+    "strikes",
+    "throws",
+    "stands"
+  ],
+  "model_type": "regressor",
+  "test_size": 0.2,
+  "random_state": 17,
+  "sample_proportion": 0.2
+}
