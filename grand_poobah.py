@@ -905,7 +905,7 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                 (
                     100
                     * (
-                        (pl.col("launch_angle") > 20)
+                        (pl.col("launch_angle") >= 20)
                         & (pl.col("spray_angle_adj") < -15)
                         & (pl.col("is_in_play") == True)
                     ).sum()
@@ -976,7 +976,7 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                         (pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)
                     ).sum()
                     / (pl.col("is_in_play") == True).sum()
-                ).alias("GB_pct"),
+                ).alias("LA_lte_0"),
                 (
                     100
                     * (
@@ -989,10 +989,10 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                 (
                     100
                     * (
-                        (pl.col("launch_angle") > 20) & (pl.col("is_in_play") == True)
+                        (pl.col("launch_angle") >= 20) & (pl.col("is_in_play") == True)
                     ).sum()
                     / (pl.col("is_in_play") == True).sum()
-                ).alias("FB_pct"),
+                ).alias("LA_gte_20"),
                 pl.mean("bat_speed").alias("bat_speed"),
                 pl.mean("swing_length").alias("swing_length"),
                 pl.mean("attack_angle").alias("attack_angle"),
@@ -1098,9 +1098,9 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
             ).alias("FA_spin_eff"),
             (
                 100
-                * ((pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)).sum()
+                * ((pl.col("launch_angle") <= 0) & (pl.col("is_in_play") == True)).sum()
                 / (pl.col("is_in_play") == True).sum()
-            ).alias("GB_pct"),
+            ).alias("LA_lte_0"),
             (
                 100
                 * (
@@ -1112,9 +1112,11 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
             ).alias("LD_pct"),
             (
                 100
-                * ((pl.col("launch_angle") > 20) & (pl.col("is_in_play") == True)).sum()
+                * (
+                    (pl.col("launch_angle") >= 20) & (pl.col("is_in_play") == True)
+                ).sum()
                 / (pl.col("is_in_play") == True).sum()
-            ).alias("FB_pct"),
+            ).alias("LA_gte_20"),
             pl.mean("primary_velo").alias("fastball_velo"),
             pl.max("pitch_velo").alias("max_velo"),
             pl.mean("primary_vaa").alias("fastball_vaa"),
@@ -1295,7 +1297,7 @@ def build_team_hitting(df: pl.DataFrame) -> pl.DataFrame:
                         (pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)
                     ).sum()
                     / (pl.col("is_in_play") == True).sum()
-                ).alias("GB_pct"),
+                ).alias("LA_lte_0"),
                 (
                     100
                     * (
@@ -1308,14 +1310,14 @@ def build_team_hitting(df: pl.DataFrame) -> pl.DataFrame:
                 (
                     100
                     * (
-                        (pl.col("launch_angle") > 20) & (pl.col("is_in_play") == True)
+                        (pl.col("launch_angle") >= 20) & (pl.col("is_in_play") == True)
                     ).sum()
                     / (pl.col("is_in_play") == True).sum()
-                ).alias("FB_pct"),
+                ).alias("LA_gte_20"),
                 (
                     100
                     * (
-                        (pl.col("launch_angle") > 20)
+                        (pl.col("launch_angle") >= 20)
                         & (pl.col("spray_angle_adj") < -15)
                         & (pl.col("is_in_play") == True)
                     ).sum()
@@ -1402,7 +1404,7 @@ def build_team_pitching(df: pl.DataFrame) -> pl.DataFrame:
                 100
                 * ((pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)).sum()
                 / (pl.col("is_in_play") == True).sum()
-            ).alias("GB_pct"),
+            ).alias("LA_lte_0"),
             (
                 100
                 * (
@@ -1414,9 +1416,11 @@ def build_team_pitching(df: pl.DataFrame) -> pl.DataFrame:
             ).alias("LD_pct"),
             (
                 100
-                * ((pl.col("launch_angle") > 20) & (pl.col("is_in_play") == True)).sum()
+                * (
+                    (pl.col("launch_angle") >= 20) & (pl.col("is_in_play") == True)
+                ).sum()
                 / (pl.col("is_in_play") == True).sum()
-            ).alias("FB_pct"),
+            ).alias("LA_gte_20"),
             pl.mean("primary_velo").alias("fastball_velo"),
             pl.mean("primary_vaa").alias("fastball_vaa"),
         ]
@@ -1425,16 +1429,47 @@ def build_team_pitching(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def add_percentiles(
-    df: pl.DataFrame, group_cols: Iterable[str], value_cols: Iterable[str]
+    df: pl.DataFrame,
+    group_cols: Iterable[str],
+    value_cols: Iterable[str],
+    filter_col: str | None = None,
+    min_threshold: float | None = None,
 ) -> pl.DataFrame:
+    """Add percentile columns for value_cols, grouped by group_cols.
+
+    If filter_col and min_threshold are provided, percentiles are computed only
+    among rows meeting the threshold, but results are returned for all rows.
+    """
     if df.is_empty():
         return df
     df_pd = df.to_pandas()
-    pct = df_pd.groupby(list(group_cols))[list(value_cols)].rank(pct=True) * 100
-    pct.columns = [f"{c}_pctile" for c in pct.columns]
-    pct = pct.reset_index(drop=True)
-    merged = pd.concat([df_pd.reset_index(drop=True), pct], axis=1)
-    return pl.from_pandas(merged)
+    group_list = list(group_cols)
+    value_list = list(value_cols)
+
+    # If threshold specified, compute percentiles only among qualified rows
+    if filter_col and min_threshold is not None and filter_col in df_pd.columns:
+        qualified = df_pd[df_pd[filter_col] >= min_threshold].copy()
+        if qualified.empty:
+            # No qualified rows, return df with null percentile columns
+            for col in value_list:
+                df_pd[f"{col}_pctile"] = None
+            return pl.from_pandas(df_pd)
+
+        # Compute percentiles among qualified rows
+        pct = qualified.groupby(group_list)[value_list].rank(pct=True) * 100
+        pct.columns = [f"{c}_pctile" for c in pct.columns]
+        pct.index = qualified.index
+
+        # Merge back to original dataframe (unqualified rows get NaN)
+        for col in pct.columns:
+            df_pd[col] = pct[col]
+    else:
+        pct = df_pd.groupby(group_list)[value_list].rank(pct=True) * 100
+        pct.columns = [f"{c}_pctile" for c in pct.columns]
+        pct = pct.reset_index(drop=True)
+        df_pd = pd.concat([df_pd.reset_index(drop=True), pct], axis=1)
+
+    return pl.from_pandas(df_pd)
 
 
 def write_csv(df: pl.DataFrame, name: str, out_dir: Path) -> None:
@@ -1621,9 +1656,16 @@ def main(min_season: int, max_season: int, out_dir: Path, level_ids: list[int]) 
             sample_rows = int(os.getenv("POOBAH_SAMPLE_ROWS", "0"))
         except ValueError:
             sample_rows = 0
-        if sample_rows > 0:
-            sample_path = out_dir / f"pitch_sample_{min_season}_{max_season}.csv"
-            pitch.head(sample_rows).to_pandas().to_csv(sample_path, index=False)
+        if sample_rows != 0:
+            sample_path = out_dir / f"pitch_data_{min_season}_{max_season}.parquet"
+            if sample_rows < 0:
+                # Save all rows
+                pitch.write_parquet(sample_path)
+                print(f"Saved all {len(pitch):,} pitch rows to {sample_path}")
+            else:
+                # Save sample
+                pitch.head(sample_rows).write_parquet(sample_path)
+                print(f"Saved {sample_rows:,} sample pitch rows to {sample_path}")
 
     hitters = build_hitters(pitch)
     pitchers = build_pitchers(pitch)
@@ -1697,6 +1739,8 @@ def main(min_season: int, max_season: int, out_dir: Path, level_ids: list[int]) 
             "secondary_whiff_pct",
             "contact_vs_avg",
         ],
+        filter_col="PA",
+        min_threshold=200,
     )
     write_csv(hitter_pct, "hitter_pctiles.csv", out_dir)
 
@@ -1717,6 +1761,8 @@ def main(min_season: int, max_season: int, out_dir: Path, level_ids: list[int]) 
             "rel_x",
             "ext",
         ],
+        filter_col="IP",
+        min_threshold=40,
     )
     write_csv(pitcher_pct, "pitcher_pctiles.csv", out_dir)
 
@@ -1738,6 +1784,8 @@ def main(min_season: int, max_season: int, out_dir: Path, level_ids: list[int]) 
             "Chase",
             "CSW",
         ],
+        filter_col="pitches",
+        min_threshold=100,
     )
     write_csv(pitch_types_pct, "pitch_types_pctiles.csv", out_dir)
 
@@ -1757,10 +1805,13 @@ if __name__ == "__main__":
         help="Output directory for CSVs",
     )
     parser.add_argument(
-        "--sample-rows", type=int, default=0, help="Write a pitch-level sample CSV"
+        "--sample-rows",
+        type=int,
+        default=0,
+        help="Write pitch-level CSV: -1 for all rows, N>0 for sample of N rows, 0 to skip",
     )
     args = parser.parse_args()
-    if args.sample_rows > 0:
+    if args.sample_rows != 0:
         os.environ["POOBAH_SAMPLE_ROWS"] = str(args.sample_rows)
     main(
         min_season=args.min_season,

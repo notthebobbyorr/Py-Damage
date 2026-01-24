@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 import numpy as np
 from matplotlib import colors
+from st_paywall import add_auth
 
 DATA_DIR = Path(__file__).resolve().parent
 _TABLE_COUNTER = 0
@@ -19,7 +20,7 @@ HIGHER_IS_WORSE_COLS = {
     "Hittable Pitch Take (%)",
     "Whiff vs. Secondaries (%)",
     "Whiff vs. 95+ (%)",
-    "GB (%)",
+    "LA<=0%",
 }
 
 
@@ -59,9 +60,7 @@ def load_csv(name: str) -> pd.DataFrame:
 def load_damage_df() -> pd.DataFrame:
     # Prefer the most comprehensive file with newest data
     preferred_files = [
-        DATA_DIR / "damage_pos_2020_2025.csv",
-        DATA_DIR / "damage_pos_2025_2025.csv",
-        DATA_DIR / "damage_pos_2021_2024.csv",
+        DATA_DIR / "damage_pos_2015_2025.csv",
     ]
     for preferred in preferred_files:
         if preferred.exists():
@@ -328,18 +327,30 @@ def render_table(
         styler = df_page_display.style.apply(style_row, axis=1)
         if len(float_cols) > 0:
             format_map = {col: "{:.1f}" for col in float_cols}
+            # Format integer-value columns without decimals
+            int_keywords = ["Similarity", "Pitch Grade", "BB Spin", "Pctile", "#"]
             for col in df_page_display.columns:
-                if "Similarity" in col:
+                if any(kw in col for kw in int_keywords):
                     format_map[col] = "{:.0f}"
             styler = styler.format(format_map)
         st.dataframe(styler, width="stretch", hide_index=True)
         return
     if len(float_cols) > 0:
-        df_page_display[float_cols] = df_page_display[float_cols].applymap(
-            lambda x: f"{x:.1f}" if pd.notna(x) else x
-        )
-        for col in df_page_display.columns:
-            if "Similarity" in col and col in df_page_display.columns:
+        # Identify columns that should display as integers
+        int_keywords = ["Similarity", "Pitch Grade", "BB Spin", "Pctile", "#"]
+        int_cols = [
+            col
+            for col in df_page_display.columns
+            if any(kw in col for kw in int_keywords)
+        ]
+        other_float_cols = [col for col in float_cols if col not in int_cols]
+
+        if other_float_cols:
+            df_page_display[other_float_cols] = df_page_display[
+                other_float_cols
+            ].applymap(lambda x: f"{x:.1f}" if pd.notna(x) else x)
+        for col in int_cols:
+            if col in df_page_display.columns:
                 df_page_display[col] = df_page_display[col].apply(
                     lambda x: f"{x:.0f}" if pd.notna(x) else x
                 )
@@ -370,12 +381,31 @@ def _normalize_team_col(df: pd.DataFrame, old_col: str) -> pd.DataFrame:
     return df
 
 
+def _normalize_la_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename old FB_pct/GB_pct columns to new LA_gte_20/LA_lte_0 names."""
+    if df.empty:
+        return df
+    rename_map = {}
+    if "FB_pct" in df.columns and "LA_gte_20" not in df.columns:
+        rename_map["FB_pct"] = "LA_gte_20"
+    if "GB_pct" in df.columns and "LA_lte_0" not in df.columns:
+        rename_map["GB_pct"] = "LA_lte_0"
+    if rename_map:
+        return df.rename(columns=rename_map)
+    return df
+
+
 damage_df = _normalize_team_col(damage_df, "hitting_code")
+damage_df = _normalize_la_cols(damage_df)
 hitter_pct = _normalize_team_col(hitter_pct, "hitting_code")
+hitter_pct = _normalize_la_cols(hitter_pct)
 pitcher_df = _normalize_team_col(pitcher_df, "pitching_code")
+pitcher_df = _normalize_la_cols(pitcher_df)
 pitcher_pct = _normalize_team_col(pitcher_pct, "pitching_code")
 pitch_types = _normalize_team_col(pitch_types, "pitching_code")
 pitch_types_pct = _normalize_team_col(pitch_types_pct, "pitching_code")
+team_damage = _normalize_la_cols(team_damage)
+team_stuff = _normalize_la_cols(team_stuff)
 
 if (
     not pitch_types.empty
@@ -398,6 +428,57 @@ if (
 
 st.title("Profiles")
 
+# Welcome section
+st.markdown(
+    """
+Welcome! Here you will find metrics I (https://twitter.com/NotTheBobbyOrr) have developed for analyzing hitters & pitchers at a player and team level.
+I make frequent use of these statistics in my work at BaseballProspectus dot com (https://www.baseballprospectus.com/author/ringtheodubel/) and for my own fantasy strategy.
+"""
+)
+
+st.markdown("---")
+
+# Step 1: Check if user is logged in
+try:
+    is_logged_in = st.user.is_logged_in
+except AttributeError:
+    is_logged_in = False
+
+if not is_logged_in:
+    st.subheader("🔐 Login Required")
+    st.markdown(
+        """
+        Please log in to access the premium features of this app.
+        """
+    )
+    if st.button("Log in with Google", type="primary"):
+        st.login()
+    st.stop()
+
+# Step 2: User is logged in, now check subscription
+st.markdown(f"Welcome back, **{st.user.name}**! 👋")
+st.markdown("---")
+
+st.subheader("Premium Access Required")
+st.markdown(
+    """
+To access all features and data in this app, please subscribe below.
+Your subscription supports ongoing development and maintenance of these analytics tools.
+"""
+)
+
+# Check subscription status - this will stop execution if user is not subscribed
+add_auth(
+    required=True,
+    show_redirect_button=True,
+    subscription_button_text="Subscribe to Access Premium Features",
+    button_color="#FF4B4B",
+)
+
+# Only subscribed users will see content below this point
+st.success("✅ You have premium access! Enjoy all features.")
+st.markdown("---")
+
 main_tabs = st.tabs(
     [
         "Welcome Page",
@@ -419,17 +500,14 @@ main_tabs = st.tabs(
 )
 
 with main_tabs[0]:
-    st.subheader("Welcome to My App")
+    st.subheader("Welcome to Premium Features")
     st.markdown(
         """
-Here you will find metrics I (https://twitter.com/NotTheBobbyOrr) have developed for analyzing hitters & pitchers at a player and team level.
-I make frequent use of these statistics in my work at BaseballProspectus dot com (https://www.baseballprospectus.com/author/ringtheodubel/) and for my own fantasy strategy.
-You can navigate via the tabs and there are glossaries containing explanations for each statistic below.
-
-Tip jar if you're feeling generous:
-- Venmo: @Robert-Orr7
-- Paypal: orrrobf @ gmail dot com
-
+Navigate via the tabs above to explore different analytics tools. There are glossaries containing explanations for each statistic in the last two tabs.
+"""
+    )
+    st.markdown(
+        """
 Feedback: If you have any suggestions or just want to say hi, shoot me a DM on Twitter or send me an email at orrrobf @ gmail dot com.
 """
     )
@@ -520,8 +598,8 @@ with main_tabs[1]:
                 "EV90th",
                 "max_EV",
                 "pull_FB_pct",
-                "FB_pct",
-                "GB_pct",
+                "LA_gte_20",
+                "LA_lte_0",
                 "SEAGER",
                 "selection_skill",
                 "hittable_pitches_taken",
@@ -543,8 +621,8 @@ with main_tabs[1]:
                 "EV90th": "90th Pctile EV",
                 "max_EV": "Max EV",
                 "pull_FB_pct": "Pulled FB (%)",
-                "FB_pct": "FB (%)",
-                "GB_pct": "GB (%)",
+                "LA_gte_20": "LA>=20%",
+                "LA_lte_0": "LA<=0%",
                 "selection_skill": "Selectivity (%)",
                 "hittable_pitches_taken": "Hittable Pitch Take (%)",
                 "chase": "Chase (%)",
@@ -569,7 +647,7 @@ with main_tabs[1]:
                     "Chase (%)",
                     "Whiff vs. Secondaries (%)",
                     "Whiff vs. 95+ (%)",
-                    "GB (%)",
+                    "LA<=0%",
                 },
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
@@ -606,8 +684,8 @@ with main_tabs[2]:
             "damage_rate",
             "EV90th",
             "pull_FB_pct",
-            "FB_pct",
-            "GB_pct",
+            "LA_gte_20",
+            "LA_lte_0",
             "selection_skill",
             "hittable_pitches_taken",
             "chase",
@@ -674,8 +752,8 @@ with main_tabs[2]:
                     "secondary_whiff_pct": "Whiff vs. Secondaries (%)",
                     "contact_vs_avg": "Contact Over Expected (%)",
                     "similarity_score": "Similarity (0-100)",
-                    "FB_pct": "FB (%)",
-                    "GB_pct": "GB (%)",
+                    "LA_gte_20": "LA>=20%",
+                    "LA_lte_0": "LA<=0%",
                     "whiffs_vs_95": "Whiff vs. 95+ (%)",
                 }
             )
@@ -683,30 +761,31 @@ with main_tabs[2]:
             stats_df = stats_df.assign(
                 __season=stats_df["season"], __level=stats_df["level_id"]
             )
+            stats_columns = [
+                "hitter_name",
+                "hitting_code",
+                "season",
+                "PA",
+                "bbe",
+                "damage_rate",
+                "EV90th",
+                "max_EV",
+                "pull_FB_pct",
+                "LA_gte_20",
+                "LA_lte_0",
+                "SEAGER",
+                "selection_skill",
+                "hittable_pitches_taken",
+                "chase",
+                "z_con",
+                "secondary_whiff_pct",
+                "whiffs_vs_95",
+                "contact_vs_avg",
+                "__season",
+                "__level",
+            ]
             stats_df = stats_df[
-                [
-                    "hitter_name",
-                    "hitting_code",
-                    "season",
-                    "PA",
-                    "bbe",
-                    "damage_rate",
-                    "EV90th",
-                    "max_EV",
-                    "pull_FB_pct",
-                    "FB_pct",
-                    "GB_pct",
-                    "SEAGER",
-                    "selection_skill",
-                    "hittable_pitches_taken",
-                    "chase",
-                    "z_con",
-                    "secondary_whiff_pct",
-                    "whiffs_vs_95",
-                    "contact_vs_avg",
-                    "__season",
-                    "__level",
-                ]
+                [col for col in stats_columns if col in stats_df.columns]
             ].rename(
                 columns={
                     "hitter_name": "Name",
@@ -717,8 +796,8 @@ with main_tabs[2]:
                     "EV90th": "90th Pctile EV",
                     "max_EV": "Max EV",
                     "pull_FB_pct": "Pulled FB (%)",
-                    "FB_pct": "FB (%)",
-                    "GB_pct": "GB (%)",
+                    "LA_gte_20": "LA>=20%",
+                    "LA_lte_0": "LA<=0%",
                     "selection_skill": "Selectivity (%)",
                     "hittable_pitches_taken": "Hittable Pitch Take (%)",
                     "chase": "Chase (%)",
@@ -737,8 +816,8 @@ with main_tabs[2]:
                 "damage_rate",
                 "EV90th",
                 "pull_FB_pct",
-                "FB_pct",
-                "GB_pct",
+                "LA_gte_20",
+                "LA_lte_0",
                 "selection_skill",
                 "hittable_pitches_taken",
                 "chase",
@@ -770,8 +849,8 @@ with main_tabs[2]:
                     "secondary_whiff_pct": "Whiff vs. Secondaries (%)",
                     "whiffs_vs_95": "Whiff vs. 95+ (%)",
                     "contact_vs_avg": "Contact Over Expected (%)",
-                    "FB_pct": "FB (%)",
-                    "GB_pct": "GB (%)",
+                    "LA_gte_20": "LA>=20%",
+                    "LA_lte_0": "LA<=0%",
                 }
             )
             st.caption("Selected season")
@@ -782,7 +861,7 @@ with main_tabs[2]:
                     "Chase (%)",
                     "Whiff vs. Secondaries (%)",
                     "Whiff vs. 95+ (%)",
-                    "GB (%)",
+                    "LA<=0%",
                 },
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
@@ -796,7 +875,7 @@ with main_tabs[2]:
                     "Chase (%)",
                     "Whiff vs. Secondaries (%)",
                     "Whiff vs. 95+ (%)",
-                    "GB (%)",
+                    "LA<=0%",
                 },
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
@@ -804,7 +883,7 @@ with main_tabs[2]:
 
 with main_tabs[3]:
     st.subheader("Percentile Rankings - Hitters")
-    st.caption("min. 100 pitches seen & 20 batted balls at respective level")
+    st.caption("min. 200 PA")
     if hitter_pct.empty:
         st.info("Missing hitter_pctiles.csv")
     else:
@@ -1005,7 +1084,7 @@ with main_tabs[4]:
                 "Z_Contact",
                 "Chase",
                 "CSW",
-                "GB_pct",
+                "LA_lte_0",
                 "rel_z",
                 "rel_x",
                 "ext",
@@ -1033,7 +1112,7 @@ with main_tabs[4]:
                 "Z_Contact": "Z-Contact (%)",
                 "Chase": "Chase (%)",
                 "CSW": "CSW (%)",
-                "GB_pct": "GB (%)",
+                "LA_lte_0": "LA<=0%",
                 "rel_z": "Vertical Release (ft.)",
                 "rel_x": "Horizontal Release (ft.)",
                 "ext": "Extension (ft.)",
@@ -1083,7 +1162,7 @@ with main_tabs[5]:
             "Ball_pct",
             "Z_Contact",
             "Chase",
-            "GB_pct",
+            "LA_lte_0",
             "rel_z",
             "rel_x",
             "ext",
@@ -1147,7 +1226,7 @@ with main_tabs[5]:
                 "Ball_pct": "Ball (%)",
                 "Chase": "Chase (%)",
                 "Z_Contact": "Z-Contact (%)",
-                "GB_pct": "GB (%)",
+                "LA_lte_0": "LA<=0%",
                 "rel_z": "Vertical Release (ft.)",
                 "rel_x": "Horizontal Release (ft.)",
                 "ext": "Extension (ft.)",
@@ -1179,7 +1258,7 @@ with main_tabs[5]:
                 "Z_Contact",
                 "Chase",
                 "CSW",
-                "GB_pct",
+                "LA_lte_0",
                 "rel_z",
                 "rel_x",
                 "ext",
@@ -1639,8 +1718,8 @@ with main_tabs[9]:
                 "damage_rate",
                 "EV90th",
                 "pull_FB_pct",
-                "FB_pct",
-                "GB_pct",
+                "LA_gte_20",
+                "LA_lte_0",
                 "SEAGER",
                 "selection_skill",
                 "hittable_pitches_taken",
@@ -1659,8 +1738,8 @@ with main_tabs[9]:
                 "damage_rate": "Damage/BBE (%)",
                 "EV90th": "90th Pctile EV",
                 "pull_FB_pct": "Pulled FB (%)",
-                "FB_pct": "FB (%)",
-                "GB_pct": "GB (%)",
+                "LA_gte_20": "LA>=20%",
+                "LA_lte_0": "LA<=0%",
                 "selection_skill": "Selectivity (%)",
                 "hittable_pitches_taken": "Hittable Pitch Take (%)",
                 "chase": "Chase (%)",
@@ -1679,7 +1758,7 @@ with main_tabs[9]:
                     "Hittable Pitch Take (%)",
                     "Chase (%)",
                     "Whiff vs. Secondaries (%)",
-                    "GB (%)",
+                    "LA<=0%",
                 },
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
@@ -1740,7 +1819,7 @@ with main_tabs[10]:
                 "Z_Contact",
                 "Chase",
                 "CSW",
-                "GB_pct",
+                "LA_lte_0",
                 "__season",
                 "__level",
             ]
@@ -1759,7 +1838,7 @@ with main_tabs[10]:
                 "Z_Contact": "Z-Contact (%)",
                 "Chase": "Chase (%)",
                 "CSW": "CSW (%)",
-                "GB_pct": "GB (%)",
+                "LA_lte_0": "LA<=0%",
             }
             df = df.rename(columns=rename_map)
             df = df.sort_values(by="Pitch Grade", ascending=False)
@@ -1887,7 +1966,7 @@ with main_tabs[12]:
                 "Z_Contact",
                 "Chase",
                 "CSW",
-                "GB_pct",
+                "LA_lte_0",
                 "__season",
                 "__level",
             ]
@@ -1903,7 +1982,7 @@ with main_tabs[12]:
                 "fastball_vaa": "FA VAA",
                 "stuff": "Pitch Grade",
                 "stuff_z": "Pitch Grade Z",
-                "GB_pct": "GB (%)",
+                "LA_lte_0": "LA<=0%",
             }
             df = df.rename(columns=rename_map)
             stats_df = base_stats[
