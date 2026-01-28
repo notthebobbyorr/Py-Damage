@@ -1,0 +1,268 @@
+version: 1
+notes:
+  - "Fill in numerator/denominator (or sample_n for means) before running regression."
+  - "Team stats intentionally excluded."
+stats:
+  hitters:
+    - name: pull_FB_pct
+      kind: rate
+      numerator: launch_angle >= 20 and spray_angle_adj < -15
+      denominator: bbe
+    - name: chase
+      kind: rate
+      numerator: swing == True and is_inzone_pi == False
+      denominator: is_inzone_pi == False
+    - name: z_con
+      kind: rate
+      numerator: swing == True and is_inzone_pi == True and whiff == False
+      denominator: swing == True and is_inzone_pi == True
+    - name: secondary_whiff_pct
+      kind: rate
+      numerator: whiff == True and pi_pitch_group != 'FA'
+      denominator: swing == True and pi_pitch_group != 'FA'
+    - name: whiffs_vs_95
+      kind: rate
+      numerator: whiff == True and pitch_velo >= 95
+      denominator: swing == True and pitch_velo >= 95
+    - name: damage_rate
+      kind: rate
+      numerator: exit_velo >= damage_pred and is_in_play == True and launch_angle > 0 and spray_angle_adj >= -50 and spray_angle_adj <= 50
+      denominator: bbe
+    - name: selection_skill
+      kind: rate
+      numerator: swing == False and decision_value > 0
+      denominator: decision_value > 0
+    - name: hittable_pitches_taken
+      kind: rate
+      numerator: swing == False and decision_value < 0
+      denominator: swing == False
+    - name: pred_whiff_loc_mean
+      kind: mean
+      value: pred_whiff_loc
+      sample_n: swings
+    - name: LA_lte_0
+      kind: rate
+      numerator: launch_angle <= 0
+      denominator: bbe
+    - name: LD_pct
+      kind: rate
+      numerator: launch_angle > 0 and launch_angle < 20
+      denominator: bbe
+    - name: LA_gte_20
+      kind: rate
+      numerator: launch_angle >= 20
+      denominator: bbe
+    - name: EV90th
+      kind: quantile
+      value: exit_velo
+      quantile: 0.9
+      sample_n: bbe
+    - name: max_EV
+      kind: max
+      value: exit_velo
+      sample_n: bbe
+    - name: bat_speed
+      kind: mean
+      value: bat_speed
+      sample_n: swings
+    - name: swing_length
+      kind: mean
+      value: swing_length
+      sample_n: swings
+    - name: attack_angle
+      kind: mean
+      value: attack_angle
+      sample_n: swings
+    - name: swing_path_tilt
+      kind: mean
+      value: swing_path_tilt
+      sample_n: swings
+    - name: SEAGER
+      kind: derived
+      depends_on:
+        - selection_skill
+        - hittable_pitches_taken
+
+  pitchers:
+    - name: SwStr
+      kind: rate
+      numerator: whiff == True
+      denominator: pitches
+    - name: Ball_pct
+      kind: rate
+      numerator: is_ball == True
+      denominator: pitches
+    - name: Z_Contact
+      kind: rate
+      numerator: whiff == False and is_inzone_pi == True and swing == True
+      denominator: is_inzone_pi == True and swing == True
+    - name: Chase
+      kind: rate
+      numerator: swing == True and is_inzone_pi == False
+      denominator: is_inzone_pi == False
+    - name: CSW
+      kind: rate
+      numerator: whiff == True or pitch_outcome == 'S' and swing == False
+      denominator: pitches
+    - name: pWhiff
+      kind: mean
+      value: pred_whiff_base
+      sample_n: swings
+    - name: FA_pct
+      kind: rate
+      numerator: pi_pitch_group == 'FA'
+      denominator: pitches
+    - name: LA_lte_0
+      kind: rate
+      numerator: launch_angle <= 0
+      denominator: bbe
+    - name: LD_pct
+      kind: rate
+      numerator: launch_angle > 0 and launch_angle < 20
+      denominator: bbe
+    - name: LA_gte_20
+      kind: rate
+      numerator: launch_angle >= 20
+      denominator: bbe
+    - name: BB_rpm
+      kind: mean
+      value: rpm
+      sample_n: pi_pitch_group is in ['CU', 'SL']
+    - name: FA_spin_eff
+      kind: mean
+      value: spin_efficiency
+      sample_n: pi_pitch_group == 'FA'
+    - name: fastball_velo
+      kind: mean
+      value: primary_velo
+      sample_n: pi_pitch_group == 'FA'
+    - name: max_velo
+      kind: max
+      value: pitch_velo
+      sample_n: pitches
+    - name: fastball_vaa
+      kind: mean
+      value: primary_vaa
+      sample_n: pi_pitch_group == 'FA'
+    - name: stuff_raw
+      kind: mean
+      value: stuff_raw
+      sample_n: pitches
+    - name: rel_z
+      kind: mean
+      value: release_z
+      sample_n: pitches
+    - name: rel_x
+      kind: mean
+      value: release_x
+      sample_n: pitches
+    - name: ext
+      kind: mean
+      value: ext
+      sample_n: pitches
+    - name: arm_angle
+      kind: mean
+      value: arm_angle
+      sample_n: pitches
+
+  pitch_types:
+    - name: SwStr
+      kind: rate
+      numerator: whiff == True
+      denominator: pitches
+    - name: Ball_pct
+      kind: rate
+      numerator: is_ball == True
+      denominator: pitches
+    - name: Z_Contact
+      kind: rate
+      numerator: whiff == False and is_inzone_pi == True and swing == True
+      denominator: is_inzone_pi == True and swing == True
+    - name: Chase
+      kind: rate
+      numerator: swing == True and is_inzone_pi == False
+      denominator: is_inzone_pi == False
+    - name: CSW
+      kind: rate
+      numerator: whiff == True or pitch_outcome == 'S' and swing == False
+      denominator: pitches
+    - name: pred_whiff_pct
+      kind: mean
+      value: pred_whiff_base
+      sample_n: swings
+    - name: stuff_raw
+      kind: mean
+      value: stuff_raw
+      sample_n: pitches
+    - name: velo
+      kind: mean
+      value: pitch_velo
+      sample_n: pitches
+    - name: max_velo
+      kind: max
+      value: pitch_velo
+      sample_n: pitches
+    - name: vaa
+      kind: mean
+      value: vaa
+      sample_n: pitches
+    - name: haa
+      kind: mean
+      value: haa
+      sample_n: pitches
+    - name: vbreak
+      kind: mean
+      value: vbreak
+      sample_n: pitches
+    - name: hbreak
+      kind: mean
+      value: hbreak
+      sample_n: pitches
+    - name: loc_adj_vaa
+      kind: mean
+      value: loc_adj_vaa
+      sample_n: pitches
+    - name: rpm
+      kind: mean
+      value: rpm
+      sample_n: pitches
+    - name: axis
+      kind: mean
+      value: axis
+      sample_n: pitches
+    - name: spin_efficiency
+      kind: mean
+      value: spin_efficiency
+      sample_n: pitches
+    - name: primary_loc_adj_vaa
+      kind: mean
+      value: primary_loc_adj_vaa
+      sample_n: pitches
+    - name: primary_velo
+      kind: mean
+      value: primary_velo
+      sample_n: pitches
+    - name: primary_rpm
+      kind: mean
+      value: primary_rpm
+      sample_n: pitches
+    - name: primary_axis
+      kind: mean
+      value: primary_axis
+      sample_n: pitches
+    - name: primary_hbreak
+      kind: mean
+      value: primary_hbreak
+      sample_n: pitches
+    - name: primary_vbreak
+      kind: mean
+      value: primary_vbreak
+      sample_n: pitches
+    - name: primary_z_release
+      kind: mean
+      value: primary_z_release
+      sample_n: pitches
+    - name: primary_x_release
+      kind: mean
+      value: primary_x_release
+      sample_n: pitches
