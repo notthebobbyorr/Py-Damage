@@ -110,9 +110,7 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                     * ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)).sum()
                     / (pl.col("is_inzone_pi") == False).sum()
                 ).alias("chase"),
-                (
-                    (pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)
-                )
+                ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False))
                 .sum()
                 .alias("chase_num"),
                 (pl.col("is_inzone_pi") == False).sum().alias("chase_den"),
@@ -132,9 +130,7 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                 )
                 .sum()
                 .alias("z_con_num"),
-                (
-                    (pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1)
-                )
+                ((pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1))
                 .sum()
                 .alias("z_con_den"),
                 (
@@ -146,14 +142,10 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                         (pl.col("swing") == 1) & (pl.col("pi_pitch_group") != "FA")
                     ).sum()
                 ).alias("secondary_whiff_pct"),
-                (
-                    (pl.col("whiff") == 1) & (pl.col("pi_pitch_group") != "FA")
-                )
+                ((pl.col("whiff") == 1) & (pl.col("pi_pitch_group") != "FA"))
                 .sum()
                 .alias("secondary_whiff_pct_num"),
-                (
-                    (pl.col("swing") == 1) & (pl.col("pi_pitch_group") != "FA")
-                )
+                ((pl.col("swing") == 1) & (pl.col("pi_pitch_group") != "FA"))
                 .sum()
                 .alias("secondary_whiff_pct_den"),
                 (
@@ -161,14 +153,10 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                     * ((pl.col("whiff") == 1) & (pl.col("pitch_velo") >= 95)).sum()
                     / ((pl.col("swing") == 1) & (pl.col("pitch_velo") >= 95)).sum()
                 ).alias("whiffs_vs_95"),
-                (
-                    (pl.col("whiff") == 1) & (pl.col("pitch_velo") >= 95)
-                )
+                ((pl.col("whiff") == 1) & (pl.col("pitch_velo") >= 95))
                 .sum()
                 .alias("whiffs_vs_95_num"),
-                (
-                    (pl.col("swing") == 1) & (pl.col("pitch_velo") >= 95)
-                )
+                ((pl.col("swing") == 1) & (pl.col("pitch_velo") >= 95))
                 .sum()
                 .alias("whiffs_vs_95_den"),
                 (
@@ -199,9 +187,7 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                     * ((pl.col("decision_value") > 0) & (pl.col("swing") == 0)).sum()
                     / (pl.col("decision_value") > 0).sum()
                 ).alias("selection_skill"),
-                (
-                    (pl.col("decision_value") > 0) & (pl.col("swing") == 0)
-                )
+                ((pl.col("decision_value") > 0) & (pl.col("swing") == 0))
                 .sum()
                 .alias("selection_skill_num"),
                 (pl.col("decision_value") > 0).sum().alias("selection_skill_den"),
@@ -210,16 +196,12 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                     * ((pl.col("decision_value") < 0) & (pl.col("swing") == 0)).sum()
                     / (pl.col("swing") == 0).sum()
                 ).alias("hittable_pitches_taken"),
-                (
-                    (pl.col("decision_value") < 0) & (pl.col("swing") == 0)
-                )
+                ((pl.col("decision_value") < 0) & (pl.col("swing") == 0))
                 .sum()
                 .alias("hittable_pitches_taken_num"),
                 (pl.col("swing") == 0).sum().alias("hittable_pitches_taken_den"),
                 (
-                    pl.when(pl.col("swing") == 1)
-                    .then(pl.col("pred_whiff_loc"))
-                    .mean()
+                    pl.when(pl.col("swing") == 1).then(pl.col("pred_whiff_loc")).mean()
                 ).alias("pred_whiff_loc_mean"),
                 (pl.col("swing") == 1).sum().alias("pred_whiff_loc_mean_n"),
                 (pl.col("whiff") == 1).sum().alias("whiff_rate_num"),
@@ -240,9 +222,7 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                     ).sum()
                     / (pl.col("is_in_play") == True).sum()
                 ).alias("LA_lte_0"),
-                (
-                    (pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)
-                )
+                ((pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True))
                 .sum()
                 .alias("LA_lte_0_num"),
                 (pl.col("is_in_play") == True).sum().alias("LA_lte_0_den"),
@@ -270,9 +250,7 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                     ).sum()
                     / (pl.col("is_in_play") == True).sum()
                 ).alias("LA_gte_20"),
-                (
-                    (pl.col("launch_angle") >= 20) & (pl.col("is_in_play") == True)
-                )
+                ((pl.col("launch_angle") >= 20) & (pl.col("is_in_play") == True))
                 .sum()
                 .alias("LA_gte_20_num"),
                 (pl.col("is_in_play") == True).sum().alias("LA_gte_20_den"),
@@ -283,9 +261,10 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                 pl.mean("attack_angle").alias("attack_angle"),
                 pl.col("attack_angle").is_not_null().sum().alias("attack_angle_n"),
                 pl.mean("swing_path_tilt").alias("swing_path_tilt"),
-                pl.col("swing_path_tilt").is_not_null().sum().alias(
-                    "swing_path_tilt_n"
-                ),
+                pl.col("swing_path_tilt")
+                .is_not_null()
+                .sum()
+                .alias("swing_path_tilt_n"),
                 pl.col("hitting_code")
                 .filter(
                     pl.col("hitting_code").is_not_null()
@@ -372,9 +351,7 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
             )
             .sum()
             .alias("Z_Contact_num"),
-            (
-                (pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1)
-            )
+            ((pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1))
             .sum()
             .alias("Z_Contact_den"),
             (
@@ -382,9 +359,7 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
                 * ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)).sum()
                 / (pl.col("is_inzone_pi") == False).sum()
             ).alias("Chase"),
-            (
-                (pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)
-            )
+            ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False))
             .sum()
             .alias("Chase_num"),
             (pl.col("is_inzone_pi") == False).sum().alias("Chase_den"),
@@ -409,9 +384,7 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
             (pl.when(pl.col("pitch_group") == "BR").then(pl.col("rpm")).mean()).alias(
                 "BB_rpm"
             ),
-            (
-                (pl.col("pitch_group") == "BR") & (pl.col("rpm").is_not_null())
-            )
+            ((pl.col("pitch_group") == "BR") & (pl.col("rpm").is_not_null()))
             .sum()
             .alias("BB_rpm_n"),
             (
@@ -430,9 +403,7 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
                 * ((pl.col("launch_angle") <= 0) & (pl.col("is_in_play") == True)).sum()
                 / (pl.col("is_in_play") == True).sum()
             ).alias("LA_lte_0"),
-            (
-                (pl.col("launch_angle") <= 0) & (pl.col("is_in_play") == True)
-            )
+            ((pl.col("launch_angle") <= 0) & (pl.col("is_in_play") == True))
             .sum()
             .alias("LA_lte_0_num"),
             (pl.col("is_in_play") == True).sum().alias("LA_lte_0_den"),
@@ -460,9 +431,7 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
                 ).sum()
                 / (pl.col("is_in_play") == True).sum()
             ).alias("LA_gte_20"),
-            (
-                (pl.col("launch_angle") >= 20) & (pl.col("is_in_play") == True)
-            )
+            ((pl.col("launch_angle") >= 20) & (pl.col("is_in_play") == True))
             .sum()
             .alias("LA_gte_20_num"),
             (pl.col("is_in_play") == True).sum().alias("LA_gte_20_den"),
@@ -549,9 +518,10 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
             .list.join(", ")
             .alias("primary_pitches"),
             pl.mean("primary_loc_adj_vaa").alias("primary_loc_adj_vaa"),
-            pl.col("primary_loc_adj_vaa").is_not_null().sum().alias(
-                "primary_loc_adj_vaa_n"
-            ),
+            pl.col("primary_loc_adj_vaa")
+            .is_not_null()
+            .sum()
+            .alias("primary_loc_adj_vaa_n"),
             pl.mean("primary_velo").alias("primary_velo"),
             pl.col("primary_velo").is_not_null().sum().alias("primary_velo_n"),
             pl.mean("primary_rpm").alias("primary_rpm"),
@@ -563,13 +533,15 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
             pl.mean("primary_vbreak").alias("primary_vbreak"),
             pl.col("primary_vbreak").is_not_null().sum().alias("primary_vbreak_n"),
             pl.mean("primary_z_release").alias("primary_z_release"),
-            pl.col("primary_z_release").is_not_null().sum().alias(
-                "primary_z_release_n"
-            ),
+            pl.col("primary_z_release")
+            .is_not_null()
+            .sum()
+            .alias("primary_z_release_n"),
             pl.mean("primary_x_release").alias("primary_x_release"),
-            pl.col("primary_x_release").is_not_null().sum().alias(
-                "primary_x_release_n"
-            ),
+            pl.col("primary_x_release")
+            .is_not_null()
+            .sum()
+            .alias("primary_x_release_n"),
             (pl.sum("whiff") / pl.len()).mul(100).alias("SwStr"),
             (pl.col("whiff") == 1).sum().alias("SwStr_num"),
             pl.len().alias("SwStr_den"),
@@ -592,9 +564,7 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
             )
             .sum()
             .alias("Z_Contact_num"),
-            (
-                (pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1)
-            )
+            ((pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1))
             .sum()
             .alias("Z_Contact_den"),
             (
@@ -602,9 +572,7 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
                 * ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)).sum()
                 / (pl.col("is_inzone_pi") == False).sum()
             ).alias("Chase"),
-            (
-                (pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)
-            )
+            ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False))
             .sum()
             .alias("Chase_num"),
             (pl.col("is_inzone_pi") == False).sum().alias("Chase_den"),
@@ -625,10 +593,7 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
                 100
                 * pl.when(pl.col("swing") == 1).then(pl.col("pred_whiff_base")).mean()
             ).alias("pred_whiff_pct"),
-            (
-                (pl.col("swing") == 1)
-                & (pl.col("pred_whiff_base").is_not_null())
-            )
+            ((pl.col("swing") == 1) & (pl.col("pred_whiff_base").is_not_null()))
             .sum()
             .alias("pred_whiff_pct_n"),
             pl.col("pitching_code")
@@ -683,6 +648,11 @@ def build_team_hitting(df: pl.DataFrame) -> pl.DataFrame:
                         (pl.col("swing") == 1) & (pl.col("pi_pitch_group") != "FA")
                     ).sum()
                 ).alias("secondary_whiff_pct"),
+                (
+                    100
+                    * ((pl.col("whiff") == 1) & (pl.col("pitch_velo") >= 95)).sum()
+                    / ((pl.col("swing") == 1) & (pl.col("pitch_velo") >= 95)).sum()
+                ).alias("whiffs_vs_95"),
                 (
                     100
                     * (
@@ -783,6 +753,11 @@ def build_league_hitting(df: pl.DataFrame) -> pl.DataFrame:
                 ).alias("z_con"),
                 (
                     100
+                    * ((pl.col("whiff") == 1) & (pl.col("pitch_velo") >= 95)).sum()
+                    / ((pl.col("swing") == 1) & (pl.col("pitch_velo") >= 95)).sum()
+                ).alias("whiffs_vs_95"),
+                (
+                    100
                     * (
                         (pl.col("whiff") == 1) & (pl.col("pi_pitch_group") != "FA")
                     ).sum()
@@ -881,7 +856,9 @@ def build_team_pitching(df: pl.DataFrame) -> pl.DataFrame:
                 pl.len().alias("pitches"),
                 pl.mean("stuff_raw").alias("stuff_raw"),
                 (pl.sum("whiff") / pl.len()).mul(100).alias("SwStr"),
-                ((pl.col("is_ball") == True).sum() / pl.len()).mul(100).alias("Ball_pct"),
+                ((pl.col("is_ball") == True).sum() / pl.len())
+                .mul(100)
+                .alias("Ball_pct"),
                 (100 * (pl.col("pitch_group") == "FA").sum() / pl.len()).alias(
                     "FA_pct"
                 ),
@@ -903,14 +880,18 @@ def build_team_pitching(df: pl.DataFrame) -> pl.DataFrame:
                     100
                     * (
                         ((pl.col("whiff") == 1)).sum()
-                        + ((pl.col("pitch_outcome") == "S") & (pl.col("swing") == 0)).sum()
+                        + (
+                            (pl.col("pitch_outcome") == "S") & (pl.col("swing") == 0)
+                        ).sum()
                     )
                     / pl.len()
                 ).alias("CSW"),
                 (100 * pl.col("pred_whiff_base").mean()).alias("pWhiff"),
                 (
                     100
-                    * ((pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)).sum()
+                    * (
+                        (pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)
+                    ).sum()
                     / (pl.col("is_in_play") == True).sum()
                 ).alias("LA_lte_0"),
                 (
@@ -1139,9 +1120,7 @@ def add_percentiles(
             df_pd.loc[pct.index, f"{col}_pctile"] = pct
     else:
         for col in value_list:
-            pct = df_pd.groupby(group_list, group_keys=False)[col].apply(
-                _pctile_bins
-            )
+            pct = df_pd.groupby(group_list, group_keys=False)[col].apply(_pctile_bins)
             df_pd[f"{col}_pctile"] = pct
 
     return pl.from_pandas(df_pd)
@@ -1210,14 +1189,13 @@ def main(
     )
 
     # For team_pitching, compute stuff grades from raw pitch data
-    team_pitch_types = (
-        pitch.group_by(["pitching_code", "season", "level_id", "pitch_tag"])
-        .agg(
-            [
-                pl.mean("stuff_raw").alias("stuff_raw"),
-                pl.len().alias("pitches"),
-            ]
-        )
+    team_pitch_types = pitch.group_by(
+        ["pitching_code", "season", "level_id", "pitch_tag"]
+    ).agg(
+        [
+            pl.mean("stuff_raw").alias("stuff_raw"),
+            pl.len().alias("pitches"),
+        ]
     )
     team_pitch_types = apply_stuff_grade(team_pitch_types, stuff_percentiles)
     team_stuff = (
@@ -1233,14 +1211,11 @@ def main(
         .drop("stuff_grade")
     )
 
-    league_pitch_types = (
-        pitch.group_by(["season", "level_id", "pitch_tag"])
-        .agg(
-            [
-                pl.mean("stuff_raw").alias("stuff_raw"),
-                pl.len().alias("pitches"),
-            ]
-        )
+    league_pitch_types = pitch.group_by(["season", "level_id", "pitch_tag"]).agg(
+        [
+            pl.mean("stuff_raw").alias("stuff_raw"),
+            pl.len().alias("pitches"),
+        ]
     )
     league_pitch_types = apply_stuff_grade(league_pitch_types, stuff_percentiles)
     league_stuff = (
@@ -1249,9 +1224,7 @@ def main(
         .rename({"stuff": "stuff_grade"})
     )
     league_pitching = (
-        league_pitching.join(
-            league_stuff, on=["season", "level_id"], how="left"
-        )
+        league_pitching.join(league_stuff, on=["season", "level_id"], how="left")
         .with_columns(pl.col("stuff_grade").alias("stuff"))
         .drop("stuff_grade")
     )
