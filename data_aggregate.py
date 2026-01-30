@@ -22,6 +22,20 @@ OUT_DIR = DATA_DIR
 STUFF_SCALE_MEAN = 50.0
 STUFF_SCALE_STD = 10.0
 
+ALL_STAR_DATES = {
+    2025: "2025-07-15",
+    2024: "2024-07-16",
+    2023: "2023-07-11",
+    2022: "2022-07-19",
+    2021: "2021-07-13",
+    2020: None,
+    2019: "2019-07-09",
+    2018: "2018-07-17",
+    2017: "2017-07-11",
+    2016: "2016-07-12",
+    2015: "2015-07-14",
+}
+
 
 def _pos_label(pos: int | None) -> str:
     mapping = {
@@ -66,6 +80,269 @@ def _tag_pitch(df: pl.DataFrame) -> pl.DataFrame:
         .otherwise(pl.lit("XX"))
         .alias("pitch_tag")
     )
+
+
+def _game_date_expr(df: pl.DataFrame) -> pl.Expr | None:
+    if "game_date" not in df.columns:
+        return None
+    dtype = df.schema.get("game_date")
+    if dtype == pl.Date:
+        return pl.col("game_date")
+    if dtype == pl.Datetime:
+        return pl.col("game_date").cast(pl.Date)
+    return pl.col("game_date").str.strptime(pl.Date, strict=False)
+
+
+def _with_split(df: pl.DataFrame, split_expr: pl.Expr | None) -> pl.DataFrame | None:
+    if split_expr is None:
+        return None
+    return df.with_columns(split_expr.alias("__split"))
+
+
+def _split_vs_lr(df: pl.DataFrame, source_col: str) -> pl.Expr | None:
+    if source_col not in df.columns:
+        return None
+    hand = pl.col(source_col).cast(pl.Utf8).str.to_uppercase()
+    return (
+        pl.when(hand == "L")
+        .then(pl.lit("vs L"))
+        .when(hand == "R")
+        .then(pl.lit("vs R"))
+        .otherwise(None)
+    )
+
+
+def _split_home_away(df: pl.DataFrame, hitter: bool) -> pl.Expr | None:
+    if "home_team" in df.columns and "away_team" in df.columns:
+        home_team = (
+            pl.col("home_team").cast(pl.Utf8).str.strip_chars().str.to_uppercase()
+        )
+        away_team = (
+            pl.col("away_team").cast(pl.Utf8).str.strip_chars().str.to_uppercase()
+        )
+        if hitter and "hitting_code" in df.columns:
+            team = (
+                pl.col("hitting_code")
+                .cast(pl.Utf8)
+                .str.strip_chars()
+                .str.to_uppercase()
+            )
+            home_cond = team == home_team
+            away_cond = team == away_team
+        elif (not hitter) and "pitching_code" in df.columns:
+            team = (
+                pl.col("pitching_code")
+                .cast(pl.Utf8)
+                .str.strip_chars()
+                .str.to_uppercase()
+            )
+            home_cond = team == home_team
+            away_cond = team == away_team
+        else:
+            home_cond = away_cond = None
+    else:
+        home_cond = away_cond = None
+
+    if home_cond is None or away_cond is None:
+        if "inning_topbot" not in df.columns:
+            return None
+        topbot = (
+            pl.col("inning_topbot").cast(pl.Utf8).str.strip_chars().str.to_lowercase()
+        )
+        if hitter:
+            home_cond = topbot.is_in(["bottom", "bot", "b"])
+            away_cond = topbot.is_in(["top", "t"])
+        else:
+            home_cond = topbot.is_in(["top", "t"])
+            away_cond = topbot.is_in(["bottom", "bot", "b"])
+    return (
+        pl.when(home_cond)
+        .then(pl.lit("Home"))
+        .when(away_cond)
+        .then(pl.lit("Away"))
+        .otherwise(None)
+    )
+
+
+def _split_month(df: pl.DataFrame) -> pl.Expr | None:
+    month_expr = None
+    if "Month" in df.columns:
+        month_expr = pl.col("Month").cast(pl.Int64)
+    else:
+        date_expr = _game_date_expr(df)
+        if date_expr is None:
+            return None
+        month_expr = date_expr.dt.month()
+
+    return (
+        pl.when(month_expr.is_in([3, 4]))
+        .then(pl.lit("March/April"))
+        .when(month_expr.is_in([9, 10]))
+        .then(pl.lit("September/October"))
+        .when(month_expr == 5)
+        .then(pl.lit("May"))
+        .when(month_expr == 6)
+        .then(pl.lit("June"))
+        .when(month_expr == 7)
+        .then(pl.lit("July"))
+        .when(month_expr == 8)
+        .then(pl.lit("August"))
+        .when(month_expr == 1)
+        .then(pl.lit("January"))
+        .when(month_expr == 2)
+        .then(pl.lit("February"))
+        .when(month_expr == 11)
+        .then(pl.lit("November"))
+        .when(month_expr == 12)
+        .then(pl.lit("December"))
+        .otherwise(None)
+    )
+
+
+def _split_half(df: pl.DataFrame) -> pl.DataFrame | None:
+    if "season" not in df.columns or "game_date" not in df.columns:
+        return None
+    date_expr = _game_date_expr(df)
+    if date_expr is None:
+        return None
+    asg_df = pl.DataFrame(
+        {
+            "season": list(ALL_STAR_DATES.keys()),
+            "asg_date": list(ALL_STAR_DATES.values()),
+        }
+    ).with_columns(pl.col("asg_date").str.strptime(pl.Date, strict=False))
+    split_df = df.with_columns(date_expr.alias("__game_date"))
+    split_df = split_df.join(asg_df, on="season", how="left")
+    split_df = split_df.with_columns(
+        pl.when(
+            pl.col("asg_date").is_not_null()
+            & (pl.col("__game_date") < pl.col("asg_date"))
+        )
+        .then(pl.lit("1st Half"))
+        .when(
+            pl.col("asg_date").is_not_null()
+            & (pl.col("__game_date") > pl.col("asg_date"))
+        )
+        .then(pl.lit("2nd Half"))
+        .otherwise(None)
+        .alias("__split")
+    )
+    return split_df.drop(["__game_date", "asg_date"])
+
+
+def _build_split_frames(
+    df: pl.DataFrame,
+    build_fn,
+    split_type: str,
+    split_df_fn,
+) -> list[pl.DataFrame]:
+    if df.is_empty():
+        return []
+    split_df = split_df_fn(df)
+    if split_df is None:
+        return []
+    labels = (
+        split_df.select(pl.col("__split").drop_nulls().unique()).to_series().to_list()
+    )
+    frames: list[pl.DataFrame] = []
+    for label in labels:
+        subset = split_df.filter(pl.col("__split") == label)
+        built = build_fn(subset)
+        if built.is_empty():
+            continue
+        built = built.with_columns(
+            pl.lit(split_type).alias("split_type"),
+            pl.lit(label).alias("split"),
+        )
+        frames.append(built)
+    return frames
+
+
+def build_hitter_splits(df: pl.DataFrame) -> pl.DataFrame:
+    if df.is_empty():
+        return df
+    split_specs = [
+        ("vs L/R", lambda x: _with_split(x, _split_vs_lr(x, "throws"))),
+        ("Home/Away", lambda x: _with_split(x, _split_home_away(x, hitter=True))),
+        ("Monthly", lambda x: _with_split(x, _split_month(x))),
+        ("1st Half/2nd Half", _split_half),
+    ]
+    frames: list[pl.DataFrame] = []
+    for split_type, split_fn in split_specs:
+        frames.extend(_build_split_frames(df, build_hitters, split_type, split_fn))
+    if not frames:
+        return pl.DataFrame()
+    return pl.concat(frames, how="diagonal")
+
+
+def build_pitching_splits(
+    df: pl.DataFrame,
+    stuff_percentiles: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    if df.is_empty():
+        return pl.DataFrame(), pl.DataFrame()
+    split_specs = [
+        ("vs L/R", lambda x: _with_split(x, _split_vs_lr(x, "stands"))),
+        ("Home/Away", lambda x: _with_split(x, _split_home_away(x, hitter=False))),
+        ("Monthly", lambda x: _with_split(x, _split_month(x))),
+        ("1st Half/2nd Half", _split_half),
+    ]
+    pitcher_frames: list[pl.DataFrame] = []
+    pitch_type_frames: list[pl.DataFrame] = []
+    for split_type, split_fn in split_specs:
+        split_df = split_fn(df)
+        if split_df is None:
+            continue
+        labels = (
+            split_df.select(pl.col("__split").drop_nulls().unique())
+            .to_series()
+            .to_list()
+        )
+        for label in labels:
+            subset = split_df.filter(pl.col("__split") == label)
+            pitch_types_split = build_pitch_types(subset)
+            pitch_types_split = apply_stuff_grade(pitch_types_split, stuff_percentiles)
+            pitchers_split = build_pitchers(subset)
+            if not pitch_types_split.is_empty():
+                pitcher_stuff = (
+                    pitch_types_split.group_by(["pitcher_mlbid", "season", "level_id"])
+                    .agg(
+                        (pl.col("stuff") * pl.col("pitches")).sum()
+                        / pl.col("pitches").sum()
+                    )
+                    .rename({"stuff": "stuff_grade"})
+                )
+                pitchers_split = (
+                    pitchers_split.join(
+                        pitcher_stuff,
+                        on=["pitcher_mlbid", "season", "level_id"],
+                        how="left",
+                    )
+                    .with_columns(pl.col("stuff_grade").alias("stuff"))
+                    .drop("stuff_grade")
+                )
+            if not pitchers_split.is_empty():
+                pitchers_split = pitchers_split.with_columns(
+                    pl.lit(split_type).alias("split_type"),
+                    pl.lit(label).alias("split"),
+                )
+                pitcher_frames.append(pitchers_split)
+            if not pitch_types_split.is_empty():
+                pitch_types_split = pitch_types_split.with_columns(
+                    pl.lit(split_type).alias("split_type"),
+                    pl.lit(label).alias("split"),
+                )
+                pitch_type_frames.append(pitch_types_split)
+
+    pitcher_splits = (
+        pl.concat(pitcher_frames, how="diagonal") if pitcher_frames else pl.DataFrame()
+    )
+    pitch_types_splits = (
+        pl.concat(pitch_type_frames, how="diagonal")
+        if pitch_type_frames
+        else pl.DataFrame()
+    )
+    return pitcher_splits, pitch_types_splits
 
 
 def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
@@ -298,7 +575,7 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
         .pivot(
             values="PA_pos",
             index=["batter_mlbid", "hitter_name", "level_id", "season"],
-            columns="position",
+            on="position",
         )
         .fill_null(0)
     )
@@ -354,6 +631,9 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
             ((pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1))
             .sum()
             .alias("Z_Contact_den"),
+            ((pl.col("is_inzone_pi") == True).sum() / pl.len()).mul(100).alias("Zone"),
+            (pl.col("is_inzone_pi") == True).sum().alias("Zone_num"),
+            pl.len().alias("Zone_den"),
             (
                 100
                 * ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)).sum()
@@ -378,6 +658,8 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
             pl.len().alias("CSW_den"),
             (100 * pl.col("pred_whiff_base").mean()).alias("pWhiff"),
             pl.col("pred_whiff_base").is_not_null().sum().alias("pWhiff_n"),
+            pl.mean("loc_adj_vaa").alias("loc_adj_vaa"),
+            pl.col("loc_adj_vaa").is_not_null().sum().alias("loc_adj_vaa_n"),
             (100 * (pl.col("pitch_group") == "FA").sum() / pl.len()).alias("FA_pct"),
             (pl.col("pitch_group") == "FA").sum().alias("FA_pct_num"),
             pl.len().alias("FA_pct_den"),
@@ -476,6 +758,19 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
     df = _tag_pitch(df)
+    df = df.with_columns(
+        pl.len()
+        .over(
+            [
+                "name",
+                "level_id",
+                "pitcher_mlbid",
+                "pitcher_hand",
+                "season",
+            ]
+        )
+        .alias("total_pitches")
+    )
     pitch_types = df.group_by(
         [
             "name",
@@ -488,7 +783,7 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
     ).agg(
         [
             pl.len().alias("pitches"),
-            (100 * (pl.len() / pl.sum("pitch_of_ab"))).alias("pct"),
+            (pl.len() / pl.first("total_pitches") * 100).alias("pct"),
             pl.mean("stuff_raw").alias("stuff_raw"),
             pl.col("stuff_raw").is_not_null().sum().alias("stuff_raw_n"),
             pl.mean("pitch_velo").alias("velo"),
@@ -542,9 +837,21 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
             .is_not_null()
             .sum()
             .alias("primary_x_release_n"),
+            (
+                100
+                * ((pl.col("launch_angle") <= 0) & (pl.col("is_in_play") == True)).sum()
+                / (pl.col("is_in_play") == True).sum()
+            ).alias("LA_lte_0"),
+            ((pl.col("launch_angle") <= 0) & (pl.col("is_in_play") == True))
+            .sum()
+            .alias("LA_lte_0_num"),
+            (pl.col("is_in_play") == True).sum().alias("LA_lte_0_den"),
             (pl.sum("whiff") / pl.len()).mul(100).alias("SwStr"),
             (pl.col("whiff") == 1).sum().alias("SwStr_num"),
             pl.len().alias("SwStr_den"),
+            ((pl.col("is_inzone_pi") == True).sum() / pl.len()).mul(100).alias("Zone"),
+            (pl.col("is_inzone_pi") == True).sum().alias("Zone_num"),
+            pl.len().alias("Zone_den"),
             ((pl.col("is_ball") == True).sum() / pl.len()).mul(100).alias("Ball_pct"),
             (pl.col("is_ball") == True).sum().alias("Ball_pct_num"),
             pl.len().alias("Ball_pct_den"),
@@ -608,7 +915,70 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
             .alias("team"),
         ]
     )
+    if "LA_lte_0" not in pitch_types.columns:
+        pitch_types = pitch_types.with_columns(
+            [
+                pl.lit(None).alias("LA_lte_0"),
+                pl.lit(0).alias("LA_lte_0_num"),
+                pl.lit(0).alias("LA_lte_0_den"),
+            ]
+        )
     return pitch_types
+
+
+def build_league_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
+    if df.is_empty():
+        return df
+    df = _tag_pitch(df)
+    league_pitch_types = df.group_by(["season", "pitcher_hand", "pitch_tag"]).agg(
+        [
+            pl.len().alias("pitches"),
+            pl.mean("pitch_velo").alias("velo"),
+            pl.mean("vaa").alias("vaa"),
+            pl.mean("haa").alias("haa"),
+            pl.mean("vbreak").alias("vbreak"),
+            pl.mean("hbreak").alias("hbreak"),
+            (pl.sum("whiff") / pl.len()).mul(100).alias("SwStr"),
+            (
+                100
+                * ((pl.col("launch_angle") <= 0) & (pl.col("is_in_play") == True)).sum()
+                / (pl.col("is_in_play") == True).sum()
+            ).alias("LA_lte_0"),
+            (
+                100
+                * (
+                    (pl.col("whiff") != 1)
+                    & (pl.col("swing") == 1)
+                    & (pl.col("is_inzone_pi") == True)
+                ).sum()
+                / ((pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1)).sum()
+            ).alias("Z_Contact"),
+            ((pl.col("is_inzone_pi") == True).sum() / pl.len()).mul(100).alias("Zone"),
+            ((pl.col("is_ball") == True).sum() / pl.len()).mul(100).alias("Ball_pct"),
+            (
+                100
+                * ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)).sum()
+                / (pl.col("is_inzone_pi") == False).sum()
+            ).alias("Chase"),
+            (
+                100
+                * (
+                    ((pl.col("whiff") == 1)).sum()
+                    + ((pl.col("pitch_outcome") == "S") & (pl.col("swing") == 0)).sum()
+                )
+                / pl.len()
+            ).alias("CSW"),
+        ]
+    )
+    league_pitch_types = league_pitch_types.with_columns(
+        (
+            100
+            * pl.col("pitches")
+            / pl.col("pitches").sum().over(["season", "pitcher_hand"])
+        ).alias("pct"),
+        pl.col("pitcher_hand").alias("throws"),
+    )
+    return league_pitch_types
 
 
 def build_team_hitting(df: pl.DataFrame) -> pl.DataFrame:
@@ -855,7 +1225,11 @@ def build_team_pitching(df: pl.DataFrame) -> pl.DataFrame:
                 pl.sum("bbe").alias("bbe"),
                 pl.len().alias("pitches"),
                 pl.mean("stuff_raw").alias("stuff_raw"),
+                pl.mean("loc_adj_vaa").alias("loc_adj_vaa"),
                 (pl.sum("whiff") / pl.len()).mul(100).alias("SwStr"),
+                ((pl.col("is_inzone_pi") == True).sum() / pl.len())
+                .mul(100)
+                .alias("Zone"),
                 ((pl.col("is_ball") == True).sum() / pl.len())
                 .mul(100)
                 .alias("Ball_pct"),
@@ -1087,6 +1461,8 @@ def add_percentiles(
 
     def _pctile_bins(series: pd.Series) -> pd.Series:
         series = series.copy()
+        series = series.apply(lambda v: v if np.isscalar(v) else np.nan)
+        series = pd.to_numeric(series, errors="coerce")
         non_null = series.dropna()
         if non_null.empty:
             return pd.Series([pd.NA] * len(series), index=series.index)
@@ -1171,6 +1547,36 @@ def main(
     print("Building league pitching...")
     league_pitching = build_league_pitching(pitch)
 
+    print("Building league pitch types...")
+    league_pitch_types_shapes = build_league_pitch_types(pitch)
+    expected_cols = {
+        "season",
+        "throws",
+        "pitch_tag",
+        "pct",
+        "velo",
+        "vaa",
+        "haa",
+        "vbreak",
+        "hbreak",
+        "SwStr",
+        "LA_lte_0",
+        "Z_Contact",
+        "Zone",
+        "Ball_pct",
+        "Chase",
+        "CSW",
+    }
+    missing_cols = expected_cols - set(league_pitch_types_shapes.columns)
+    if missing_cols:
+        raise ValueError(
+            f"league_pitch_types_shapes missing columns: {sorted(missing_cols)}"
+        )
+
+    print("Building splits...")
+    hitter_splits = build_hitter_splits(pitch)
+    pitcher_splits, pitch_type_splits = build_pitching_splits(pitch, stuff_percentiles)
+
     # Apply stuff grades to pitch_types
     pitch_types = apply_stuff_grade(pitch_types, stuff_percentiles)
 
@@ -1211,15 +1617,17 @@ def main(
         .drop("stuff_grade")
     )
 
-    league_pitch_types = pitch.group_by(["season", "level_id", "pitch_tag"]).agg(
+    league_pitch_types_stuff = pitch.group_by(["season", "level_id", "pitch_tag"]).agg(
         [
             pl.mean("stuff_raw").alias("stuff_raw"),
             pl.len().alias("pitches"),
         ]
     )
-    league_pitch_types = apply_stuff_grade(league_pitch_types, stuff_percentiles)
+    league_pitch_types_stuff = apply_stuff_grade(
+        league_pitch_types_stuff, stuff_percentiles
+    )
     league_stuff = (
-        league_pitch_types.group_by(["season", "level_id"])
+        league_pitch_types_stuff.group_by(["season", "level_id"])
         .agg((pl.col("stuff") * pl.col("pitches")).sum() / pl.col("pitches").sum())
         .rename({"stuff": "stuff_grade"})
     )
@@ -1236,6 +1644,10 @@ def main(
     write_csv(pitch_types, "new_pitch_types.csv", out_dir)
     write_csv(team_hitting, "new_team_damage.csv", out_dir)
     write_csv(team_pitching, "new_team_stuff.csv", out_dir)
+    write_csv(league_pitch_types_shapes, "league_pitch_types.csv", out_dir)
+    write_csv(hitter_splits, "hitter_splits.csv", out_dir)
+    write_csv(pitcher_splits, "pitcher_splits.csv", out_dir)
+    write_csv(pitch_type_splits, "pitch_types_splits.csv", out_dir)
 
     # Add percentiles
     hitter_pct = add_percentiles(
@@ -1282,24 +1694,29 @@ def main(
     )
     write_csv(pitcher_pct, "pitcher_pctiles.csv", out_dir)
 
+    pitch_types_value_cols = [
+        "pct",
+        "stuff",
+        "velo",
+        "max_velo",
+        "vaa",
+        "haa",
+        "vbreak",
+        "hbreak",
+        "SwStr",
+        "LA_lte_0",
+        "Ball_pct",
+        "Z_Contact",
+        "Chase",
+        "CSW",
+    ]
+    pitch_types_value_cols = [
+        col for col in pitch_types_value_cols if col in pitch_types.columns
+    ]
     pitch_types_pct = add_percentiles(
         pitch_types,
         group_cols=["season", "level_id", "pitch_tag"],
-        value_cols=[
-            "pct",
-            "stuff",
-            "velo",
-            "max_velo",
-            "vaa",
-            "haa",
-            "vbreak",
-            "hbreak",
-            "SwStr",
-            "Ball_pct",
-            "Z_Contact",
-            "Chase",
-            "CSW",
-        ],
+        value_cols=pitch_types_value_cols,
         filter_col="pitches",
         min_threshold=100,
     )
@@ -1324,7 +1741,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path(os.getenv("POOBAH_OUT_DIR", OUT_DIR)),
+        default=DATA_DIR,
         help="Output directory for CSVs",
     )
     args = parser.parse_args()

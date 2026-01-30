@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import sys
 
 import pandas as pd
 import streamlit as st
 import numpy as np
 from matplotlib import colors
+import plotly.express as px
 from st_paywall import add_auth
 
 DATA_DIR = Path(__file__).resolve().parent
@@ -47,11 +49,18 @@ st.markdown(
 
 
 @st.cache_data
+def _load_csv_cached(path_str: str, mtime: float) -> pd.DataFrame:
+    path = Path(path_str)
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_csv(path)
+
+
 def load_csv(name: str) -> pd.DataFrame:
     path = DATA_DIR / name
     if not path.exists():
         return pd.DataFrame()
-    return pd.read_csv(path)
+    return _load_csv_cached(str(path), path.stat().st_mtime)
 
 
 def load_damage_df() -> pd.DataFrame:
@@ -84,6 +93,50 @@ def filter_by_values(df: pd.DataFrame, column: str, values: list) -> pd.DataFram
     if df.empty or "All" in values:
         return df
     return df[df[column].isin(values)]
+
+
+def _split_team_tokens(value: str) -> list[str]:
+    tokens = [token.strip() for token in re.split(r"[|,/]", value)]
+    return [token for token in tokens if token]
+
+
+def team_options(df: pd.DataFrame, column: str) -> list[str]:
+    if df.empty or column not in df.columns:
+        return ["All"]
+    tokens: set[str] = set()
+    for value in df[column].dropna().astype(str):
+        tokens.update(_split_team_tokens(value))
+    return ["All"] + sorted(tokens)
+
+
+def filter_by_team_token(df: pd.DataFrame, column: str, team: str) -> pd.DataFrame:
+    if df.empty or team == "All":
+        return df
+    if column not in df.columns:
+        return df
+    mask = df[column].astype(str).apply(lambda v: team in _split_team_tokens(v))
+    return df[mask]
+
+
+def player_id_options(
+    df: pd.DataFrame, id_col: str, name_col: str
+) -> tuple[list, dict]:
+    if df.empty or id_col not in df.columns:
+        return ["All"], {}
+    options_df = df[[id_col, name_col]].copy() if name_col in df.columns else df[[id_col]].copy()
+    options_df[id_col] = pd.to_numeric(options_df[id_col], errors="coerce")
+    options_df = options_df.dropna(subset=[id_col])
+    if name_col in options_df.columns:
+        options_df[name_col] = options_df[name_col].astype(str)
+    options_df = options_df.drop_duplicates(subset=[id_col])
+    if name_col in options_df.columns:
+        options_df = options_df.sort_values(by=[name_col, id_col])
+        name_map = dict(zip(options_df[id_col], options_df[name_col]))
+    else:
+        options_df = options_df.sort_values(by=[id_col])
+        name_map = {}
+    ids = options_df[id_col].tolist()
+    return ["All"] + ids, name_map
 
 
 def numeric_filter(df: pd.DataFrame, column: str, min_value: float) -> pd.DataFrame:
@@ -159,6 +212,310 @@ def apply_column_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
         return filtered
 
 
+def _pick_first_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    for col in candidates:
+        if col in df.columns and df[col].notna().any():
+            return col
+    return None
+
+
+def _coerce_numeric_for_plot(
+    df: pd.DataFrame,
+    exclude_cols: set[str] | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
+    plot_df = df.copy()
+    numeric_cols = plot_df.select_dtypes(include="number").columns.tolist()
+    if plot_df.empty:
+        return plot_df, numeric_cols
+
+    min_required = max(3, int(len(plot_df) * 0.2))
+    exclude_cols = {col.lower() for col in (exclude_cols or set())}
+    object_cols = [
+        col
+        for col in plot_df.columns
+        if col not in numeric_cols and pd.api.types.is_object_dtype(plot_df[col])
+        and col.lower() not in exclude_cols
+    ]
+    for col in object_cols:
+        cleaned = (
+            plot_df[col]
+            .astype(str)
+            .str.replace("%", "", regex=False)
+            .str.replace(",", "", regex=False)
+        )
+        coerced = pd.to_numeric(cleaned, errors="coerce")
+        if coerced.notna().sum() >= min_required:
+            plot_df[col] = coerced
+            numeric_cols.append(col)
+
+    if len(numeric_cols) < 2:
+        for col in object_cols:
+            if col in numeric_cols:
+                continue
+            cleaned = (
+                plot_df[col]
+                .astype(str)
+                .str.replace("%", "", regex=False)
+                .str.replace(",", "", regex=False)
+            )
+            coerced = pd.to_numeric(cleaned, errors="coerce")
+            if coerced.notna().sum() >= 1:
+                plot_df[col] = coerced
+                numeric_cols.append(col)
+                if len(numeric_cols) >= 2:
+                    break
+
+    return plot_df, numeric_cols
+
+
+def _build_point_labels(
+    df: pd.DataFrame,
+    include_team: bool,
+    label_cols: list[str] | None = None,
+) -> pd.Series | None:
+    if df.empty:
+        return None
+    player_col = _pick_first_col(
+        df,
+        [
+            "Player",
+            "player",
+            "player_name",
+            "Name",
+            "Batter",
+            "Pitcher",
+            "Batter Name",
+            "Pitcher Name",
+        ],
+    )
+    team_col = None
+    if include_team:
+        team_col = _pick_first_col(
+            df,
+            [
+                "Team",
+                "team",
+                "hitting_code",
+                "pitching_code",
+                "Team Code",
+                "Team Abbrev",
+            ],
+        )
+    pitch_col = _pick_first_col(
+        df,
+        [
+            "Pitch Type",
+            "pitch_type",
+            "pitch_type_name",
+            "PitchType",
+            "TaggedPitchType",
+            "pitch_tag",
+        ],
+    )
+    split_col = _pick_first_col(
+        df,
+        [
+            "split",
+            "split_type",
+            "Split",
+            "Split Type",
+        ],
+    )
+    if not any([player_col, team_col, pitch_col, split_col]):
+        return None
+
+    resolved_label_cols: list[str] = []
+    if label_cols:
+        lower_map = {col.lower(): col for col in df.columns}
+        for name in label_cols:
+            if name in df.columns:
+                resolved_label_cols.append(name)
+                continue
+            key = name.lower()
+            if key in lower_map:
+                resolved_label_cols.append(lower_map[key])
+    if include_team and team_col and team_col not in resolved_label_cols:
+        resolved_label_cols.append(team_col)
+
+    def build_label(row: pd.Series) -> str:
+        if resolved_label_cols:
+            parts: list[str] = []
+            for col in resolved_label_cols:
+                if not col:
+                    continue
+                value = row.get(col)
+                if pd.isna(value):
+                    continue
+                value_str = str(value).strip()
+                if value_str:
+                    parts.append(value_str)
+            return " | ".join(parts)
+
+        if player_col and not include_team:
+            parts: list[str] = []
+            for col in [player_col, pitch_col, split_col]:
+                if not col:
+                    continue
+                value = row.get(col)
+                if pd.isna(value):
+                    continue
+                value_str = str(value).strip()
+                if value_str:
+                    parts.append(value_str)
+            return " | ".join(parts)
+
+        parts: list[str] = []
+        for col in [player_col, team_col, pitch_col, split_col]:
+            if not col:
+                continue
+            value = row.get(col)
+            if pd.isna(value):
+                continue
+            value_str = str(value).strip()
+            if value_str:
+                parts.append(value_str)
+        return " | ".join(parts)
+
+    labels = df.apply(build_label, axis=1)
+    if labels.str.strip().eq("").all():
+        return None
+    return labels
+
+
+def _render_plot_controls(
+    df: pd.DataFrame,
+    table_key: str,
+    include_team_label: bool,
+    reverse_cols: set[str],
+    label_cols: list[str] | None,
+) -> None:
+    exclude_cols = set(label_cols or [])
+    plot_df, numeric_cols = _coerce_numeric_for_plot(df, exclude_cols=exclude_cols)
+    if len(numeric_cols) < 2:
+        st.info("Not enough numeric columns to plot.")
+        return
+
+    with st.expander("Create-a-Plot", expanded=False):
+        col1, col2 = st.columns(2)
+        x_col = col1.selectbox(
+            "X column",
+            options=numeric_cols,
+            index=0,
+            key=f"{table_key}_plot_x",
+        )
+        y_options = [col for col in numeric_cols if col != x_col]
+        if not y_options:
+            y_options = numeric_cols
+        y_default = 1 if len(y_options) > 1 and y_options[0] == x_col else 0
+        y_col = col2.selectbox(
+            "Y column",
+            options=y_options,
+            index=y_default,
+            key=f"{table_key}_plot_y",
+        )
+        col3, col4 = st.columns(2)
+        size_options = ["(none)"] + numeric_cols
+        size_col = col3.selectbox(
+            "Size",
+            options=size_options,
+            index=0,
+            key=f"{table_key}_plot_size",
+        )
+        color_options = ["(none)"] + numeric_cols
+        color_col = col4.selectbox(
+            "Color",
+            options=color_options,
+            index=0,
+            key=f"{table_key}_plot_color",
+        )
+        max_points = st.number_input(
+            "Max labeled points (sampled if exceeded)",
+            min_value=100,
+            max_value=20000,
+            value=100,
+            step=100,
+            key=f"{table_key}_plot_max",
+        )
+        show_labels = st.checkbox(
+            "Show point labels",
+            value=True,
+            key=f"{table_key}_plot_labels",
+        )
+        st.caption(
+            "Large point counts will disable labels. Lower Max points to show labels."
+        )
+
+        plot_df = plot_df.copy()
+
+        size_arg = None if size_col == "(none)" else size_col
+        color_arg = None if color_col == "(none)" else color_col
+        colorscale = None
+        color_midpoint = None
+        if color_arg is not None:
+            colorscale = "RdYlGn_r" if color_arg in reverse_cols else "RdYlGn"
+            color_midpoint = float(plot_df[color_arg].median())
+
+        plot_df = plot_df.reset_index(drop=True)
+        if x_col in plot_df.columns and y_col in plot_df.columns:
+            plot_df = plot_df.copy()
+            plot_df[x_col] = pd.to_numeric(plot_df[x_col], errors="coerce")
+            plot_df[y_col] = pd.to_numeric(plot_df[y_col], errors="coerce")
+            plot_df = plot_df.dropna(subset=[x_col, y_col])
+            if plot_df.empty:
+                st.info("No rows available after numeric coercion of X/Y.")
+                return
+            q10_x = plot_df[x_col].quantile(0.1)
+            q90_x = plot_df[x_col].quantile(0.9)
+            q10_y = plot_df[y_col].quantile(0.1)
+            q90_y = plot_df[y_col].quantile(0.9)
+            extremes = (
+                (plot_df[x_col] <= q10_x)
+                | (plot_df[x_col] >= q90_x)
+                | (plot_df[y_col] <= q10_y)
+                | (plot_df[y_col] >= q90_y)
+            )
+            if show_labels:
+                labels = _build_point_labels(
+                    plot_df,
+                    include_team=include_team_label,
+                    label_cols=label_cols,
+                )
+                if labels is not None:
+                    label_mask = extremes.copy()
+                    if label_mask.sum() > max_points:
+                        sampled_idx = (
+                            plot_df[label_mask]
+                            .sample(n=int(max_points), random_state=0)
+                            .index
+                        )
+                        label_mask = plot_df.index.isin(sampled_idx)
+                    plot_df = plot_df.copy()
+                    plot_df["__label"] = labels.where(label_mask, "")
+
+        fig = px.scatter(
+            plot_df,
+            x=x_col,
+            y=y_col,
+            size=size_arg,
+            color=color_arg,
+            text="__label" if show_labels and "__label" in plot_df.columns else None,
+            hover_name="__label" if "__label" in plot_df.columns else None,
+            color_continuous_scale=colorscale,
+            color_continuous_midpoint=color_midpoint,
+            render_mode="svg",
+        )
+        if show_labels and "__label" in plot_df.columns:
+            fig.update_traces(textposition="top center", mode="markers+text")
+        else:
+            fig.update_traces(mode="markers")
+        fig.update_traces(marker=dict(size=7, opacity=0.7))
+        fig.update_layout(
+            margin=dict(l=10, r=10, t=30, b=10),
+            height=520,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
 def render_table(
     df: pd.DataFrame,
     reverse_cols: set[str] | None = None,
@@ -166,16 +523,18 @@ def render_table(
     group_cols: list[str] | None = None,
     stats_df: pd.DataFrame | None = None,
     show_controls: bool = True,
+    include_team_label: bool = False,
+    label_cols: list[str] | None = None,
 ) -> None:
     if df.empty:
         st.info("No data available yet.")
         return
 
-    if show_controls:
-        global _TABLE_COUNTER
-        table_key = f"table_{_TABLE_COUNTER}"
-        _TABLE_COUNTER += 1
+    global _TABLE_COUNTER
+    table_key = f"table_{_TABLE_COUNTER}"
+    _TABLE_COUNTER += 1
 
+    if show_controls:
         df = apply_column_filters(df, table_key)
         if df.empty:
             st.info("No data after filters.")
@@ -183,6 +542,14 @@ def render_table(
 
     display_cols = [col for col in df.columns if not col.startswith("__")]
     df_display = df[display_cols].copy()
+
+    _render_plot_controls(
+        df_display,
+        table_key,
+        include_team_label,
+        reverse_cols or set(),
+        label_cols,
+    )
 
     if show_controls:
         page_size_option = st.selectbox(
@@ -369,6 +736,10 @@ pitch_types_pct = load_csv("pitch_types_pctiles.csv")
 hitters_regressed = load_csv("hitters_regressed.csv")
 pitchers_regressed = load_csv("pitchers_regressed.csv")
 pitch_types_regressed = load_csv("pitch_types_regressed.csv")
+hitter_splits_df = load_csv("hitter_splits.csv")
+pitcher_splits_df = load_csv("pitcher_splits.csv")
+pitch_type_splits_df = load_csv("pitch_types_splits.csv")
+league_pitch_types = load_csv("league_pitch_types.csv")
 
 
 # Normalize team column names: new CSVs use "team", old use "pitching_code"/"hitting_code"
@@ -395,6 +766,15 @@ def _normalize_la_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _normalize_split_cols(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    for col in ["split_type", "split"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+    return df
+
+
 def _merge_regressed(
     base_df: pd.DataFrame, reg_df: pd.DataFrame, keys: list[str]
 ) -> pd.DataFrame:
@@ -414,11 +794,20 @@ damage_df = _normalize_team_col(damage_df, "hitting_code")
 damage_df = _normalize_la_cols(damage_df)
 hitter_pct = _normalize_team_col(hitter_pct, "hitting_code")
 hitter_pct = _normalize_la_cols(hitter_pct)
+hitter_splits_df = _normalize_team_col(hitter_splits_df, "hitting_code")
+hitter_splits_df = _normalize_la_cols(hitter_splits_df)
+hitter_splits_df = _normalize_split_cols(hitter_splits_df)
 pitcher_df = _normalize_team_col(pitcher_df, "pitching_code")
 pitcher_df = _normalize_la_cols(pitcher_df)
 pitcher_pct = _normalize_team_col(pitcher_pct, "pitching_code")
+pitcher_splits_df = _normalize_team_col(pitcher_splits_df, "pitching_code")
+pitcher_splits_df = _normalize_la_cols(pitcher_splits_df)
+pitcher_splits_df = _normalize_split_cols(pitcher_splits_df)
 pitch_types = _normalize_team_col(pitch_types, "pitching_code")
 pitch_types_pct = _normalize_team_col(pitch_types_pct, "pitching_code")
+pitch_type_splits_df = _normalize_team_col(pitch_type_splits_df, "pitching_code")
+pitch_type_splits_df = _normalize_split_cols(pitch_type_splits_df)
+league_pitch_types = _normalize_split_cols(league_pitch_types)
 team_damage = _normalize_la_cols(team_damage)
 team_stuff = _normalize_la_cols(team_stuff)
 
@@ -429,6 +818,25 @@ if (
 ):
     pitch_types = pitch_types.assign(
         pitch_group=pitch_types["pitch_tag"].map(
+            lambda tag: (
+                "FA"
+                if tag in {"FA", "HC", "SI"}
+                else (
+                    "BR"
+                    if tag in {"SL", "SW", "CU"}
+                    else "OFF" if tag in {"CH", "FS"} else "OTHER"
+                )
+            )
+        )
+    )
+
+if (
+    not pitch_type_splits_df.empty
+    and "pitch_group" not in pitch_type_splits_df.columns
+    and "pitch_tag" in pitch_type_splits_df.columns
+):
+    pitch_type_splits_df = pitch_type_splits_df.assign(
+        pitch_group=pitch_type_splits_df["pitch_tag"].map(
             lambda tag: (
                 "FA"
                 if tag in {"FA", "HC", "SI"}
@@ -462,6 +870,7 @@ pitch_types_reg_df = _merge_regressed(
 # PAGE FUNCTIONS
 # =============================================================================
 
+
 def home_page():
     """Welcome/Home page"""
     st.title("Profiles")
@@ -492,6 +901,7 @@ Feedback: If you have any suggestions or just want to say hi, shoot me a DM on T
 # HITTERS PAGES
 # =============================================================================
 
+
 def hitter_individual_stats():
     """Hitters - Individual Stats page"""
     st.title("Individual Hitter Stats")
@@ -510,24 +920,40 @@ def hitter_individual_stats():
             season = st.multiselect(
                 "Select Season",
                 season_options(damage_df),
-                default=[season_options(damage_df)[1]] if len(season_options(damage_df)) > 1 else ["All"],
+                default=(
+                    [season_options(damage_df)[1]]
+                    if len(season_options(damage_df)) > 1
+                    else ["All"]
+                ),
                 key="hitter_stats_season",
             )
             min_value = st.number_input(
-                "Minimum Value", min_value=0, max_value=500, value=100, step=1,
+                "Minimum Value",
+                min_value=0,
+                max_value=500,
+                value=100,
+                step=1,
                 key="hitter_stats_min_value",
             )
-            value_type = st.selectbox("Filter By", ["PA", "BBE"], index=1, key="hitter_stats_value_type")
-            team = st.multiselect(
+            value_type = st.selectbox(
+                "Filter By", ["PA", "BBE"], index=1, key="hitter_stats_value_type"
+            )
+            team = st.selectbox(
                 "Select Team",
-                ["All"] + sorted(damage_df["hitting_code"].dropna().unique().tolist()),
-                default=["All"],
+                team_options(damage_df, "hitting_code"),
+                index=0,
                 key="hitter_stats_team",
+            )
+            player_options, player_name_map = player_id_options(
+                damage_df, "batter_mlbid", "hitter_name"
             )
             player = st.multiselect(
                 "Select Player",
-                ["All"] + sorted(damage_df["hitter_name"].dropna().unique().tolist()),
+                player_options,
                 default=["All"],
+                format_func=lambda v: "All"
+                if v == "All"
+                else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
                 key="hitter_stats_player",
             )
         with right:
@@ -545,8 +971,8 @@ def hitter_individual_stats():
             df = damage_df.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
-            df = filter_by_values(df, "hitting_code", team)
-            df = filter_by_values(df, "hitter_name", player)
+            df = filter_by_team_token(df, "hitting_code", team)
+            df = filter_by_values(df, "batter_mlbid", player)
             df = df.assign(__season=df["season"], __level=df["level_id"])
 
             if value_type == "PA":
@@ -607,6 +1033,7 @@ def hitter_individual_stats():
                 reverse_cols=HIGHER_IS_WORSE_COLS | {"Chase (%)", "LA<=0%"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
+                include_team_label=False,
             )
             download_button(df, "hitters", "hitters_download")
 
@@ -629,24 +1056,40 @@ def hitter_percentiles():
             season = st.multiselect(
                 "Select Season",
                 season_options(hitter_pct),
-                default=[season_options(hitter_pct)[1]] if len(season_options(hitter_pct)) > 1 else ["All"],
+                default=(
+                    [season_options(hitter_pct)[1]]
+                    if len(season_options(hitter_pct)) > 1
+                    else ["All"]
+                ),
                 key="hitter_pct_season",
             )
             min_value = st.number_input(
-                "Minimum Value", min_value=0, max_value=500, value=100, step=1,
+                "Minimum Value",
+                min_value=0,
+                max_value=500,
+                value=100,
+                step=1,
                 key="hitter_pct_min_value",
             )
-            value_type = st.selectbox("Filter By", ["PA", "BBE"], index=1, key="hitter_pct_value_type")
-            team = st.multiselect(
+            value_type = st.selectbox(
+                "Filter By", ["PA", "BBE"], index=1, key="hitter_pct_value_type"
+            )
+            team = st.selectbox(
                 "Select Team",
-                ["All"] + sorted(hitter_pct["hitting_code"].dropna().unique().tolist()),
-                default=["All"],
+                team_options(hitter_pct, "hitting_code"),
+                index=0,
                 key="hitter_pct_team",
+            )
+            player_options, player_name_map = player_id_options(
+                hitter_pct, "batter_mlbid", "hitter_name"
             )
             player = st.multiselect(
                 "Select Player",
-                ["All"] + sorted(hitter_pct["hitter_name"].dropna().unique().tolist()),
+                player_options,
                 default=["All"],
+                format_func=lambda v: "All"
+                if v == "All"
+                else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
                 key="hitter_pct_player",
             )
         with right:
@@ -660,8 +1103,8 @@ def hitter_percentiles():
             df = hitter_pct.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
-            df = filter_by_values(df, "hitting_code", team)
-            df = filter_by_values(df, "hitter_name", player)
+            df = filter_by_team_token(df, "hitting_code", team)
+            df = filter_by_values(df, "batter_mlbid", player)
 
             if value_type == "PA":
                 df = numeric_filter(df, "PA", min_value)
@@ -711,7 +1154,12 @@ def hitter_percentiles():
             # For percentiles, reverse color on bad stats (higher pctile in bad stat = worse)
             render_table(
                 df,
-                reverse_cols={"Hittable Pitch Take", "Chase", "Whiff vs Secondaries", "Whiff vs 95+"},
+                reverse_cols={
+                    "Hittable Pitch Take",
+                    "Chase",
+                    "Whiff vs Secondaries",
+                    "Whiff vs 95+",
+                },
             )
             download_button(df, "hitter_percentiles", "hitter_pct_download")
 
@@ -735,19 +1183,30 @@ def hitter_comps():
             st.info("No eligible MLB hitter seasons (min 20 PA).")
         else:
             seasons = season_options(player_pool, "season")[1:]
-            season_choice = st.selectbox("Season", seasons, index=0, key="hitter_comps_season")
+            season_choice = st.selectbox(
+                "Season", seasons, index=0, key="hitter_comps_season"
+            )
             season_df = player_pool[player_pool["season"] == season_choice]
-            players = sorted(season_df["hitter_name"].dropna().unique().tolist())
-            player_choice = st.selectbox("Player", players, index=0, key="hitter_comps_player")
-            player_df = season_df[season_df["hitter_name"] == player_choice]
-            teams = sorted(player_df["hitting_code"].dropna().unique().tolist())
+            player_options, player_name_map = player_id_options(
+                season_df, "batter_mlbid", "hitter_name"
+            )
+            player_choice = st.selectbox(
+                "Player",
+                [opt for opt in player_options if opt != "All"],
+                index=0,
+                format_func=lambda v: f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+                key="hitter_comps_player",
+            )
+            player_df = season_df[season_df["batter_mlbid"] == player_choice]
+            player_all = hitters_reg_df[hitters_reg_df["batter_mlbid"] == player_choice]
+            teams = team_options(player_all, "hitting_code")[1:]
             team_choice = (
                 st.selectbox("Team", teams, index=0, key="hitter_comps_team")
                 if len(teams) > 1
                 else (teams[0] if teams else None)
             )
             if team_choice:
-                player_df = player_df[player_df["hitting_code"] == team_choice]
+                player_df = filter_by_team_token(player_df, "hitting_code", team_choice)
 
             feature_cols = [
                 "damage_rate_reg",
@@ -770,7 +1229,7 @@ def hitter_comps():
                 st.info("No season row found for that selection.")
             else:
                 eligible_comp = eligible_comp[
-                    ~(eligible_comp["hitter_name"] == player_choice)
+                    ~(eligible_comp["batter_mlbid"] == player_choice)
                 ]
                 stats = eligible_comp[feature_cols]
                 means = stats.mean()
@@ -778,7 +1237,10 @@ def hitter_comps():
                 zscores = (stats - means) / stds
                 zscores = zscores.fillna(0)
                 target_vec = (
-                    ((player_df[feature_cols] - means) / stds).fillna(0).iloc[0].to_numpy()
+                    ((player_df[feature_cols] - means) / stds)
+                    .fillna(0)
+                    .iloc[0]
+                    .to_numpy()
                 )
                 distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
                 max_dist = distances.max() if len(distances) else 0.0
@@ -961,26 +1423,40 @@ def hitter_ar():
             season = st.multiselect(
                 "Select Season",
                 season_options(hitters_reg_df),
-                default=[season_options(hitters_reg_df)[1]] if len(season_options(hitters_reg_df)) > 1 else ["All"],
+                default=(
+                    [season_options(hitters_reg_df)[1]]
+                    if len(season_options(hitters_reg_df)) > 1
+                    else ["All"]
+                ),
                 key="hitter_ar_season",
             )
             min_value = st.number_input(
-                "Minimum Value", min_value=0, max_value=500, value=100, step=1,
+                "Minimum Value",
+                min_value=0,
+                max_value=500,
+                value=100,
+                step=1,
                 key="hitter_ar_min_value",
             )
-            value_type = st.selectbox("Filter By", ["PA", "BBE"], index=1, key="hitter_ar_value_type")
-            team = st.multiselect(
+            value_type = st.selectbox(
+                "Filter By", ["PA", "BBE"], index=1, key="hitter_ar_value_type"
+            )
+            team = st.selectbox(
                 "Select Team",
-                ["All"]
-                + sorted(hitters_reg_df["hitting_code"].dropna().unique().tolist()),
-                default=["All"],
+                team_options(hitters_reg_df, "hitting_code"),
+                index=0,
                 key="hitter_ar_team",
+            )
+            player_options, player_name_map = player_id_options(
+                hitters_reg_df, "batter_mlbid", "hitter_name"
             )
             player = st.multiselect(
                 "Select Player",
-                ["All"]
-                + sorted(hitters_reg_df["hitter_name"].dropna().unique().tolist()),
+                player_options,
                 default=["All"],
+                format_func=lambda v: "All"
+                if v == "All"
+                else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
                 key="hitter_ar_player",
             )
         with right:
@@ -998,8 +1474,8 @@ def hitter_ar():
             df = hitters_reg_df.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
-            df = filter_by_values(df, "hitting_code", team)
-            df = filter_by_values(df, "hitter_name", player)
+            df = filter_by_team_token(df, "hitting_code", team)
+            df = filter_by_values(df, "batter_mlbid", player)
 
             if value_type == "PA":
                 df = numeric_filter(df, "PA", min_value)
@@ -1069,30 +1545,180 @@ def hitter_splits():
     """Hitters - Splits page (placeholder)"""
     st.title("Hitter Splits")
 
-    st.info("Hitter splits functionality coming soon!")
+    if hitter_splits_df.empty:
+        st.info("Missing hitter_splits.csv")
+        return
 
     tabs = st.tabs(["vL / vR", "Home / Away", "1H / 2H", "Monthly"])
+    split_map = {
+        "vL / vR": "vs L/R",
+        "Home / Away": "Home/Away",
+        "1H / 2H": "1st Half/2nd Half",
+        "Monthly": "Monthly",
+    }
 
-    with tabs[0]:
-        st.subheader("vs. Lefty / vs. Righty")
-        st.write("Split data by pitcher handedness will be available here.")
+    for idx, tab_name in enumerate(split_map.keys()):
+        with tabs[idx]:
+            split_type = split_map[tab_name]
+            split_df = hitter_splits_df[
+                hitter_splits_df["split_type"] == split_type
+            ].copy()
+            if split_df.empty:
+                available = sorted(
+                    hitter_splits_df["split_type"].dropna().unique().tolist()
+                )
+                st.info(f"No data for {tab_name}. Available split types: {available}")
+                continue
 
-    with tabs[1]:
-        st.subheader("Home / Away")
-        st.write("Home and away split data will be available here.")
+            left, right = st.columns([1, 3])
+            with left:
+                level = st.selectbox(
+                    "Select Level",
+                    ["All", "MLB", "Triple-A", "Low-A", "Low Minors"],
+                    index=1,
+                    key=f"hitter_splits_level_{idx}",
+                )
+                season = st.multiselect(
+                    "Select Season",
+                    season_options(split_df),
+                    default=(
+                        [season_options(split_df)[1]]
+                        if len(season_options(split_df)) > 1
+                        else ["All"]
+                    ),
+                    key=f"hitter_splits_season_{idx}",
+                )
+                min_value = st.number_input(
+                    "Minimum Value",
+                    min_value=0,
+                    max_value=500,
+                    value=100,
+                    step=1,
+                    key=f"hitter_splits_min_value_{idx}",
+                )
+                value_type = st.selectbox(
+                    "Filter By",
+                    ["PA", "BBE"],
+                    index=1,
+                    key=f"hitter_splits_value_type_{idx}",
+                )
+                split_choice = st.multiselect(
+                    "Select Split",
+                    ["All"] + sorted(split_df["split"].dropna().unique().tolist()),
+                    default=["All"],
+                    key=f"hitter_splits_split_{idx}",
+                )
+                team = st.selectbox(
+                    "Select Team",
+                    team_options(split_df, "hitting_code"),
+                    index=0,
+                    key=f"hitter_splits_team_{idx}",
+                )
+                player_options, player_name_map = player_id_options(
+                    split_df, "batter_mlbid", "hitter_name"
+                )
+                player = st.multiselect(
+                    "Select Player",
+                    player_options,
+                    default=["All"],
+                    format_func=lambda v: "All"
+                    if v == "All"
+                    else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+                    key=f"hitter_splits_player_{idx}",
+                )
+            with right:
+                level_map = {
+                    "All": [1, 11, 14, 16],
+                    "MLB": [1],
+                    "Triple-A": [11],
+                    "Low-A": [14],
+                    "Low Minors": [16],
+                }
+                base_stats = split_df.copy()
+                base_stats = base_stats.assign(
+                    __season=base_stats["season"],
+                    __level=base_stats["level_id"],
+                )
+                df = split_df.copy()
+                df = df[df["level_id"].isin(level_map[level])]
+                df = filter_by_values(df, "season", season)
+                df = filter_by_values(df, "split", split_choice)
+                df = filter_by_team_token(df, "hitting_code", team)
+                df = filter_by_values(df, "batter_mlbid", player)
+                df = df.assign(__season=df["season"], __level=df["level_id"])
 
-    with tabs[2]:
-        st.subheader("1st Half / 2nd Half")
-        st.write("First half and second half split data will be available here.")
+                if value_type == "PA":
+                    df = numeric_filter(df, "PA", min_value)
+                else:
+                    df = numeric_filter(df, "bbe", min_value)
 
-    with tabs[3]:
-        st.subheader("Monthly Splits")
-        st.write("Monthly split data will be available here.")
+                columns = [
+                    "hitter_name",
+                    "hitting_code",
+                    "season",
+                    "split",
+                    "PA",
+                    "bbe",
+                    "damage_rate",
+                    "EV90th",
+                    "max_EV",
+                    "pull_FB_pct",
+                    "LA_gte_20",
+                    "LA_lte_0",
+                    "SEAGER",
+                    "selection_skill",
+                    "hittable_pitches_taken",
+                    "chase",
+                    "z_con",
+                    "secondary_whiff_pct",
+                    "whiffs_vs_95",
+                    "contact_vs_avg",
+                    "__season",
+                    "__level",
+                ]
+                df = df[[col for col in columns if col in df.columns]].copy()
+                rename_map = {
+                    "hitter_name": "Name",
+                    "hitting_code": "Team",
+                    "season": "Season",
+                    "split": "Split",
+                    "bbe": "BBE",
+                    "damage_rate": "Damage/BBE (%)",
+                    "EV90th": "90th Pctile EV",
+                    "max_EV": "Max EV",
+                    "pull_FB_pct": "Pulled FB (%)",
+                    "LA_gte_20": "LA>=20%",
+                    "LA_lte_0": "LA<=0%",
+                    "selection_skill": "Selectivity (%)",
+                    "hittable_pitches_taken": "Hittable Pitch Take (%)",
+                    "chase": "Chase (%)",
+                    "z_con": "Z-Contact (%)",
+                    "secondary_whiff_pct": "Whiff vs. Secondaries (%)",
+                    "whiffs_vs_95": "Whiff vs. 95+ (%)",
+                    "contact_vs_avg": "Contact Over Expected (%)",
+                }
+                df = df.rename(columns=rename_map)
+                df = df.sort_values(by="Damage/BBE (%)", ascending=False)
+                stats_df = base_stats[
+                    [col for col in columns if col in base_stats.columns]
+                ].rename(columns=rename_map)
+                render_table(
+                    df,
+                    reverse_cols=HIGHER_IS_WORSE_COLS | {"Chase (%)", "LA<=0%"},
+                    group_cols=["__season", "__level"],
+                    stats_df=stats_df,
+                )
+                download_button(
+                    df,
+                    f"hitter_splits_{idx}",
+                    f"hitter_splits_download_{idx}",
+                )
 
 
 # =============================================================================
 # PITCHERS PAGES
 # =============================================================================
+
 
 def pitcher_individual_stats():
     """Pitchers - Individual Stats page"""
@@ -1112,27 +1738,40 @@ def pitcher_individual_stats():
             season = st.multiselect(
                 "Select Season",
                 season_options(pitcher_df),
-                default=[season_options(pitcher_df)[1]] if len(season_options(pitcher_df)) > 1 else ["All"],
+                default=(
+                    [season_options(pitcher_df)[1]]
+                    if len(season_options(pitcher_df)) > 1
+                    else ["All"]
+                ),
                 key="pitcher_stats_season",
             )
             min_value = st.number_input(
-                "Minimum Value", min_value=0, max_value=1000, value=100, step=1,
+                "Minimum Value",
+                min_value=0,
+                max_value=1000,
+                value=100,
+                step=1,
                 key="pitcher_stats_min_value",
             )
             filter_type = st.selectbox(
                 "Filter By", ["IP", "TBF"], index=1, key="pitcher_stats_filter_type"
             )
-            team = st.multiselect(
+            team = st.selectbox(
                 "Select Team",
-                ["All"]
-                + sorted(pitcher_df["pitching_code"].dropna().unique().tolist()),
-                default=["All"],
+                team_options(pitcher_df, "pitching_code"),
+                index=0,
                 key="pitcher_stats_team",
+            )
+            player_options, player_name_map = player_id_options(
+                pitcher_df, "pitcher_mlbid", "name"
             )
             player = st.multiselect(
                 "Select Player",
-                ["All"] + sorted(pitcher_df["name"].dropna().unique().tolist()),
+                player_options,
                 default=["All"],
+                format_func=lambda v: "All"
+                if v == "All"
+                else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
                 key="pitcher_stats_player",
             )
         with right:
@@ -1150,8 +1789,8 @@ def pitcher_individual_stats():
             df = pitcher_df.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
-            df = filter_by_values(df, "pitching_code", team)
-            df = filter_by_values(df, "name", player)
+            df = filter_by_team_token(df, "pitching_code", team)
+            df = filter_by_values(df, "pitcher_mlbid", player)
             df = df.assign(__season=df["season"], __level=df["level_id"])
 
             if filter_type == "IP":
@@ -1172,6 +1811,7 @@ def pitcher_individual_stats():
                 "FA_pct",
                 "BB_rpm",
                 "SwStr",
+                "Zone",
                 "Ball_pct",
                 "Z_Contact",
                 "Chase",
@@ -1200,6 +1840,7 @@ def pitcher_individual_stats():
                 "FA_pct": "FA Usage (%)",
                 "BB_rpm": "BB Spin",
                 "SwStr": "SwStr (%)",
+                "Zone": "Zone (%)",
                 "Ball_pct": "Ball (%)",
                 "Z_Contact": "Z-Contact (%)",
                 "Chase": "Chase (%)",
@@ -1241,24 +1882,37 @@ def pitcher_percentiles():
             season = st.multiselect(
                 "Select Season",
                 season_options(pitcher_pct),
-                default=[season_options(pitcher_pct)[1]] if len(season_options(pitcher_pct)) > 1 else ["All"],
+                default=(
+                    [season_options(pitcher_pct)[1]]
+                    if len(season_options(pitcher_pct)) > 1
+                    else ["All"]
+                ),
                 key="pitcher_pct_season",
             )
             min_value = st.number_input(
-                "Minimum TBF", min_value=0, max_value=1000, value=100, step=1,
+                "Minimum TBF",
+                min_value=0,
+                max_value=1000,
+                value=100,
+                step=1,
                 key="pitcher_pct_min_value",
             )
-            team = st.multiselect(
+            team = st.selectbox(
                 "Select Team",
-                ["All"]
-                + sorted(pitcher_pct["pitching_code"].dropna().unique().tolist()),
-                default=["All"],
+                team_options(pitcher_pct, "pitching_code"),
+                index=0,
                 key="pitcher_pct_team",
+            )
+            player_options, player_name_map = player_id_options(
+                pitcher_pct, "pitcher_mlbid", "name"
             )
             player = st.multiselect(
                 "Select Player",
-                ["All"] + sorted(pitcher_pct["name"].dropna().unique().tolist()),
+                player_options,
                 default=["All"],
+                format_func=lambda v: "All"
+                if v == "All"
+                else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
                 key="pitcher_pct_player",
             )
         with right:
@@ -1272,8 +1926,8 @@ def pitcher_percentiles():
             df = pitcher_pct.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
-            df = filter_by_values(df, "pitching_code", team)
-            df = filter_by_values(df, "name", player)
+            df = filter_by_team_token(df, "pitching_code", team)
+            df = filter_by_values(df, "pitcher_mlbid", player)
             df = numeric_filter(df, "TBF", min_value)
 
             columns = [
@@ -1322,16 +1976,16 @@ def pitcher_percentiles():
 
 def pitcher_comps():
     """Pitchers - Comparisons page"""
-    st.title("Pitcher Comparisons")
+    st.title("Pitcher Comparisons (Auto-Regressed)")
 
-    if pitcher_df.empty:
-        st.info("Missing pitcher_stuff_new.csv")
+    if pitchers_reg_df.empty:
+        st.info("Missing pitchers_regressed.csv or pitcher_stuff_new.csv")
     else:
-        player_pool = pitcher_df.copy()
+        player_pool = pitchers_reg_df.copy()
         player_pool = player_pool[
             (player_pool["level_id"] == 1) & (player_pool["IP"] >= 5)
         ]
-        eligible_all = pitcher_df.copy()
+        eligible_all = pitchers_reg_df.copy()
         eligible_all = eligible_all[
             (eligible_all["level_id"] == 1) & (eligible_all["IP"] >= 50)
         ]
@@ -1339,34 +1993,47 @@ def pitcher_comps():
             st.info("No eligible MLB pitcher seasons (min 5 IP).")
         else:
             seasons = season_options(player_pool, "season")[1:]
-            season_choice = st.selectbox("Season", seasons, index=0, key="pitcher_comps_season")
+            season_choice = st.selectbox(
+                "Season", seasons, index=0, key="pitcher_comps_season"
+            )
             season_df = player_pool[player_pool["season"] == season_choice]
-            players = sorted(season_df["name"].dropna().unique().tolist())
-            player_choice = st.selectbox("Player", players, index=0, key="pitcher_comps_player")
-            player_df = season_df[season_df["name"] == player_choice]
-            teams = sorted(player_df["pitching_code"].dropna().unique().tolist())
+            player_options, player_name_map = player_id_options(
+                season_df, "pitcher_mlbid", "name"
+            )
+            player_choice = st.selectbox(
+                "Player",
+                [opt for opt in player_options if opt != "All"],
+                index=0,
+                format_func=lambda v: f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+                key="pitcher_comps_player",
+            )
+            player_df = season_df[season_df["pitcher_mlbid"] == player_choice]
+            player_all = pitchers_reg_df[
+                pitchers_reg_df["pitcher_mlbid"] == player_choice
+            ]
+            teams = team_options(player_all, "pitching_code")[1:]
             team_choice = (
                 st.selectbox("Team", teams, index=0, key="pitcher_comps_team")
                 if len(teams) > 1
                 else (teams[0] if teams else None)
             )
             if team_choice:
-                player_df = player_df[player_df["pitching_code"] == team_choice]
+                player_df = filter_by_team_token(player_df, "pitching_code", team_choice)
 
             feature_cols = [
                 "stuff",
-                "fastball_velo",
-                "fastball_vaa",
-                "FA_pct",
-                "BB_rpm",
-                "SwStr",
-                "Ball_pct",
-                "Z_Contact",
-                "Chase",
-                "LA_lte_0",
-                "rel_z",
-                "rel_x",
-                "ext",
+                "fastball_velo_reg",
+                "fastball_vaa_reg",
+                "FA_pct_reg",
+                "BB_rpm_reg",
+                "SwStr_reg",
+                "Ball_pct_reg",
+                "Z_Contact_reg",
+                "Chase_reg",
+                "LA_lte_0_reg",
+                "rel_z_reg",
+                "rel_x_reg",
+                "ext_reg",
             ]
             feature_cols = [c for c in feature_cols if c in eligible_all.columns]
             eligible_comp = eligible_all.dropna(subset=feature_cols)
@@ -1374,7 +2041,7 @@ def pitcher_comps():
                 st.info("No season row found for that selection.")
             else:
                 eligible_comp = eligible_comp[
-                    ~(eligible_comp["name"] == player_choice)
+                    ~(eligible_comp["pitcher_mlbid"] == player_choice)
                 ]
                 stats = eligible_comp[feature_cols]
                 means = stats.mean()
@@ -1382,7 +2049,10 @@ def pitcher_comps():
                 zscores = (stats - means) / stds
                 zscores = zscores.fillna(0)
                 target_vec = (
-                    ((player_df[feature_cols] - means) / stds).fillna(0).iloc[0].to_numpy()
+                    ((player_df[feature_cols] - means) / stds)
+                    .fillna(0)
+                    .iloc[0]
+                    .to_numpy()
                 )
                 distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
                 max_dist = distances.max() if len(distances) else 0.0
@@ -1412,30 +2082,32 @@ def pitcher_comps():
                     __season=eligible_comp["season"], __level=eligible_comp["level_id"]
                 )
                 display_cols += ["__season", "__level"]
-                df = eligible_comp[[col for col in display_cols if col in eligible_comp.columns]].copy()
+                df = eligible_comp[
+                    [col for col in display_cols if col in eligible_comp.columns]
+                ].copy()
                 df = df.rename(
                     columns={
                         "name": "Name",
                         "pitching_code": "Team",
                         "season": "Season",
-                        "fastball_velo": "FA mph",
-                        "fastball_vaa": "FA VAA",
-                        "SwStr": "SwStr (%)",
-                        "Ball_pct": "Ball (%)",
-                        "Chase": "Chase (%)",
-                        "Z_Contact": "Z-Contact (%)",
-                        "LA_lte_0": "LA<=0%",
-                        "rel_z": "Vertical Release (ft.)",
-                        "rel_x": "Horizontal Release (ft.)",
-                        "ext": "Extension (ft.)",
+                        "fastball_velo_reg": "FA mph",
+                        "fastball_vaa_reg": "FA VAA",
+                        "SwStr_reg": "SwStr (%)",
+                        "Ball_pct_reg": "Ball (%)",
+                        "Chase_reg": "Chase (%)",
+                        "Z_Contact_reg": "Z-Contact (%)",
+                        "LA_lte_0_reg": "LA<=0%",
+                        "rel_z_reg": "Vertical Release (ft.)",
+                        "rel_x_reg": "Horizontal Release (ft.)",
+                        "ext_reg": "Extension (ft.)",
                         "similarity_score": "Similarity (0-100)",
                         "stuff": "Pitch Grade",
                         "stuff_z": "Pitch Grade Z",
-                        "FA_pct": "FA Usage (%)",
-                        "BB_rpm": "BB Spin",
+                        "FA_pct_reg": "FA Usage (%)",
+                        "BB_rpm_reg": "BB Spin",
                     }
                 )
-                stats_df = pitcher_df.copy()
+                stats_df = pitchers_reg_df.copy()
                 stats_df = stats_df.assign(
                     __season=stats_df["season"], __level=stats_df["level_id"]
                 )
@@ -1446,18 +2118,18 @@ def pitcher_comps():
                     "TBF",
                     "IP",
                     "stuff",
-                    "fastball_velo",
-                    "fastball_vaa",
-                    "FA_pct",
-                    "BB_rpm",
-                    "SwStr",
-                    "Ball_pct",
-                    "Z_Contact",
-                    "Chase",
-                    "LA_lte_0",
-                    "rel_z",
-                    "rel_x",
-                    "ext",
+                    "fastball_velo_reg",
+                    "fastball_vaa_reg",
+                    "FA_pct_reg",
+                    "BB_rpm_reg",
+                    "SwStr_reg",
+                    "Ball_pct_reg",
+                    "Z_Contact_reg",
+                    "Chase_reg",
+                    "LA_lte_0_reg",
+                    "rel_z_reg",
+                    "rel_x_reg",
+                    "ext_reg",
                     "__season",
                     "__level",
                 ]
@@ -1468,19 +2140,19 @@ def pitcher_comps():
                         "name": "Name",
                         "pitching_code": "Team",
                         "season": "Season",
-                        "fastball_velo": "FA mph",
-                        "fastball_vaa": "FA VAA",
-                        "SwStr": "SwStr (%)",
-                        "Ball_pct": "Ball (%)",
-                        "Chase": "Chase (%)",
-                        "Z_Contact": "Z-Contact (%)",
-                        "LA_lte_0": "LA<=0%",
-                        "rel_z": "Vertical Release (ft.)",
-                        "rel_x": "Horizontal Release (ft.)",
-                        "ext": "Extension (ft.)",
+                        "fastball_velo_reg": "FA mph",
+                        "fastball_vaa_reg": "FA VAA",
+                        "SwStr_reg": "SwStr (%)",
+                        "Ball_pct_reg": "Ball (%)",
+                        "Chase_reg": "Chase (%)",
+                        "Z_Contact_reg": "Z-Contact (%)",
+                        "LA_lte_0_reg": "LA<=0%",
+                        "rel_z_reg": "Vertical Release (ft.)",
+                        "rel_x_reg": "Horizontal Release (ft.)",
+                        "ext_reg": "Extension (ft.)",
                         "stuff": "Pitch Grade",
-                        "FA_pct": "FA Usage (%)",
-                        "BB_rpm": "BB Spin",
+                        "FA_pct_reg": "FA Usage (%)",
+                        "BB_rpm_reg": "BB Spin",
                     }
                 )
                 target_display_cols = [
@@ -1490,18 +2162,18 @@ def pitcher_comps():
                     "TBF",
                     "IP",
                     "stuff",
-                    "fastball_velo",
-                    "fastball_vaa",
-                    "FA_pct",
-                    "BB_rpm",
-                    "SwStr",
-                    "Ball_pct",
-                    "Z_Contact",
-                    "Chase",
-                    "LA_lte_0",
-                    "rel_z",
-                    "rel_x",
-                    "ext",
+                    "fastball_velo_reg",
+                    "fastball_vaa_reg",
+                    "FA_pct_reg",
+                    "BB_rpm_reg",
+                    "SwStr_reg",
+                    "Ball_pct_reg",
+                    "Z_Contact_reg",
+                    "Chase_reg",
+                    "LA_lte_0_reg",
+                    "rel_z_reg",
+                    "rel_x_reg",
+                    "ext_reg",
                     "__season",
                     "__level",
                 ]
@@ -1516,19 +2188,19 @@ def pitcher_comps():
                         "name": "Name",
                         "pitching_code": "Team",
                         "season": "Season",
-                        "fastball_velo": "FA mph",
-                        "fastball_vaa": "FA VAA",
-                        "SwStr": "SwStr (%)",
-                        "Ball_pct": "Ball (%)",
-                        "Chase": "Chase (%)",
-                        "Z_Contact": "Z-Contact (%)",
-                        "LA_lte_0": "LA<=0%",
-                        "rel_z": "Vertical Release (ft.)",
-                        "rel_x": "Horizontal Release (ft.)",
-                        "ext": "Extension (ft.)",
+                        "fastball_velo_reg": "FA mph",
+                        "fastball_vaa_reg": "FA VAA",
+                        "SwStr_reg": "SwStr (%)",
+                        "Ball_pct_reg": "Ball (%)",
+                        "Chase_reg": "Chase (%)",
+                        "Z_Contact_reg": "Z-Contact (%)",
+                        "LA_lte_0_reg": "LA<=0%",
+                        "rel_z_reg": "Vertical Release (ft.)",
+                        "rel_x_reg": "Horizontal Release (ft.)",
+                        "ext_reg": "Extension (ft.)",
                         "stuff": "Pitch Grade",
-                        "FA_pct": "FA Usage (%)",
-                        "BB_rpm": "BB Spin",
+                        "FA_pct_reg": "FA Usage (%)",
+                        "BB_rpm_reg": "BB Spin",
                     }
                 )
                 st.caption("Selected season")
@@ -1566,28 +2238,40 @@ def pitcher_ar():
             season = st.multiselect(
                 "Select Season",
                 season_options(pitchers_reg_df),
-                default=[season_options(pitchers_reg_df)[1]] if len(season_options(pitchers_reg_df)) > 1 else ["All"],
+                default=(
+                    [season_options(pitchers_reg_df)[1]]
+                    if len(season_options(pitchers_reg_df)) > 1
+                    else ["All"]
+                ),
                 key="pitcher_ar_season",
             )
             min_value = st.number_input(
-                "Minimum Value", min_value=0, max_value=1000, value=100, step=1,
+                "Minimum Value",
+                min_value=0,
+                max_value=1000,
+                value=100,
+                step=1,
                 key="pitcher_ar_min_value",
             )
             filter_type = st.selectbox(
                 "Filter By", ["IP", "TBF"], index=1, key="pitcher_ar_filter_type"
             )
-            team = st.multiselect(
+            team = st.selectbox(
                 "Select Team",
-                ["All"]
-                + sorted(pitchers_reg_df["pitching_code"].dropna().unique().tolist()),
-                default=["All"],
+                team_options(pitchers_reg_df, "pitching_code"),
+                index=0,
                 key="pitcher_ar_team",
+            )
+            player_options, player_name_map = player_id_options(
+                pitchers_reg_df, "pitcher_mlbid", "name"
             )
             player = st.multiselect(
                 "Select Player",
-                ["All"]
-                + sorted(pitchers_reg_df["name"].dropna().unique().tolist()),
+                player_options,
                 default=["All"],
+                format_func=lambda v: "All"
+                if v == "All"
+                else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
                 key="pitcher_ar_player",
             )
         with right:
@@ -1605,8 +2289,8 @@ def pitcher_ar():
             df = pitchers_reg_df.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
-            df = filter_by_values(df, "pitching_code", team)
-            df = filter_by_values(df, "name", player)
+            df = filter_by_team_token(df, "pitching_code", team)
+            df = filter_by_values(df, "pitcher_mlbid", player)
             df = df.assign(__season=df["season"], __level=df["level_id"])
 
             if filter_type == "IP":
@@ -1677,30 +2361,186 @@ def pitcher_splits():
     """Pitchers - Splits page (placeholder)"""
     st.title("Pitcher Splits")
 
-    st.info("Pitcher splits functionality coming soon!")
+    if pitcher_splits_df.empty:
+        st.info("Missing pitcher_splits.csv")
+        return
 
     tabs = st.tabs(["vL / vR", "Home / Away", "1H / 2H", "Monthly"])
+    split_map = {
+        "vL / vR": "vs L/R",
+        "Home / Away": "Home/Away",
+        "1H / 2H": "1st Half/2nd Half",
+        "Monthly": "Monthly",
+    }
 
-    with tabs[0]:
-        st.subheader("vs. Lefty / vs. Righty")
-        st.write("Split data by batter handedness will be available here.")
+    for idx, tab_name in enumerate(split_map.keys()):
+        with tabs[idx]:
+            split_type = split_map[tab_name]
+            split_df = pitcher_splits_df[
+                pitcher_splits_df["split_type"] == split_type
+            ].copy()
+            if split_df.empty:
+                available = sorted(
+                    pitcher_splits_df["split_type"].dropna().unique().tolist()
+                )
+                st.info(f"No data for {tab_name}. Available split types: {available}")
+                continue
 
-    with tabs[1]:
-        st.subheader("Home / Away")
-        st.write("Home and away split data will be available here.")
+            left, right = st.columns([1, 3])
+            with left:
+                level = st.selectbox(
+                    "Select Level",
+                    ["All", "MLB", "Triple-A", "Low-A", "Low Minors"],
+                    index=1,
+                    key=f"pitcher_splits_level_{idx}",
+                )
+                season = st.multiselect(
+                    "Select Season",
+                    season_options(split_df),
+                    default=(
+                        [season_options(split_df)[1]]
+                        if len(season_options(split_df)) > 1
+                        else ["All"]
+                    ),
+                    key=f"pitcher_splits_season_{idx}",
+                )
+                min_value = st.number_input(
+                    "Minimum Value",
+                    min_value=0,
+                    max_value=1000,
+                    value=100,
+                    step=1,
+                    key=f"pitcher_splits_min_value_{idx}",
+                )
+                filter_type = st.selectbox(
+                    "Filter By",
+                    ["IP", "TBF"],
+                    index=1,
+                    key=f"pitcher_splits_filter_type_{idx}",
+                )
+                split_choice = st.multiselect(
+                    "Select Split",
+                    ["All"] + sorted(split_df["split"].dropna().unique().tolist()),
+                    default=["All"],
+                    key=f"pitcher_splits_split_{idx}",
+                )
+                team = st.selectbox(
+                    "Select Team",
+                    team_options(split_df, "pitching_code"),
+                    index=0,
+                    key=f"pitcher_splits_team_{idx}",
+                )
+                player_options, player_name_map = player_id_options(
+                    split_df, "pitcher_mlbid", "name"
+                )
+                player = st.multiselect(
+                    "Select Player",
+                    player_options,
+                    default=["All"],
+                    format_func=lambda v: "All"
+                    if v == "All"
+                    else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+                    key=f"pitcher_splits_player_{idx}",
+                )
+            with right:
+                level_map = {
+                    "All": [1, 11, 14, 16],
+                    "MLB": [1],
+                    "Triple-A": [11],
+                    "Low-A": [14],
+                    "Low Minors": [16],
+                }
+                base_stats = split_df.copy()
+                base_stats = base_stats.assign(
+                    __season=base_stats["season"],
+                    __level=base_stats["level_id"],
+                )
+                df = split_df.copy()
+                df = df[df["level_id"].isin(level_map[level])]
+                df = filter_by_values(df, "season", season)
+                df = filter_by_values(df, "split", split_choice)
+                df = filter_by_team_token(df, "pitching_code", team)
+                df = filter_by_values(df, "pitcher_mlbid", player)
+                df = df.assign(__season=df["season"], __level=df["level_id"])
 
-    with tabs[2]:
-        st.subheader("1st Half / 2nd Half")
-        st.write("First half and second half split data will be available here.")
+                if filter_type == "IP":
+                    df = numeric_filter(df, "IP", min_value)
+                else:
+                    df = numeric_filter(df, "TBF", min_value)
 
-    with tabs[3]:
-        st.subheader("Monthly Splits")
-        st.write("Monthly split data will be available here.")
+                columns = [
+                    "name",
+                    "season",
+                    "split",
+                    "pitching_code",
+                    "TBF",
+                    "IP",
+                    "stuff",
+                    "fastball_velo",
+                    "max_velo",
+                    "fastball_vaa",
+                    "FA_pct",
+                    "BB_rpm",
+                    "SwStr",
+                    "Ball_pct",
+                    "Z_Contact",
+                    "Chase",
+                    "CSW",
+                    "LA_lte_0",
+                    "rel_z",
+                    "rel_x",
+                    "ext",
+                    "__season",
+                    "__level",
+                ]
+                df = df[[col for col in columns if col in df.columns]].copy()
+                if "BB_rpm" in df.columns:
+                    df["BB_rpm"] = df["BB_rpm"].round(0)
+                if "stuff" in df.columns:
+                    df["stuff"] = df["stuff"].round(0)
+                rename_map = {
+                    "name": "Name",
+                    "pitching_code": "Team",
+                    "season": "Season",
+                    "split": "Split",
+                    "stuff": "Pitch Grade",
+                    "fastball_velo": "FA mph",
+                    "max_velo": "Max FA mph",
+                    "fastball_vaa": "FA VAA",
+                    "FA_pct": "FA Usage (%)",
+                    "BB_rpm": "BB Spin",
+                    "SwStr": "SwStr (%)",
+                    "Ball_pct": "Ball (%)",
+                    "Z_Contact": "Z-Contact (%)",
+                    "Chase": "Chase (%)",
+                    "CSW": "CSW (%)",
+                    "LA_lte_0": "LA<=0%",
+                    "rel_z": "Vertical Release (ft.)",
+                    "rel_x": "Horizontal Release (ft.)",
+                    "ext": "Extension (ft.)",
+                }
+                df = df.rename(columns=rename_map)
+                df = df.sort_values(by="Pitch Grade", ascending=False)
+                stats_df = base_stats[
+                    [col for col in columns if col in base_stats.columns]
+                ].rename(columns=rename_map)
+                render_table(
+                    df,
+                    reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)"},
+                    group_cols=["__season", "__level"],
+                    stats_df=stats_df,
+                )
+                download_button(
+                    df,
+                    f"pitcher_splits_{idx}",
+                    f"pitcher_splits_download_{idx}",
+                )
 
 
 # =============================================================================
 # INDIVIDUAL PITCHES PAGES
 # =============================================================================
+
 
 def pitch_shapes_outcomes():
     """Individual Pitches - Shapes and Outcomes page"""
@@ -1720,7 +2560,11 @@ def pitch_shapes_outcomes():
             season = st.multiselect(
                 "Select Season",
                 season_options(pitch_types),
-                default=[season_options(pitch_types)[1]] if len(season_options(pitch_types)) > 1 else ["All"],
+                default=(
+                    [season_options(pitch_types)[1]]
+                    if len(season_options(pitch_types)) > 1
+                    else ["All"]
+                ),
                 key="pitch_shapes_season",
             )
             min_pitches = st.number_input(
@@ -1731,17 +2575,22 @@ def pitch_shapes_outcomes():
                 step=1,
                 key="pitch_shapes_min_pitches",
             )
-            team = st.multiselect(
+            team = st.selectbox(
                 "Select Team",
-                ["All"]
-                + sorted(pitch_types["pitching_code"].dropna().unique().tolist()),
-                default=["All"],
+                team_options(pitch_types, "pitching_code"),
+                index=0,
                 key="pitch_shapes_team",
+            )
+            pitcher_options, pitcher_name_map = player_id_options(
+                pitch_types, "pitcher_mlbid", "name"
             )
             pitcher = st.multiselect(
                 "Select Pitcher",
-                ["All"] + sorted(pitch_types["name"].dropna().unique().tolist()),
+                pitcher_options,
                 default=["All"],
+                format_func=lambda v: "All"
+                if v == "All"
+                else f"{pitcher_name_map.get(v, 'Unknown')} ({int(v)})",
                 key="pitch_shapes_pitcher",
             )
             pitch_group = st.multiselect(
@@ -1771,8 +2620,8 @@ def pitch_shapes_outcomes():
             df = pitch_types.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
-            df = filter_by_values(df, "pitching_code", team)
-            df = filter_by_values(df, "name", pitcher)
+            df = filter_by_team_token(df, "pitching_code", team)
+            df = filter_by_values(df, "pitcher_mlbid", pitcher)
             df = filter_by_values(df, "pitch_group", pitch_group)
             df = filter_by_values(df, "pitch_tag", pitch_tag)
             df = df[df["pitches"] >= min_pitches]
@@ -1793,6 +2642,7 @@ def pitch_shapes_outcomes():
                 "vbreak",
                 "hbreak",
                 "SwStr",
+                "LA_lte_0",
                 "Z_Contact",
                 "Ball_pct",
                 "Zone",
@@ -1821,6 +2671,7 @@ def pitch_shapes_outcomes():
                 "hbreak": "HB (in.)",
                 "CSW": "CSW (%)",
                 "SwStr": "SwStr (%)",
+                "LA_lte_0": "LA<=0%",
                 "Z_Contact": "Z-Contact (%)",
                 "Chase": "Chase (%)",
                 "Zone": "Zone (%)",
@@ -1836,6 +2687,7 @@ def pitch_shapes_outcomes():
                 reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
+                label_cols=["Name", "Pitch Type", "Split", "split", "Split Type"],
             )
             download_button(df, "pitch_types", "pitch_types_download")
 
@@ -1858,7 +2710,11 @@ def pitch_ar():
             season = st.multiselect(
                 "Select Season",
                 season_options(pitch_types_reg_df),
-                default=[season_options(pitch_types_reg_df)[1]] if len(season_options(pitch_types_reg_df)) > 1 else ["All"],
+                default=(
+                    [season_options(pitch_types_reg_df)[1]]
+                    if len(season_options(pitch_types_reg_df)) > 1
+                    else ["All"]
+                ),
                 key="pitch_ar_season",
             )
             min_pitches = st.number_input(
@@ -1869,28 +2725,35 @@ def pitch_ar():
                 step=1,
                 key="pitch_ar_min_pitches",
             )
-            team = st.multiselect(
+            team = st.selectbox(
                 "Select Team",
-                ["All"]
-                + sorted(pitch_types_reg_df["pitching_code"].dropna().unique().tolist()),
-                default=["All"],
+                team_options(pitch_types_reg_df, "pitching_code"),
+                index=0,
                 key="pitch_ar_team",
+            )
+            pitcher_options, pitcher_name_map = player_id_options(
+                pitch_types_reg_df, "pitcher_mlbid", "name"
             )
             pitcher = st.multiselect(
                 "Select Pitcher",
-                ["All"] + sorted(pitch_types_reg_df["name"].dropna().unique().tolist()),
+                pitcher_options,
                 default=["All"],
+                format_func=lambda v: "All"
+                if v == "All"
+                else f"{pitcher_name_map.get(v, 'Unknown')} ({int(v)})",
                 key="pitch_ar_pitcher",
             )
             pitch_group = st.multiselect(
                 "Select Pitch Group",
-                ["All"] + sorted(pitch_types_reg_df["pitch_group"].dropna().unique().tolist()),
+                ["All"]
+                + sorted(pitch_types_reg_df["pitch_group"].dropna().unique().tolist()),
                 default=["All"],
                 key="pitch_ar_pitch_group",
             )
             pitch_tag = st.multiselect(
                 "Select Pitch Type",
-                ["All"] + sorted(pitch_types_reg_df["pitch_tag"].dropna().unique().tolist()),
+                ["All"]
+                + sorted(pitch_types_reg_df["pitch_tag"].dropna().unique().tolist()),
                 default=["All"],
                 key="pitch_ar_pitch_tag",
             )
@@ -1909,8 +2772,8 @@ def pitch_ar():
             df = pitch_types_reg_df.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
-            df = filter_by_values(df, "pitching_code", team)
-            df = filter_by_values(df, "name", pitcher)
+            df = filter_by_team_token(df, "pitching_code", team)
+            df = filter_by_values(df, "pitcher_mlbid", pitcher)
             df = filter_by_values(df, "pitch_group", pitch_group)
             df = filter_by_values(df, "pitch_tag", pitch_tag)
             df = df[df["pitches"] >= min_pitches]
@@ -1931,6 +2794,7 @@ def pitch_ar():
                 "vbreak_reg",
                 "hbreak_reg",
                 "SwStr_reg",
+                "LA_lte_0_reg",
                 "Z_Contact_reg",
                 "Ball_pct_reg",
                 "Chase_reg",
@@ -1955,6 +2819,7 @@ def pitch_ar():
                 "hbreak_reg": "HB (in.)",
                 "CSW_reg": "CSW (%)",
                 "SwStr_reg": "SwStr (%)",
+                "LA_lte_0_reg": "LA<=0%",
                 "Z_Contact_reg": "Z-Contact (%)",
                 "Chase_reg": "Chase (%)",
                 "Ball_pct_reg": "Ball (%)",
@@ -1969,6 +2834,7 @@ def pitch_ar():
                 reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
+                label_cols=["Name", "Pitch Type", "Split", "split", "Split Type"],
             )
             download_button(df, "pitch_types_ar", "pitch_types_ar_download")
 
@@ -1991,7 +2857,11 @@ def pitch_percentiles():
             season = st.multiselect(
                 "Select Season",
                 season_options(pitch_types_pct),
-                default=[season_options(pitch_types_pct)[1]] if len(season_options(pitch_types_pct)) > 1 else ["All"],
+                default=(
+                    [season_options(pitch_types_pct)[1]]
+                    if len(season_options(pitch_types_pct)) > 1
+                    else ["All"]
+                ),
                 key="pitch_pct_season",
             )
             min_pitches = st.number_input(
@@ -2002,20 +2872,22 @@ def pitch_percentiles():
                 step=1,
                 key="pitch_pct_min_pitches",
             )
-            team = st.multiselect(
+            team = st.selectbox(
                 "Select Team",
-                ["All"]
-                + sorted(
-                    pitch_types_pct["pitching_code"].dropna().unique().tolist()
-                ),
-                default=["All"],
+                team_options(pitch_types_pct, "pitching_code"),
+                index=0,
                 key="pitch_pct_team",
+            )
+            pitcher_options, pitcher_name_map = player_id_options(
+                pitch_types_pct, "pitcher_mlbid", "name"
             )
             pitcher = st.multiselect(
                 "Select Pitcher",
-                ["All"]
-                + sorted(pitch_types_pct["name"].dropna().unique().tolist()),
+                pitcher_options,
                 default=["All"],
+                format_func=lambda v: "All"
+                if v == "All"
+                else f"{pitcher_name_map.get(v, 'Unknown')} ({int(v)})",
                 key="pitch_pct_pitcher",
             )
             pitch_tag = st.multiselect(
@@ -2036,8 +2908,8 @@ def pitch_percentiles():
             df = pitch_types_pct.copy()
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
-            df = filter_by_values(df, "pitching_code", team)
-            df = filter_by_values(df, "name", pitcher)
+            df = filter_by_team_token(df, "pitching_code", team)
+            df = filter_by_values(df, "pitcher_mlbid", pitcher)
             df = filter_by_values(df, "pitch_tag", pitch_tag)
             df = df[df["pitches"] >= min_pitches]
 
@@ -2047,7 +2919,6 @@ def pitch_percentiles():
                 "season",
                 "pitch_tag",
                 "pct",
-                "pct_pctile",
                 "stuff_z",
                 "stuff_pctile",
                 "velo_pctile",
@@ -2057,6 +2928,7 @@ def pitch_percentiles():
                 "vbreak_pctile",
                 "hbreak_pctile",
                 "SwStr_pctile",
+                "LA_lte_0_pctile",
                 "Ball_pct_pctile",
                 "Z_Contact_pctile",
                 "Chase_pctile",
@@ -2072,7 +2944,6 @@ def pitch_percentiles():
                 "season": "Season",
                 "pitch_tag": "Pitch Type",
                 "pct": "Usage (%)",
-                "pct_pctile": "Usage (%) Pctile",
                 "stuff_z": "Pitch Grade Z",
                 "stuff_pctile": "Pitch Grade Pctile",
                 "velo_pctile": "Velo",
@@ -2083,13 +2954,18 @@ def pitch_percentiles():
                 "hbreak_pctile": "HB (in.)",
                 "CSW_pctile": "CSW (%)",
                 "SwStr_pctile": "SwStr (%)",
+                "LA_lte_0_pctile": "LA<=0%",
                 "Z_Contact_pctile": "Z-Contact (%)",
                 "Chase_pctile": "Chase (%)",
                 "Ball_pct_pctile": "Ball (%)",
             }
             df = df.rename(columns=rename_map)
             df = df.sort_values(by="Pitch Grade Pctile", ascending=False)
-            render_table(df, reverse_cols={"VAA", "Ball (%)", "Z-Contact (%)"})
+            render_table(
+                df,
+                reverse_cols={"VAA", "Ball (%)", "Z-Contact (%)"},
+                label_cols=["Name", "Pitch Type", "Split", "split", "Split Type"],
+            )
             download_button(df, "pitch_percentiles", "pitch_pct_download")
 
 
@@ -2105,30 +2981,195 @@ def pitch_splits():
     """Individual Pitches - Splits page (placeholder)"""
     st.title("Individual Pitch Splits")
 
-    st.info("Individual pitch splits functionality coming soon!")
+    if pitch_type_splits_df.empty:
+        st.info("Missing pitch_types_splits.csv")
+        return
 
     tabs = st.tabs(["vL / vR", "Home / Away", "1H / 2H", "Monthly"])
+    split_map = {
+        "vL / vR": "vs L/R",
+        "Home / Away": "Home/Away",
+        "1H / 2H": "1st Half/2nd Half",
+        "Monthly": "Monthly",
+    }
 
-    with tabs[0]:
-        st.subheader("vs. Lefty / vs. Righty")
-        st.write("Split data by batter handedness will be available here.")
+    for idx, tab_name in enumerate(split_map.keys()):
+        with tabs[idx]:
+            split_type = split_map[tab_name]
+            split_df = pitch_type_splits_df[
+                pitch_type_splits_df["split_type"] == split_type
+            ].copy()
+            if split_df.empty:
+                available = sorted(
+                    pitch_type_splits_df["split_type"].dropna().unique().tolist()
+                )
+                st.info(f"No data for {tab_name}. Available split types: {available}")
+                continue
 
-    with tabs[1]:
-        st.subheader("Home / Away")
-        st.write("Home and away split data will be available here.")
+            left, right = st.columns([1, 3])
+            with left:
+                level = st.selectbox(
+                    "Select Level",
+                    ["All", "MLB", "Triple-A", "Low-A", "Low Minors"],
+                    index=1,
+                    key=f"pitch_splits_level_{idx}",
+                )
+                season = st.multiselect(
+                    "Select Season",
+                    season_options(split_df),
+                    default=(
+                        [season_options(split_df)[1]]
+                        if len(season_options(split_df)) > 1
+                        else ["All"]
+                    ),
+                    key=f"pitch_splits_season_{idx}",
+                )
+                min_pitches = st.number_input(
+                    "Minimum # Pitches",
+                    min_value=0,
+                    max_value=1000,
+                    value=50,
+                    step=1,
+                    key=f"pitch_splits_min_pitches_{idx}",
+                )
+                split_choice = st.multiselect(
+                    "Select Split",
+                    ["All"] + sorted(split_df["split"].dropna().unique().tolist()),
+                    default=["All"],
+                    key=f"pitch_splits_split_{idx}",
+                )
+                team = st.selectbox(
+                    "Select Team",
+                    team_options(split_df, "pitching_code"),
+                    index=0,
+                    key=f"pitch_splits_team_{idx}",
+                )
+                pitcher_options, pitcher_name_map = player_id_options(
+                    split_df, "pitcher_mlbid", "name"
+                )
+                pitcher = st.multiselect(
+                    "Select Pitcher",
+                    pitcher_options,
+                    default=["All"],
+                    format_func=lambda v: "All"
+                    if v == "All"
+                    else f"{pitcher_name_map.get(v, 'Unknown')} ({int(v)})",
+                    key=f"pitch_splits_pitcher_{idx}",
+                )
+                pitch_group = st.multiselect(
+                    "Select Pitch Group",
+                    (
+                        ["All"]
+                        + sorted(split_df["pitch_group"].dropna().unique().tolist())
+                        if "pitch_group" in split_df.columns
+                        else ["All"]
+                    ),
+                    default=["All"],
+                    key=f"pitch_splits_pitch_group_{idx}",
+                )
+                pitch_tag = st.multiselect(
+                    "Select Pitch Type",
+                    ["All"] + sorted(split_df["pitch_tag"].dropna().unique().tolist()),
+                    default=["All"],
+                    key=f"pitch_splits_pitch_tag_{idx}",
+                )
+            with right:
+                level_map = {
+                    "All": [1, 11, 14, 16],
+                    "MLB": [1],
+                    "Triple-A": [11],
+                    "Low-A": [14],
+                    "Low Minors": [16],
+                }
+                base_stats = split_df.copy()
+                base_stats = base_stats.assign(
+                    __season=base_stats["season"],
+                    __level=base_stats["level_id"],
+                )
+                df = split_df.copy()
+                df = df[df["level_id"].isin(level_map[level])]
+                df = filter_by_values(df, "season", season)
+                df = filter_by_values(df, "split", split_choice)
+                df = filter_by_team_token(df, "pitching_code", team)
+                df = filter_by_values(df, "pitcher_mlbid", pitcher)
+                if "pitch_group" in df.columns:
+                    df = filter_by_values(df, "pitch_group", pitch_group)
+                df = filter_by_values(df, "pitch_tag", pitch_tag)
+                df = df[df["pitches"] >= min_pitches]
+                df = df.assign(__season=df["season"], __level=df["level_id"])
 
-    with tabs[2]:
-        st.subheader("1st Half / 2nd Half")
-        st.write("First half and second half split data will be available here.")
-
-    with tabs[3]:
-        st.subheader("Monthly Splits")
-        st.write("Monthly split data will be available here.")
+                columns = [
+                    "name",
+                    "pitching_code",
+                    "season",
+                    "split",
+                    "pitch_tag",
+                    "pitches",
+                    "pct",
+                    "stuff",
+                    "velo",
+                    "max_velo",
+                    "vaa",
+                    "haa",
+                    "vbreak",
+                    "hbreak",
+                    "SwStr",
+                    "Z_Contact",
+                    "Ball_pct",
+                    "Zone",
+                    "Chase",
+                    "CSW",
+                    "__season",
+                    "__level",
+                ]
+                df = df[[col for col in columns if col in df.columns]].copy()
+                if "stuff" in df.columns:
+                    df["stuff"] = df["stuff"].round(0)
+                rename_map = {
+                    "name": "Name",
+                    "pitching_code": "Team",
+                    "season": "Season",
+                    "split": "Split",
+                    "pitch_tag": "Pitch Type",
+                    "pitches": "#",
+                    "pct": "Usage (%)",
+                    "stuff": "Pitch Grade",
+                    "velo": "Velo",
+                    "max_velo": "Max Velo",
+                    "vaa": "VAA",
+                    "haa": "HAA",
+                    "vbreak": "IVB (in.)",
+                    "hbreak": "HB (in.)",
+                    "CSW": "CSW (%)",
+                    "SwStr": "SwStr (%)",
+                    "Z_Contact": "Z-Contact (%)",
+                    "Chase": "Chase (%)",
+                    "Zone": "Zone (%)",
+                    "Ball_pct": "Ball (%)",
+                }
+                df = df.rename(columns=rename_map)
+                df = df.sort_values(by="Pitch Grade", ascending=False)
+                stats_df = base_stats[
+                    [col for col in columns if col in base_stats.columns]
+                ].rename(columns=rename_map)
+                render_table(
+                    df,
+                    reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA"},
+                    group_cols=["__season", "__level"],
+                    stats_df=stats_df,
+                    label_cols=["Name", "Pitch Type", "Split", "split", "Split Type"],
+                )
+                download_button(
+                    df,
+                    f"pitch_splits_{idx}",
+                    f"pitch_splits_download_{idx}",
+                )
 
 
 # =============================================================================
 # TEAMS PAGES
 # =============================================================================
+
 
 def team_hitting():
     """Team Hitting page"""
@@ -2148,7 +3189,11 @@ def team_hitting():
             season = st.multiselect(
                 "Select Season",
                 season_options(team_damage),
-                default=[season_options(team_damage)[1]] if len(season_options(team_damage)) > 1 else ["All"],
+                default=(
+                    [season_options(team_damage)[1]]
+                    if len(season_options(team_damage)) > 1
+                    else ["All"]
+                ),
                 key="team_hitting_season",
             )
         with right:
@@ -2216,6 +3261,7 @@ def team_hitting():
                 reverse_cols=HIGHER_IS_WORSE_COLS | {"Chase (%)", "LA<=0%"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
+                include_team_label=True,
             )
             download_button(df, "team_hitting", "team_hitting_download")
 
@@ -2238,7 +3284,11 @@ def team_pitching():
             season = st.multiselect(
                 "Select Season",
                 season_options(team_stuff),
-                default=[season_options(team_stuff)[1]] if len(season_options(team_stuff)) > 1 else ["All"],
+                default=(
+                    [season_options(team_stuff)[1]]
+                    if len(season_options(team_stuff)) > 1
+                    else ["All"]
+                ),
                 key="team_pitching_season",
             )
         with right:
@@ -2299,6 +3349,7 @@ def team_pitching():
                 reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
+                include_team_label=True,
             )
             download_button(df, "team_pitching", "team_pitching_download")
 
@@ -2306,6 +3357,7 @@ def team_pitching():
 # =============================================================================
 # LEAGUE PAGES
 # =============================================================================
+
 
 def league_hitting():
     """League - Hitting Stats page"""
@@ -2319,7 +3371,11 @@ def league_hitting():
             season = st.multiselect(
                 "Select Season",
                 season_options(hitting_avg),
-                default=[season_options(hitting_avg)[1]] if len(season_options(hitting_avg)) > 1 else ["All"],
+                default=(
+                    [season_options(hitting_avg)[1]]
+                    if len(season_options(hitting_avg)) > 1
+                    else ["All"]
+                ),
                 key="lg_hit_season",
             )
         with right:
@@ -2404,7 +3460,11 @@ def league_pitching():
             season = st.multiselect(
                 "Select Season",
                 season_options(pitching_avg),
-                default=[season_options(pitching_avg)[1]] if len(season_options(pitching_avg)) > 1 else ["All"],
+                default=(
+                    [season_options(pitching_avg)[1]]
+                    if len(season_options(pitching_avg)) > 1
+                    else ["All"]
+                ),
                 key="lg_pitch_season",
             )
         with right:
@@ -2474,16 +3534,105 @@ def league_pitching():
 
 
 def league_pitch_level():
-    """League - Pitch Level Shapes and Outcomes page (placeholder)"""
+    """League - Pitch Level Shapes and Outcomes page"""
     st.title("League Averages - Pitch Level Shapes and Outcomes")
 
-    st.info("League-level pitch shapes and outcomes functionality coming soon!")
-    st.write("This will show league averages for different pitch types across levels and seasons.")
+    if league_pitch_types.empty:
+        st.info("Missing league_pitch_types.csv")
+        return
+    if "throws" not in league_pitch_types.columns:
+        st.info("league_pitch_types.csv is outdated. Please re-run data_aggregate.py.")
+        return
+
+    left, right = st.columns([1, 3])
+    with left:
+        season = st.multiselect(
+            "Select Season",
+            season_options(league_pitch_types),
+            default=(
+                [season_options(league_pitch_types)[1]]
+                if len(season_options(league_pitch_types)) > 1
+                else ["All"]
+            ),
+            key="lg_pitch_types_season",
+        )
+        throws = st.multiselect(
+            "Select Throws",
+            ["All"] + sorted(league_pitch_types["throws"].dropna().unique().tolist()),
+            default=["All"],
+            key="lg_pitch_types_throws",
+        )
+        pitch_tag = st.multiselect(
+            "Select Pitch Type",
+            ["All"]
+            + sorted(league_pitch_types["pitch_tag"].dropna().unique().tolist()),
+            default=["All"],
+            key="lg_pitch_types_pitch_tag",
+        )
+    with right:
+        base_stats = league_pitch_types.copy()
+        base_stats = base_stats.assign(__season=base_stats["season"])
+        df = league_pitch_types.copy()
+        df = filter_by_values(df, "season", season)
+        df = filter_by_values(df, "throws", throws)
+        df = filter_by_values(df, "pitch_tag", pitch_tag)
+        df = df.assign(__season=df["season"])
+
+        columns = [
+            "season",
+            "throws",
+            "pitch_tag",
+            "pct",
+            "velo",
+            "vaa",
+            "haa",
+            "vbreak",
+            "hbreak",
+            "SwStr",
+            "LA_lte_0",
+            "Z_Contact",
+            "Zone",
+            "Ball_pct",
+            "Chase",
+            "CSW",
+            "__season",
+        ]
+        df = df[[col for col in columns if col in df.columns]].copy()
+        rename_map = {
+            "season": "Season",
+            "throws": "Throws",
+            "pitch_tag": "Pitch Type",
+            "pct": "Usage (%)",
+            "velo": "Velo",
+            "vaa": "VAA",
+            "haa": "HAA",
+            "vbreak": "IVB (in.)",
+            "hbreak": "HB (in.)",
+            "SwStr": "SwStr (%)",
+            "LA_lte_0": "LA<=0%",
+            "Z_Contact": "Z-Contact (%)",
+            "Zone": "Zone (%)",
+            "Ball_pct": "Ball (%)",
+            "Chase": "Chase (%)",
+            "CSW": "CSW (%)",
+        }
+        df = df.rename(columns=rename_map)
+        stats_df = base_stats[
+            [col for col in columns if col in base_stats.columns]
+        ].rename(columns=rename_map)
+        render_table(
+            df,
+            reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA"},
+            group_cols=["__season"],
+            stats_df=stats_df,
+        )
+        download_button(df, "league_pitch_types", "league_pitch_types_download")
 
 
 # =============================================================================
 # GLOSSARY PAGES
 # =============================================================================
+
 
 def glossary_hitting():
     """Glossary - Hitting page"""
@@ -2576,18 +3725,6 @@ def glossary_pitching():
 # =============================================================================
 # NAVIGATION SETUP
 # =============================================================================
-
-# Check if user is logged in and subscribed
-st.title("Profiles")
-
-st.markdown(
-    """
-Welcome! Here you will find metrics I (https://twitter.com/NotTheBobbyOrr) have developed for analyzing hitters & pitchers at a player and team level.
-I make frequent use of these statistics in my work at BaseballProspectus dot com (https://www.baseballprospectus.com/author/ringtheodubel/) and for my own fantasy strategy.
-"""
-)
-
-st.markdown("---")
 
 # Step 1: Check if user is logged in
 try:
