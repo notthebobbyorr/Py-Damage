@@ -53,11 +53,17 @@ def _load_csv_cached(path_str: str, mtime: float) -> pd.DataFrame:
     path = Path(path_str)
     if not path.exists():
         return pd.DataFrame()
+    if path.suffix == ".parquet":
+        return pd.read_parquet(path)
     return pd.read_csv(path)
 
 
 def load_csv(name: str) -> pd.DataFrame:
     path = DATA_DIR / name
+    if path.suffix == ".csv":
+        parquet_path = path.with_suffix(".parquet")
+        if parquet_path.exists():
+            path = parquet_path
     if not path.exists():
         return pd.DataFrame()
     return _load_csv_cached(str(path), path.stat().st_mtime)
@@ -69,8 +75,14 @@ def load_damage_df() -> pd.DataFrame:
         DATA_DIR / "damage_pos_2015_2025.csv",
     ]
     for preferred in preferred_files:
+        parquet_preferred = preferred.with_suffix(".parquet")
+        if parquet_preferred.exists():
+            return pd.read_parquet(parquet_preferred)
         if preferred.exists():
             return pd.read_csv(preferred)
+    candidates = sorted(DATA_DIR.glob("damage_pos_*.parquet"))
+    if candidates:
+        return pd.read_parquet(candidates[-1])
     candidates = sorted(DATA_DIR.glob("damage_pos_*.csv"))
     if candidates:
         return pd.read_csv(candidates[-1])
