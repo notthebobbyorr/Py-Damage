@@ -1079,16 +1079,6 @@ There are glossaries containing explanations for each statistic you may not reco
 Pitch level comps are in the works and will be added soon, and I hope to have my own skill projections up before the 2026 season begins!
 """
     )
-    if not _is_user_subscribed():
-        st.markdown("---")
-        st.subheader("Subscribe for Full Access")
-        st.markdown("Choose a plan:")
-        plan_col_annual, plan_col_monthly = st.columns(2)
-        with plan_col_annual:
-            st.link_button("Annual ($40.00)", ANNUAL_PAYMENT_LINK)
-        with plan_col_monthly:
-            st.link_button("Monthly ($5.00)", MONTHLY_PAYMENT_LINK)
-        st.caption("Use the same email as your Google login when subscribing.")
     st.write(f"Last Update: {pd.Timestamp.today().date()}")
 
 
@@ -3981,22 +3971,22 @@ if not is_logged_in:
 st.markdown(f"Welcome back, **{st.user.name}**! 👋")
 st.markdown("---")
 
-subscription_result = add_auth(
-    required=False,
-    show_redirect_button=False,
-    subscription_button_text="Subscribe to Access Premium Features",
-    button_color="#FF4B4B",
-)
-is_subscribed = _resolve_subscription_status(subscription_result)
-if is_subscribed:
-    st.success("You have premium access! Enjoy all features.")
-else:
-    st.info(
-        f"Preview mode enabled. Tables are limited to the first {PREVIEW_ROWS} rows."
-    )
-st.markdown("---")
-
 with st.expander("Manage subscription"):
+    subscription_result = add_auth(
+        required=False,
+        show_redirect_button=False,
+        subscription_button_text="Subscribe to Access Premium Features",
+        button_color="#FF4B4B",
+    )
+    is_subscribed = _resolve_subscription_status(subscription_result)
+    if not is_subscribed:
+        st.markdown("Choose a plan:")
+        plan_col_annual, plan_col_monthly = st.columns(2)
+        with plan_col_annual:
+            st.link_button("Annual ($40.00)", ANNUAL_PAYMENT_LINK)
+        with plan_col_monthly:
+            st.link_button("Monthly ($5.00)", MONTHLY_PAYMENT_LINK)
+        st.caption("Use the same email as your Google login when subscribing.")
     st.write("Cancel, pause, or update your subscription via Stripe.")
     billing_email = _get_user_email()
     if not billing_email:
@@ -4018,6 +4008,12 @@ with st.expander("Manage subscription"):
             st.link_button(
                 "Continue to billing portal", st.session_state.billing_portal_url
             )
+if is_subscribed:
+    st.success("You have premium access! Enjoy all features.")
+else:
+    st.info(
+        f"Preview mode enabled. Tables are limited to the first {PREVIEW_ROWS} rows."
+    )
 st.markdown("---")
 
 # Define page navigation with hierarchical groups
