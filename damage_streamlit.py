@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import re
 import sys
+from urllib.parse import urlparse
 
 import pandas as pd
 import streamlit as st
@@ -26,6 +27,64 @@ ABS_GRADIENT_COLS_PITCH_TYPES = {"HAA", "HB (in.)"}
 ANNUAL_PAYMENT_LINK = "https://buy.stripe.com/6oU14p7OEgrCfTsbyQ6J202"
 MONTHLY_PAYMENT_LINK = "https://buy.stripe.com/aFaaEZ0mc6R2cHg5as6J204"
 PREVIEW_ROWS = 10
+
+
+def _get_stripe_api_key() -> str | None:
+    try:
+        testing_mode = bool(st.secrets.get("testing_mode", False))
+    except Exception:
+        testing_mode = False
+    if testing_mode:
+        return st.secrets.get("stripe_api_key_test") or st.secrets.get("stripe_api_key")
+    return st.secrets.get("stripe_api_key")
+
+
+def _infer_return_url() -> str | None:
+    return_url = st.secrets.get("billing_portal_return_url") or st.secrets.get(
+        "app_url"
+    )
+    if return_url:
+        return return_url
+    auth = st.secrets.get("auth", {})
+    redirect_uri = auth.get("redirect_uri")
+    if not redirect_uri:
+        return None
+    parsed = urlparse(redirect_uri)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _get_user_email() -> str | None:
+    try:
+        return st.user.email
+    except Exception:
+        return None
+
+
+def _create_billing_portal_url(email: str) -> str | None:
+    api_key = _get_stripe_api_key()
+    if not api_key:
+        return None
+    try:
+        import stripe
+    except Exception:
+        return None
+    return_url = _infer_return_url()
+    if not return_url:
+        return None
+    stripe.api_key = api_key
+    try:
+        customers = stripe.Customer.list(email=email, limit=1)
+        if not customers.data:
+            return None
+        session = stripe.billing_portal.Session.create(
+            customer=customers.data[0].id,
+            return_url=return_url,
+        )
+        return session.url
+    except Exception:
+        return None
 
 
 def _run_streamlit_app() -> None:
@@ -3930,6 +3989,30 @@ else:
     st.info(
         f"Preview mode enabled. Tables are limited to the first {PREVIEW_ROWS} rows."
     )
+st.markdown("---")
+
+with st.expander("Manage subscription"):
+    st.write("Cancel, pause, or update your subscription via Stripe.")
+    billing_email = _get_user_email()
+    if not billing_email:
+        st.info("Login with an email address to manage your Stripe subscription.")
+    else:
+        if "billing_portal_url" not in st.session_state:
+            st.session_state.billing_portal_url = None
+        if st.button("Open Stripe billing portal"):
+            portal_url = _create_billing_portal_url(billing_email)
+            if not portal_url:
+                st.error(
+                    "We couldn't open the billing portal. Make sure the subscription "
+                    "was purchased with this email and set `billing_portal_return_url` "
+                    "in `.streamlit/secrets.toml`."
+                )
+            else:
+                st.session_state.billing_portal_url = portal_url
+        if st.session_state.billing_portal_url:
+            st.link_button(
+                "Continue to billing portal", st.session_state.billing_portal_url
+            )
 st.markdown("---")
 
 # Define page navigation with hierarchical groups
