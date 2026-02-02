@@ -23,12 +23,21 @@ HIGHER_IS_WORSE_COLS = {
 }
 
 
+def _run_streamlit_app() -> None:
+    import streamlit.web.cli as stcli
+
+    sys.argv = ["streamlit", "run", str(Path(__file__).resolve())]
+    raise SystemExit(stcli.main())
+
+
 def ensure_streamlit() -> None:
     try:
         from streamlit.runtime.scriptrunner import get_script_run_ctx
     except Exception:
         return
     if get_script_run_ctx() is None:
+        if __name__ == "__main__":
+            _run_streamlit_app()
         print("Run with: streamlit run damage_streamlit.py", file=sys.stderr)
         raise SystemExit(0)
 
@@ -525,7 +534,7 @@ def _render_plot_controls(
             margin=dict(l=10, r=10, t=30, b=10),
             height=520,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def render_table(
