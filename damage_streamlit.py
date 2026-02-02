@@ -21,6 +21,8 @@ HIGHER_IS_WORSE_COLS = {
     "Whiff vs. 95+ (%)",
     "Ball (%)",
 }
+ANNUAL_PAYMENT_LINK = "https://buy.stripe.com/6oU14p7OEgrCfTsbyQ6J202"
+MONTHLY_PAYMENT_LINK = "https://buy.stripe.com/aFaaEZ0mc6R2cHg5as6J204"
 
 
 def _run_streamlit_app() -> None:
@@ -50,6 +52,16 @@ st.markdown(
     <style>
     .stDataFrame, .stDataFrame * {
         color: #000000 !important;
+    }
+    .stLinkButton a {
+        background-color: #FF4B4B !important;
+        color: #FFFFFF !important;
+        border: 1px solid #FF4B4B !important;
+    }
+    .stLinkButton a:hover {
+        background-color: #E04343 !important;
+        color: #FFFFFF !important;
+        border: 1px solid #E04343 !important;
     }
     </style>
     """,
@@ -144,7 +156,9 @@ def player_id_options(
 ) -> tuple[list, dict]:
     if df.empty or id_col not in df.columns:
         return ["All"], {}
-    options_df = df[[id_col, name_col]].copy() if name_col in df.columns else df[[id_col]].copy()
+    options_df = (
+        df[[id_col, name_col]].copy() if name_col in df.columns else df[[id_col]].copy()
+    )
     options_df[id_col] = pd.to_numeric(options_df[id_col], errors="coerce")
     options_df = options_df.dropna(subset=[id_col])
     if name_col in options_df.columns:
@@ -254,7 +268,8 @@ def _coerce_numeric_for_plot(
     object_cols = [
         col
         for col in plot_df.columns
-        if col not in numeric_cols and pd.api.types.is_object_dtype(plot_df[col])
+        if col not in numeric_cols
+        and pd.api.types.is_object_dtype(plot_df[col])
         and col.lower() not in exclude_cols
     ]
     for col in object_cols:
@@ -894,25 +909,45 @@ pitch_types_reg_df = _merge_regressed(
 
 def home_page():
     """Welcome/Home page"""
-    st.title("Profiles")
+    st.title("The App & New Features")
 
     st.markdown(
         """
-Welcome! Here you will find metrics I (https://twitter.com/NotTheBobbyOrr) have developed for analyzing hitters & pitchers at a player and team level.
-I make frequent use of these statistics in my work at BaseballProspectus dot com (https://www.baseballprospectus.com/author/ringtheodubel/) and for my own fantasy strategy.
+Welcome! Here you will find metrics I've developed for isolating and analyzing
+the core skills that define hitters & pitchers at a player and team level. I made frequent use of these statistics in my player analysis work at BaseballProspectus dot com 
+(https://www.baseballprospectus.com/author/ringtheodubel/) and for developing my fantasy strategies. 
+
+You may recognize some of these from my Shiny app (https://therealestmuto.shinyapps.io/Damage/) but these have been updated with data from 2015-2025 and are slightly more
+accurate and interpretable from their prior versions. SEAGER has a higher average total while Damage is lower, while the pitch metrics have been
+converted to an overall pitch grade using the 20-80 scale familiar to baseball fans and applied within pitch types.
+
+Each page contains some new statistics to go along with those you may already be familiar with from the other app, and each page can be filtered by logical conditions in the column filters dropdown.
+
+Each page also features the ability to create a 2D visualization of the data, and the tables have conditional formatting similar to 
+what you'll find on BaseballSavant, except in this case it's green=better and red=worse.
+
+I hope you find everything useful!
+
+-Robert Orr (https://twitter.com/NotTheBobbyOrr or https://bsky.app/profile/notthebobbyorr.bsky.social)
 """
     )
 
     st.markdown("---")
-    st.subheader("Welcome to Premium Features")
+    st.subheader("The Pages")
     st.markdown(
         """
-Navigate via the sidebar to explore different analytics tools. There are glossaries containing explanations for each statistic.
-"""
-    )
-    st.markdown(
-        """
-Feedback: If you have any suggestions or just want to say hi, shoot me a DM on Twitter or send me an email at orrrobf @ gmail dot com.
+Navigate via the sidebar to explore the pages available:
+
+The Auto Regressed (AR) pages contain the same information as the Individual Stats pages but have been 
+tabilized for smaller samples to make players comparable across different seasons and playing time.
+
+The Comps pages allow you to see similar player-seasons based on the same stats you'll find on the Stats and AR pages.
+
+The Splits pages contain breakdowns by platoon matchup (vL/vR), home/away, 1st half/2nd half, and by month.
+
+There are glossaries containing explanations for each statistic you may not recognize.
+
+Pitch level comps are in the works and will be added soon, and I hope to have my own skill projections up before the 2026 season begins!
 """
     )
     st.write(f"Last Update: {pd.Timestamp.today().date()}")
@@ -972,9 +1007,11 @@ def hitter_individual_stats():
                 "Select Player",
                 player_options,
                 default=["All"],
-                format_func=lambda v: "All"
-                if v == "All"
-                else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+                format_func=lambda v: (
+                    "All"
+                    if v == "All"
+                    else f"{player_name_map.get(v, 'Unknown')} ({int(v)})"
+                ),
                 key="hitter_stats_player",
             )
         with right:
@@ -1108,9 +1145,11 @@ def hitter_percentiles():
                 "Select Player",
                 player_options,
                 default=["All"],
-                format_func=lambda v: "All"
-                if v == "All"
-                else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+                format_func=lambda v: (
+                    "All"
+                    if v == "All"
+                    else f"{player_name_map.get(v, 'Unknown')} ({int(v)})"
+                ),
                 key="hitter_pct_player",
             )
         with right:
@@ -1475,9 +1514,11 @@ def hitter_ar():
                 "Select Player",
                 player_options,
                 default=["All"],
-                format_func=lambda v: "All"
-                if v == "All"
-                else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+                format_func=lambda v: (
+                    "All"
+                    if v == "All"
+                    else f"{player_name_map.get(v, 'Unknown')} ({int(v)})"
+                ),
                 key="hitter_ar_player",
             )
         with right:
@@ -1642,9 +1683,11 @@ def hitter_splits():
                     "Select Player",
                     player_options,
                     default=["All"],
-                    format_func=lambda v: "All"
-                    if v == "All"
-                    else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+                    format_func=lambda v: (
+                        "All"
+                        if v == "All"
+                        else f"{player_name_map.get(v, 'Unknown')} ({int(v)})"
+                    ),
                     key=f"hitter_splits_player_{idx}",
                 )
             with right:
@@ -1790,9 +1833,11 @@ def pitcher_individual_stats():
                 "Select Player",
                 player_options,
                 default=["All"],
-                format_func=lambda v: "All"
-                if v == "All"
-                else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+                format_func=lambda v: (
+                    "All"
+                    if v == "All"
+                    else f"{player_name_map.get(v, 'Unknown')} ({int(v)})"
+                ),
                 key="pitcher_stats_player",
             )
         with right:
@@ -1931,9 +1976,11 @@ def pitcher_percentiles():
                 "Select Player",
                 player_options,
                 default=["All"],
-                format_func=lambda v: "All"
-                if v == "All"
-                else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+                format_func=lambda v: (
+                    "All"
+                    if v == "All"
+                    else f"{player_name_map.get(v, 'Unknown')} ({int(v)})"
+                ),
                 key="pitcher_pct_player",
             )
         with right:
@@ -2039,7 +2086,9 @@ def pitcher_comps():
                 else (teams[0] if teams else None)
             )
             if team_choice:
-                player_df = filter_by_team_token(player_df, "pitching_code", team_choice)
+                player_df = filter_by_team_token(
+                    player_df, "pitching_code", team_choice
+                )
 
             feature_cols = [
                 "stuff",
@@ -2290,9 +2339,11 @@ def pitcher_ar():
                 "Select Player",
                 player_options,
                 default=["All"],
-                format_func=lambda v: "All"
-                if v == "All"
-                else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+                format_func=lambda v: (
+                    "All"
+                    if v == "All"
+                    else f"{player_name_map.get(v, 'Unknown')} ({int(v)})"
+                ),
                 key="pitcher_ar_player",
             )
         with right:
@@ -2458,9 +2509,11 @@ def pitcher_splits():
                     "Select Player",
                     player_options,
                     default=["All"],
-                    format_func=lambda v: "All"
-                    if v == "All"
-                    else f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+                    format_func=lambda v: (
+                        "All"
+                        if v == "All"
+                        else f"{player_name_map.get(v, 'Unknown')} ({int(v)})"
+                    ),
                     key=f"pitcher_splits_player_{idx}",
                 )
             with right:
@@ -2609,9 +2662,11 @@ def pitch_shapes_outcomes():
                 "Select Pitcher",
                 pitcher_options,
                 default=["All"],
-                format_func=lambda v: "All"
-                if v == "All"
-                else f"{pitcher_name_map.get(v, 'Unknown')} ({int(v)})",
+                format_func=lambda v: (
+                    "All"
+                    if v == "All"
+                    else f"{pitcher_name_map.get(v, 'Unknown')} ({int(v)})"
+                ),
                 key="pitch_shapes_pitcher",
             )
             pitch_group = st.multiselect(
@@ -2759,9 +2814,11 @@ def pitch_ar():
                 "Select Pitcher",
                 pitcher_options,
                 default=["All"],
-                format_func=lambda v: "All"
-                if v == "All"
-                else f"{pitcher_name_map.get(v, 'Unknown')} ({int(v)})",
+                format_func=lambda v: (
+                    "All"
+                    if v == "All"
+                    else f"{pitcher_name_map.get(v, 'Unknown')} ({int(v)})"
+                ),
                 key="pitch_ar_pitcher",
             )
             pitch_group = st.multiselect(
@@ -2906,9 +2963,11 @@ def pitch_percentiles():
                 "Select Pitcher",
                 pitcher_options,
                 default=["All"],
-                format_func=lambda v: "All"
-                if v == "All"
-                else f"{pitcher_name_map.get(v, 'Unknown')} ({int(v)})",
+                format_func=lambda v: (
+                    "All"
+                    if v == "All"
+                    else f"{pitcher_name_map.get(v, 'Unknown')} ({int(v)})"
+                ),
                 key="pitch_pct_pitcher",
             )
             pitch_tag = st.multiselect(
@@ -3072,9 +3131,11 @@ def pitch_splits():
                     "Select Pitcher",
                     pitcher_options,
                     default=["All"],
-                    format_func=lambda v: "All"
-                    if v == "All"
-                    else f"{pitcher_name_map.get(v, 'Unknown')} ({int(v)})",
+                    format_func=lambda v: (
+                        "All"
+                        if v == "All"
+                        else f"{pitcher_name_map.get(v, 'Unknown')} ({int(v)})"
+                    ),
                     key=f"pitch_splits_pitcher_{idx}",
                 )
                 pitch_group = st.multiselect(
@@ -3687,7 +3748,7 @@ def glossary_hitting():
 
 **Whiff vs. 95+ (%)**: Whiff rate against fastballs 95 mph or higher.
 
-**Contact Over Expected (%)**: Contact rate compared to expected contact rate based on pitch characteristics.
+**Contact Over Expected (%)**: Contact rate compared to expected contact rate based on pitch characteristics. Only applied to hitter swings.
 """
     )
 
@@ -3700,7 +3761,7 @@ def glossary_pitching():
         """
 ### Pitching Metrics Glossary
 
-**Pitch Grade**: Overall pitch quality metric. Higher is better.
+**Pitch Grade**: Overall pitch quality metric. Higher is better. Max is 80, min is 20. League median is typically within a few points of 50. Applied within pitch types.
 
 **FA mph**: Average fastball velocity.
 
@@ -3710,7 +3771,7 @@ def glossary_pitching():
 
 **FA Usage (%)**: Percentage of pitches that are fastballs.
 
-**BB Spin**: Baseball Savant spin rate (RPM).
+**BB Spin**: Avg spin rate (RPM) of a pitcher's breaking balls.
 
 **SwStr (%)**: Swinging strike percentage.
 
@@ -3772,14 +3833,20 @@ st.subheader("Premium Access Required")
 st.markdown(
     """
 To access all features and data in this app, please subscribe below.
-Your subscription supports ongoing development and maintenance of these analytics tools.
 """
 )
+st.markdown("Choose a plan:")
+plan_col_annual, plan_col_monthly = st.columns(2)
+with plan_col_annual:
+    st.link_button("Annual ($40.00)", ANNUAL_PAYMENT_LINK)
+with plan_col_monthly:
+    st.link_button("Monthly ($5.00)", MONTHLY_PAYMENT_LINK)
+st.caption("Use the same email as your Google login when subscribing.")
 
 # Check subscription status - this will stop execution if user is not subscribed
 add_auth(
     required=True,
-    show_redirect_button=True,
+    show_redirect_button=False,
     subscription_button_text="Subscribe to Access Premium Features",
     button_color="#FF4B4B",
 )
