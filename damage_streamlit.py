@@ -21,8 +21,11 @@ HIGHER_IS_WORSE_COLS = {
     "Whiff vs. 95+ (%)",
     "Ball (%)",
 }
+ABS_GRADIENT_COLS_PITCHERS = {"Horizontal Release (ft.)"}
+ABS_GRADIENT_COLS_PITCH_TYPES = {"HAA", "HB (in.)"}
 ANNUAL_PAYMENT_LINK = "https://buy.stripe.com/6oU14p7OEgrCfTsbyQ6J202"
 MONTHLY_PAYMENT_LINK = "https://buy.stripe.com/aFaaEZ0mc6R2cHg5as6J204"
+PREVIEW_ROWS = 10
 
 
 def _run_streamlit_app() -> None:
@@ -183,6 +186,9 @@ def numeric_filter(df: pd.DataFrame, column: str, min_value: float) -> pd.DataFr
 def download_button(df: pd.DataFrame, label: str, key: str) -> None:
     if df.empty:
         return
+    if not _is_user_subscribed():
+        st.info("Subscribe to download the full dataset.")
+        return
     csv = df.to_csv(index=False)
     st.download_button(label, data=csv, file_name=f"{label}.csv", key=key)
 
@@ -245,6 +251,23 @@ def apply_column_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
                             .str.contains(value, case=False, na=False)
                         ]
         return filtered
+
+
+def _resolve_subscription_status(result: object | None = None) -> bool:
+    if isinstance(result, bool):
+        return result
+    if isinstance(result, dict):
+        for key in ("subscribed", "is_subscribed", "subscription_active", "active"):
+            if key in result:
+                return bool(result.get(key))
+    for key in ("user_subscribed", "is_subscribed", "subscription_active", "subscribed"):
+        if key in st.session_state:
+            return bool(st.session_state.get(key))
+    return False
+
+
+def _is_user_subscribed() -> bool:
+    return _resolve_subscription_status()
 
 
 def _pick_first_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -558,6 +581,7 @@ def render_table(
     no_format_cols: set[str] | None = None,
     group_cols: list[str] | None = None,
     stats_df: pd.DataFrame | None = None,
+    abs_cols: set[str] | None = None,
     show_controls: bool = True,
     include_team_label: bool = False,
     label_cols: list[str] | None = None,
@@ -565,6 +589,12 @@ def render_table(
     if df.empty:
         st.info("No data available yet.")
         return
+    if not _is_user_subscribed():
+        st.info(
+            f"Preview mode: showing the first {PREVIEW_ROWS} rows. Subscribe for full access."
+        )
+        df = df.head(PREVIEW_ROWS)
+        show_controls = False
 
     global _TABLE_COUNTER
     table_key = f"table_{_TABLE_COUNTER}"
@@ -621,6 +651,7 @@ def render_table(
     max_elements = pd.get_option("styler.render.max_elements")
     total_cells = df_page_display.shape[0] * df_page_display.shape[1]
     reverse_cols = reverse_cols or set()
+    abs_cols = abs_cols or set()
     no_format_cols = no_format_cols or DEFAULT_NO_FORMAT_COLS
     numeric_cols = df_display.select_dtypes(include="number").columns
     float_cols = df.select_dtypes(include="floating").columns
@@ -646,6 +677,10 @@ def render_table(
                 similarity_medians[col] = df[col].median()
         group_cols = group_cols or []
         group_cols = [col for col in group_cols if col in stats_source.columns]
+        abs_format_cols = [col for col in abs_cols if col in stats_source.columns]
+        abs_stats_source = stats_source.copy()
+        if abs_format_cols:
+            abs_stats_source[abs_format_cols] = abs_stats_source[abs_format_cols].abs()
         if group_cols:
             if stats_format_cols:
                 q10 = stats_source.groupby(group_cols)[stats_format_cols].quantile(0.05)
@@ -653,6 +688,16 @@ def render_table(
                 med = stats_source.groupby(group_cols)[stats_format_cols].median()
             else:
                 q10 = q90 = med = None
+            if abs_format_cols:
+                q10_abs = abs_stats_source.groupby(group_cols)[abs_format_cols].quantile(
+                    0.05
+                )
+                q90_abs = abs_stats_source.groupby(group_cols)[abs_format_cols].quantile(
+                    0.95
+                )
+                med_abs = abs_stats_source.groupby(group_cols)[abs_format_cols].median()
+            else:
+                q10_abs = q90_abs = med_abs = None
         else:
             if stats_format_cols:
                 q10 = stats_source[stats_format_cols].quantile(0.05)
@@ -660,6 +705,12 @@ def render_table(
                 med = stats_source[stats_format_cols].median()
             else:
                 q10 = q90 = med = None
+            if abs_format_cols:
+                q10_abs = abs_stats_source[abs_format_cols].quantile(0.05)
+                q90_abs = abs_stats_source[abs_format_cols].quantile(0.95)
+                med_abs = abs_stats_source[abs_format_cols].median()
+            else:
+                q10_abs = q90_abs = med_abs = None
         cmap = colors.LinearSegmentedColormap.from_list(
             "rwgn", ["#c75c5c", "#f7f7f7", "#5cb85c"]
         )
@@ -672,6 +723,7 @@ def render_table(
             if group_cols:
                 if q10 is None:
                     row_q10 = row_q90 = row_med = None
+                    row_q10_abs = row_q90_abs = row_med_abs = None
                 else:
                     group_vals = df_page_full.loc[row.name, group_cols]
                     if isinstance(group_vals, pd.Series):
@@ -683,10 +735,19 @@ def render_table(
                     row_q10 = q10.loc[group_key]
                     row_q90 = q90.loc[group_key]
                     row_med = med.loc[group_key]
+                    if q10_abs is None:
+                        row_q10_abs = row_q90_abs = row_med_abs = None
+                    else:
+                        row_q10_abs = q10_abs.loc[group_key]
+                        row_q90_abs = q90_abs.loc[group_key]
+                        row_med_abs = med_abs.loc[group_key]
             else:
                 row_q10 = q10
                 row_q90 = q90
                 row_med = med
+                row_q10_abs = q10_abs
+                row_q90_abs = q90_abs
+                row_med_abs = med_abs
 
             styles: list[str] = []
             for col in row.index:
@@ -701,12 +762,14 @@ def render_table(
                     if col not in stats_format_cols or row_q10 is None:
                         styles.append("")
                         continue
-                    if row_q10 is None:
-                        styles.append("")
-                        continue
-                    vmin = row_q10[col]
-                    vmax = row_q90[col]
-                    vcenter = row_med[col]
+                    if col in abs_cols and row_q10_abs is not None:
+                        vmin = row_q10_abs[col]
+                        vmax = row_q90_abs[col]
+                        vcenter = row_med_abs[col]
+                    else:
+                        vmin = row_q10[col]
+                        vmax = row_q90[col]
+                        vcenter = row_med[col]
                 if pd.isna(vmin) or pd.isna(vmax) or vmin == vmax:
                     styles.append("")
                     continue
@@ -715,6 +778,8 @@ def render_table(
                 if pd.isna(val):
                     styles.append("")
                     continue
+                if col in abs_cols:
+                    val = abs(val)
                 val = float(np.clip(val, vmin, vmax))
                 col_cmap = cmap_rev if col in reverse_cols else cmap
                 rgb = colors.to_rgb(col_cmap(norm(val)))
@@ -950,6 +1015,16 @@ There are glossaries containing explanations for each statistic you may not reco
 Pitch level comps are in the works and will be added soon, and I hope to have my own skill projections up before the 2026 season begins!
 """
     )
+    if not _is_user_subscribed():
+        st.markdown("---")
+        st.subheader("Subscribe for Full Access")
+        st.markdown("Choose a plan:")
+        plan_col_annual, plan_col_monthly = st.columns(2)
+        with plan_col_annual:
+            st.link_button("Annual ($40.00)", ANNUAL_PAYMENT_LINK)
+        with plan_col_monthly:
+            st.link_button("Monthly ($5.00)", MONTHLY_PAYMENT_LINK)
+        st.caption("Use the same email as your Google login when subscribing.")
     st.write(f"Last Update: {pd.Timestamp.today().date()}")
 
 
@@ -1926,6 +2001,7 @@ def pitcher_individual_stats():
                 reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
+                abs_cols=ABS_GRADIENT_COLS_PITCHERS,
             )
             download_button(df, "pitchers", "pitchers_download")
 
@@ -2038,7 +2114,11 @@ def pitcher_percentiles():
             }
             df = df.rename(columns=rename_map)
             df = df.sort_values(by="Pitch Grade Pctile", ascending=False)
-            render_table(df, reverse_cols={"FA VAA", "Ball (%)", "Z-Contact (%)"})
+            render_table(
+                df,
+                reverse_cols={"FA VAA", "Ball (%)", "Z-Contact (%)"},
+                abs_cols=ABS_GRADIENT_COLS_PITCHERS,
+            )
             download_button(df, "pitcher_percentiles", "pitcher_pct_download")
 
 
@@ -2279,6 +2359,7 @@ def pitcher_comps():
                     reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)"},
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
+                    abs_cols=ABS_GRADIENT_COLS_PITCHERS,
                     show_controls=False,
                 )
                 st.caption("Most similar MLB seasons (IP >= 50)")
@@ -2287,6 +2368,7 @@ def pitcher_comps():
                     reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)"},
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
+                    abs_cols=ABS_GRADIENT_COLS_PITCHERS,
                 )
 
 
@@ -2425,6 +2507,7 @@ def pitcher_ar():
                 reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
+                abs_cols=ABS_GRADIENT_COLS_PITCHERS,
             )
             download_button(df, "pitchers_ar", "pitchers_ar_download")
 
@@ -2603,6 +2686,7 @@ def pitcher_splits():
                     reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)"},
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
+                    abs_cols=ABS_GRADIENT_COLS_PITCHERS,
                 )
                 download_button(
                     df,
@@ -2763,6 +2847,7 @@ def pitch_shapes_outcomes():
                 reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
+                abs_cols=ABS_GRADIENT_COLS_PITCH_TYPES,
                 label_cols=["Name", "Pitch Type", "Split", "split", "Split Type"],
             )
             download_button(df, "pitch_types", "pitch_types_download")
@@ -2912,6 +2997,7 @@ def pitch_ar():
                 reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
+                abs_cols=ABS_GRADIENT_COLS_PITCH_TYPES,
                 label_cols=["Name", "Pitch Type", "Split", "split", "Split Type"],
             )
             download_button(df, "pitch_types_ar", "pitch_types_ar_download")
@@ -3044,6 +3130,7 @@ def pitch_percentiles():
             render_table(
                 df,
                 reverse_cols={"VAA", "Ball (%)", "Z-Contact (%)"},
+                abs_cols=ABS_GRADIENT_COLS_PITCH_TYPES,
                 label_cols=["Name", "Pitch Type", "Split", "split", "Split Type"],
             )
             download_button(df, "pitch_percentiles", "pitch_pct_download")
@@ -3239,6 +3326,7 @@ def pitch_splits():
                     reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA"},
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
+                    abs_cols=ABS_GRADIENT_COLS_PITCH_TYPES,
                     label_cols=["Name", "Pitch Type", "Split", "split", "Split Type"],
                 )
                 download_button(
@@ -3829,30 +3917,19 @@ if not is_logged_in:
 st.markdown(f"Welcome back, **{st.user.name}**! 👋")
 st.markdown("---")
 
-st.subheader("Premium Access Required")
-st.markdown(
-    """
-To access all features and data in this app, please subscribe below.
-"""
-)
-st.markdown("Choose a plan:")
-plan_col_annual, plan_col_monthly = st.columns(2)
-with plan_col_annual:
-    st.link_button("Annual ($40.00)", ANNUAL_PAYMENT_LINK)
-with plan_col_monthly:
-    st.link_button("Monthly ($5.00)", MONTHLY_PAYMENT_LINK)
-st.caption("Use the same email as your Google login when subscribing.")
-
-# Check subscription status - this will stop execution if user is not subscribed
-add_auth(
-    required=True,
+subscription_result = add_auth(
+    required=False,
     show_redirect_button=False,
     subscription_button_text="Subscribe to Access Premium Features",
     button_color="#FF4B4B",
 )
-
-# Only subscribed users will see content below this point
-st.success("✅ You have premium access! Enjoy all features.")
+is_subscribed = _resolve_subscription_status(subscription_result)
+if is_subscribed:
+    st.success("? You have premium access! Enjoy all features.")
+else:
+    st.info(
+        f"Preview mode enabled. Tables are limited to the first {PREVIEW_ROWS} rows."
+    )
 st.markdown("---")
 
 # Define page navigation with hierarchical groups
