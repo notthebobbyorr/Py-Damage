@@ -319,7 +319,12 @@ def _resolve_subscription_status(result: object | None = None) -> bool:
         for key in ("subscribed", "is_subscribed", "subscription_active", "active"):
             if key in result:
                 return bool(result.get(key))
-    for key in ("user_subscribed", "is_subscribed", "subscription_active", "subscribed"):
+    for key in (
+        "user_subscribed",
+        "is_subscribed",
+        "subscription_active",
+        "subscribed",
+    ):
         if key in st.session_state:
             return bool(st.session_state.get(key))
     return False
@@ -748,12 +753,12 @@ def render_table(
             else:
                 q10 = q90 = med = None
             if abs_format_cols:
-                q10_abs = abs_stats_source.groupby(group_cols)[abs_format_cols].quantile(
-                    0.05
-                )
-                q90_abs = abs_stats_source.groupby(group_cols)[abs_format_cols].quantile(
-                    0.95
-                )
+                q10_abs = abs_stats_source.groupby(group_cols)[
+                    abs_format_cols
+                ].quantile(0.05)
+                q90_abs = abs_stats_source.groupby(group_cols)[
+                    abs_format_cols
+                ].quantile(0.95)
                 med_abs = abs_stats_source.groupby(group_cols)[abs_format_cols].median()
             else:
                 q10_abs = q90_abs = med_abs = None
@@ -3984,7 +3989,7 @@ subscription_result = add_auth(
 )
 is_subscribed = _resolve_subscription_status(subscription_result)
 if is_subscribed:
-    st.success("? You have premium access! Enjoy all features.")
+    st.success("You have premium access! Enjoy all features.")
 else:
     st.info(
         f"Preview mode enabled. Tables are limited to the first {PREVIEW_ROWS} rows."
