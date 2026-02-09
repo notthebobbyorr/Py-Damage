@@ -198,7 +198,9 @@ def merge_frames(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Apply regression using aggregate CSVs.")
+    parser = argparse.ArgumentParser(
+        description="Apply regression using aggregate CSVs or parquets."
+    )
     parser.add_argument(
         "--config",
         type=Path,
@@ -214,20 +216,20 @@ def main() -> None:
     parser.add_argument(
         "--hitters",
         type=Path,
-        default=Path("damage_pos_2015_2025.csv"),
-        help="Aggregated hitters CSV.",
+        default=Path("damage_pos_2015_2025.parquet"),
+        help="Aggregated hitters CSV or parquet.",
     )
     parser.add_argument(
         "--pitchers",
         type=Path,
-        default=Path("pitcher_stuff_new.csv"),
-        help="Aggregated pitchers CSV.",
+        default=Path("pitcher_stuff_new.parquet"),
+        help="Aggregated pitchers CSV or parquet.",
     )
     parser.add_argument(
         "--pitch-types",
         type=Path,
-        default=Path("new_pitch_types.csv"),
-        help="Aggregated pitch types CSV.",
+        default=Path("new_pitch_types.parquet"),
+        help="Aggregated pitch types CSV or parquet.",
     )
     parser.add_argument(
         "--out-dir",
@@ -273,7 +275,10 @@ def main() -> None:
         if not path.exists():
             print(f"Missing {path}, skipping {dataset}.")
             continue
-        df = pl.read_csv(path)
+        if path.suffix.lower() == ".parquet":
+            df = pl.read_parquet(path)
+        else:
+            df = pl.read_csv(path)
         frames: List[pl.DataFrame] = []
 
         for stat in stats_cfg.get(dataset, []):
@@ -365,8 +370,8 @@ def main() -> None:
                 merged = merged.drop(drop_cols)
 
         merged = round_floats(merged, args.round)
-        out_path = args.out_dir / f"{dataset}_regressed.csv"
-        merged.write_csv(out_path)
+        out_path = args.out_dir / f"{dataset}_regressed.parquet"
+        merged.write_parquet(out_path)
         print(f"Wrote {len(merged):,} rows to {out_path}")
 
 

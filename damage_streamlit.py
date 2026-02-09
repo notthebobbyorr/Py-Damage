@@ -940,6 +940,36 @@ def _normalize_split_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _similarity_choice_labels(
+    df: pd.DataFrame,
+    display_map: dict[str, str],
+    exclude_cols: set[str],
+) -> tuple[list[str], dict[str, str]]:
+    if df.empty:
+        return [], {}
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    filtered = []
+    for col in numeric_cols:
+        if col in exclude_cols:
+            continue
+        if col == "reg_prop":
+            continue
+        if col.endswith("_raw") or col.endswith("_raw_reg"):
+            continue
+        if "_num" in col or "_den" in col or "_n" in col:
+            continue
+        if col.endswith("_id") or col.endswith("_mlbid"):
+            continue
+        filtered.append(col)
+    labels = {}
+    for col in filtered:
+        label = display_map.get(col, col.replace("_", " ").title())
+        if label.endswith(" Reg"):
+            label = label[: -len(" Reg")]
+        labels[col] = label
+    return filtered, labels
+
+
 def _merge_regressed(
     base_df: pd.DataFrame, reg_df: pd.DataFrame, keys: list[str]
 ) -> pd.DataFrame:
@@ -1397,7 +1427,7 @@ def hitter_comps():
             if team_choice:
                 player_df = filter_by_team_token(player_df, "hitting_code", team_choice)
 
-            feature_cols = [
+            default_feature_cols = [
                 "damage_rate_reg",
                 "EV90th_reg",
                 "pull_FB_pct_reg",
@@ -1412,7 +1442,76 @@ def hitter_comps():
                 "whiffs_vs_95_reg",
                 "contact_vs_avg_reg",
             ]
-            feature_cols = [c for c in feature_cols if c in eligible_all.columns]
+            display_map = {
+                "hitter_name": "Name",
+                "hitting_code": "Team",
+                "season": "Season",
+                "bbe": "BBE",
+                "damage_rate_reg": "Damage/BBE (%)",
+                "EV90th_reg": "90th Pctile EV",
+                "pull_FB_pct_reg": "Pulled FB (%)",
+                "selection_skill_reg": "Selectivity (%)",
+                "hittable_pitches_taken_reg": "Hittable Pitch Take (%)",
+                "chase_reg": "Chase (%)",
+                "z_con_reg": "Z-Contact (%)",
+                "secondary_whiff_pct_reg": "Whiff vs. Secondaries (%)",
+                "similarity_score": "Similarity (0-100)",
+                "LA_gte_20_reg": "LA>=20 (%)",
+                "LA_lte_0_reg": "LA<=0%",
+                "SEAGER_reg": "SEAGER",
+                "whiffs_vs_95_reg": "Whiff vs. 95+ (%)",
+                "contact_vs_avg_reg": "Contact Over Expected (%)",
+                "LD_pct_reg": "0<LA<20 (%)",
+                "bat_speed_reg": "Bat Speed",
+                "swing_length_reg": "Swing Length",
+                "attack_angle_reg": "Attack Angle",
+                "swing_path_tilt_reg": "VBA",
+                "max_EV_reg": "Max EV",
+            }
+            exclude_cols = {
+                "batter_mlbid",
+                "pitcher_mlbid",
+                "level_id",
+                "game_pk",
+                "PA",
+                "IP",
+                "TBF",
+                "pitches",
+                "pitches_n",
+                "pitches_num",
+                "pitches_den",
+                "bbe",
+                "season",
+                "lg_contact_baseline",
+            }
+            allowed_cols = list(
+                dict.fromkeys(
+                    default_feature_cols
+                    + [
+                        "LD_pct_reg",
+                        "bat_speed_reg",
+                        "swing_length_reg",
+                        "attack_angle_reg",
+                        "swing_path_tilt_reg",
+                        "max_EV_reg",
+                    ]
+                )
+            )
+            numeric_cols, similarity_labels = _similarity_choice_labels(
+                eligible_all, display_map, exclude_cols
+            )
+            numeric_cols = [c for c in numeric_cols if c in allowed_cols]
+            default_feature_cols = [c for c in default_feature_cols if c in numeric_cols]
+            feature_cols = st.multiselect(
+                "Similarity Score Columns",
+                options=numeric_cols,
+                default=default_feature_cols,
+                key="hitter_comps_similarity_cols",
+                format_func=lambda c: similarity_labels.get(c, c),
+            )
+            if not feature_cols:
+                st.info("Select at least one column to compute similarity scores.")
+                return
             eligible_comp = eligible_all.dropna(subset=feature_cols)
             if player_df.empty:
                 st.info("No season row found for that selection.")
@@ -1457,28 +1556,18 @@ def hitter_comps():
                 )
                 display_cols += ["__season", "__level"]
                 df = eligible_comp[display_cols].copy()
-                df = df.rename(
-                    columns={
-                        "hitter_name": "Name",
-                        "hitting_code": "Team",
-                        "season": "Season",
-                        "bbe": "BBE",
-                        "damage_rate_reg": "Damage/BBE (%)",
-                        "EV90th_reg": "90th Pctile EV",
-                        "pull_FB_pct_reg": "Pulled FB (%)",
-                        "selection_skill_reg": "Selectivity (%)",
-                        "hittable_pitches_taken_reg": "Hittable Pitch Take (%)",
-                        "chase_reg": "Chase (%)",
-                        "z_con_reg": "Z-Contact (%)",
-                        "secondary_whiff_pct_reg": "Whiff vs. Secondaries (%)",
-                        "similarity_score": "Similarity (0-100)",
-                        "LA_gte_20_reg": "LA>=20%",
-                        "LA_lte_0_reg": "LA<=0%",
-                        "SEAGER_reg": "SEAGER",
-                        "whiffs_vs_95_reg": "Whiff vs. 95+ (%)",
-                        "contact_vs_avg_reg": "Contact Over Expected (%)",
-                    }
-                )
+                base_rename = {
+                    "hitter_name": "Name",
+                    "hitting_code": "Team",
+                    "season": "Season",
+                    "bbe": "BBE",
+                    "similarity_score": "Similarity (0-100)",
+                }
+                df = df.rename(columns={**base_rename, **similarity_labels})
+                if "FA Spin Efficiency (%)" in df.columns:
+                    df["FA Spin Efficiency (%)"] = (
+                        df["FA Spin Efficiency (%)"] * 100
+                    ).round(0)
                 stats_df = hitters_reg_df.copy()
                 stats_df = stats_df.assign(
                     __season=stats_df["season"], __level=stats_df["level_id"]
@@ -1513,19 +1602,7 @@ def hitter_comps():
                         "hitting_code": "Team",
                         "season": "Season",
                         "bbe": "BBE",
-                        "damage_rate_reg": "Damage/BBE (%)",
-                        "EV90th_reg": "90th Pctile EV",
-                        "pull_FB_pct_reg": "Pulled FB (%)",
-                        "LA_gte_20_reg": "LA>=20%",
-                        "LA_lte_0_reg": "LA<=0%",
-                        "SEAGER_reg": "SEAGER",
-                        "selection_skill_reg": "Selectivity (%)",
-                        "hittable_pitches_taken_reg": "Hittable Pitch Take (%)",
-                        "chase_reg": "Chase (%)",
-                        "z_con_reg": "Z-Contact (%)",
-                        "secondary_whiff_pct_reg": "Whiff vs. Secondaries (%)",
-                        "whiffs_vs_95_reg": "Whiff vs. 95+ (%)",
-                        "contact_vs_avg_reg": "Contact Over Expected (%)",
+                        **similarity_labels,
                     }
                 )
                 target_display_cols = [
@@ -1562,25 +1639,20 @@ def hitter_comps():
                         "hitting_code": "Team",
                         "season": "Season",
                         "bbe": "BBE",
-                        "damage_rate_reg": "Damage/BBE (%)",
-                        "EV90th_reg": "90th Pctile EV",
-                        "pull_FB_pct_reg": "Pulled FB (%)",
-                        "selection_skill_reg": "Selectivity (%)",
-                        "hittable_pitches_taken_reg": "Hittable Pitch Take (%)",
-                        "chase_reg": "Chase (%)",
-                        "z_con_reg": "Z-Contact (%)",
-                        "secondary_whiff_pct_reg": "Whiff vs. Secondaries (%)",
-                        "whiffs_vs_95_reg": "Whiff vs. 95+ (%)",
-                        "LA_gte_20_reg": "LA>=20%",
-                        "LA_lte_0_reg": "LA<=0%",
-                        "SEAGER_reg": "SEAGER",
-                        "contact_vs_avg_reg": "Contact Over Expected (%)",
+                        **similarity_labels,
                     }
                 )
                 st.caption("Selected season")
+                reverse_hitters = HIGHER_IS_WORSE_COLS | {
+                    "LA<=0%",
+                    "Chase (%)",
+                    "Swing Length",
+                    "Attack Angle",
+                    "VBA",
+                }
                 render_table(
                     target_df,
-                    reverse_cols=HIGHER_IS_WORSE_COLS | {"LA<=0%", "Chase (%)"},
+                    reverse_cols=reverse_hitters,
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
                     show_controls=False,
@@ -1588,7 +1660,7 @@ def hitter_comps():
                 st.caption("Most similar MLB seasons (PA >= 200)")
                 render_table(
                     df,
-                    reverse_cols=HIGHER_IS_WORSE_COLS | {"LA<=0%", "Chase (%)"},
+                    reverse_cols=reverse_hitters,
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
                 )
@@ -1717,6 +1789,7 @@ def hitter_ar():
                 "secondary_whiff_pct_reg": "Whiff vs. Secondaries (%)",
                 "whiffs_vs_95_reg": "Whiff vs. 95+ (%)",
                 "contact_vs_avg_reg": "Contact Over Expected (%)",
+                "max_EV_reg": "Max EV",
             }
             df = df.rename(columns=rename_map)
             df = df.sort_values(by="Damage/BBE (%)", ascending=False)
@@ -2224,7 +2297,7 @@ def pitcher_comps():
                     player_df, "pitching_code", team_choice
                 )
 
-            feature_cols = [
+            default_feature_cols = [
                 "stuff",
                 "fastball_velo_reg",
                 "fastball_vaa_reg",
@@ -2239,7 +2312,80 @@ def pitcher_comps():
                 "rel_x_reg",
                 "ext_reg",
             ]
-            feature_cols = [c for c in feature_cols if c in eligible_all.columns]
+            display_map = {
+                "name": "Name",
+                "pitching_code": "Team",
+                "season": "Season",
+                "fastball_velo_reg": "FA mph",
+                "fastball_vaa_reg": "FA VAA",
+                "loc_adj_vaa_reg": "Loc-Adj VAA",
+                "SwStr_reg": "SwStr (%)",
+                "Ball_pct_reg": "Ball (%)",
+                "Chase_reg": "Chase (%)",
+                "Z_Contact_reg": "Z-Contact (%)",
+                "Zone_reg": "Zone (%)",
+                "CSW_reg": "CSW (%)",
+                "LA_lte_0_reg": "LA<=0%",
+                "pWhiff_reg": "pWhiff (%)",
+                "rel_z_reg": "Vertical Release (ft.)",
+                "rel_x_reg": "Horizontal Release (ft.)",
+                "ext_reg": "Extension (ft.)",
+                "similarity_score": "Similarity (0-100)",
+                "stuff": "Pitch Grade",
+                "stuff_z": "Pitch Grade Z",
+                "FA_pct_reg": "FA (%)",
+                "BB_rpm_reg": "BB RPM",
+                "LD_pct_reg": "0<LA<20 (%)",
+                "LA_gte_20_reg": "LA>=20 (%)",
+                "FA_spin_eff_reg": "FA Spin Efficiency (%)",
+                "arm_angle_reg": "Arm Angle",
+            }
+            exclude_cols = {
+                "batter_mlbid",
+                "pitcher_mlbid",
+                "level_id",
+                "game_pk",
+                "PA",
+                "IP",
+                "TBF",
+                "pitches",
+                "pitches_n",
+                "pitches_num",
+                "pitches_den",
+                "bbe",
+                "season",
+            }
+            allowed_cols = list(
+                dict.fromkeys(
+                    default_feature_cols
+                    + [
+                        "Zone_reg",
+                        "CSW_reg",
+                        "loc_adj_vaa_reg",
+                        "FA_pct_reg",
+                        "FA_spin_eff_reg",
+                        "BB_rpm_reg",
+                        "LD_pct_reg",
+                        "LA_gte_20_reg",
+                        "arm_angle_reg",
+                    ]
+                )
+            )
+            numeric_cols, similarity_labels = _similarity_choice_labels(
+                eligible_all, display_map, exclude_cols
+            )
+            numeric_cols = [c for c in numeric_cols if c in allowed_cols]
+            default_feature_cols = [c for c in default_feature_cols if c in numeric_cols]
+            feature_cols = st.multiselect(
+                "Similarity Score Columns",
+                options=numeric_cols,
+                default=default_feature_cols,
+                key="pitcher_comps_similarity_cols",
+                format_func=lambda c: similarity_labels.get(c, c),
+            )
+            if not feature_cols:
+                st.info("Select at least one column to compute similarity scores.")
+                return
             eligible_comp = eligible_all.dropna(subset=feature_cols)
             if player_df.empty:
                 st.info("No season row found for that selection.")
@@ -2289,28 +2435,13 @@ def pitcher_comps():
                 df = eligible_comp[
                     [col for col in display_cols if col in eligible_comp.columns]
                 ].copy()
-                df = df.rename(
-                    columns={
-                        "name": "Name",
-                        "pitching_code": "Team",
-                        "season": "Season",
-                        "fastball_velo_reg": "FA mph",
-                        "fastball_vaa_reg": "FA VAA",
-                        "SwStr_reg": "SwStr (%)",
-                        "Ball_pct_reg": "Ball (%)",
-                        "Chase_reg": "Chase (%)",
-                        "Z_Contact_reg": "Z-Contact (%)",
-                        "LA_lte_0_reg": "LA<=0%",
-                        "rel_z_reg": "Vertical Release (ft.)",
-                        "rel_x_reg": "Horizontal Release (ft.)",
-                        "ext_reg": "Extension (ft.)",
-                        "similarity_score": "Similarity (0-100)",
-                        "stuff": "Pitch Grade",
-                        "stuff_z": "Pitch Grade Z",
-                        "FA_pct_reg": "FA Usage (%)",
-                        "BB_rpm_reg": "BB Spin",
-                    }
-                )
+                base_rename = {
+                    "name": "Name",
+                    "pitching_code": "Team",
+                    "season": "Season",
+                    "similarity_score": "Similarity (0-100)",
+                }
+                df = df.rename(columns={**base_rename, **similarity_labels})
                 stats_df = pitchers_reg_df.copy()
                 stats_df = stats_df.assign(
                     __season=stats_df["season"], __level=stats_df["level_id"]
@@ -2344,21 +2475,13 @@ def pitcher_comps():
                         "name": "Name",
                         "pitching_code": "Team",
                         "season": "Season",
-                        "fastball_velo_reg": "FA mph",
-                        "fastball_vaa_reg": "FA VAA",
-                        "SwStr_reg": "SwStr (%)",
-                        "Ball_pct_reg": "Ball (%)",
-                        "Chase_reg": "Chase (%)",
-                        "Z_Contact_reg": "Z-Contact (%)",
-                        "LA_lte_0_reg": "LA<=0%",
-                        "rel_z_reg": "Vertical Release (ft.)",
-                        "rel_x_reg": "Horizontal Release (ft.)",
-                        "ext_reg": "Extension (ft.)",
-                        "stuff": "Pitch Grade",
-                        "FA_pct_reg": "FA Usage (%)",
-                        "BB_rpm_reg": "BB Spin",
+                        **similarity_labels,
                     }
                 )
+                if "FA Spin Efficiency (%)" in stats_df.columns:
+                    stats_df["FA Spin Efficiency (%)"] = (
+                        stats_df["FA Spin Efficiency (%)"] * 100
+                    ).round(0)
                 target_display_cols = [
                     "name",
                     "pitching_code",
@@ -2392,25 +2515,25 @@ def pitcher_comps():
                         "name": "Name",
                         "pitching_code": "Team",
                         "season": "Season",
-                        "fastball_velo_reg": "FA mph",
-                        "fastball_vaa_reg": "FA VAA",
-                        "SwStr_reg": "SwStr (%)",
-                        "Ball_pct_reg": "Ball (%)",
-                        "Chase_reg": "Chase (%)",
-                        "Z_Contact_reg": "Z-Contact (%)",
-                        "LA_lte_0_reg": "LA<=0%",
-                        "rel_z_reg": "Vertical Release (ft.)",
-                        "rel_x_reg": "Horizontal Release (ft.)",
-                        "ext_reg": "Extension (ft.)",
-                        "stuff": "Pitch Grade",
-                        "FA_pct_reg": "FA Usage (%)",
-                        "BB_rpm_reg": "BB Spin",
+                        **similarity_labels,
                     }
                 )
+                if "FA Spin Efficiency (%)" in target_df.columns:
+                    target_df["FA Spin Efficiency (%)"] = (
+                        target_df["FA Spin Efficiency (%)"] * 100
+                    ).round(0)
                 st.caption("Selected season")
+                reverse_pitchers = {
+                    "Ball (%)",
+                    "FA VAA",
+                    "Z-Contact (%)",
+                    "0<LA<20 (%)",
+                    "LA>=20 (%)",
+                    "Arm Angle",
+                }
                 render_table(
                     target_df,
-                    reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)"},
+                    reverse_cols=reverse_pitchers,
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
                     abs_cols=ABS_GRADIENT_COLS_PITCHERS,
@@ -2419,7 +2542,7 @@ def pitcher_comps():
                 st.caption("Most similar MLB seasons (IP >= 50)")
                 render_table(
                     df,
-                    reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)"},
+                    reverse_cols=reverse_pitchers,
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
                     abs_cols=ABS_GRADIENT_COLS_PITCHERS,

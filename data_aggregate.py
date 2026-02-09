@@ -11,10 +11,15 @@ import os
 import argparse
 from pathlib import Path
 from typing import Iterable
+from time import perf_counter
 
 import numpy as np
 import pandas as pd
 import polars as pl
+try:
+    import psutil
+except ImportError:  # optional dependency
+    psutil = None
 
 DATA_DIR = Path(__file__).resolve().parent
 OUT_DIR = DATA_DIR
@@ -272,7 +277,7 @@ def build_hitter_splits(df: pl.DataFrame) -> pl.DataFrame:
         frames.extend(_build_split_frames(df, build_hitters, split_type, split_fn))
     if not frames:
         return pl.DataFrame()
-    return pl.concat(frames, how="diagonal")
+    return pl.concat(frames, how="diagonal_relaxed")
 
 
 def build_pitching_splits(
@@ -671,7 +676,7 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
             .alias("BB_rpm_n"),
             (
                 pl.when(pl.col("pitch_group") == "FA")
-                .then(pl.col("spin_efficiency"))
+                .then(pl.col("spin_efficiency") * 100)
                 .mean()
             ).alias("FA_spin_eff"),
             (
@@ -804,7 +809,7 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("rpm").is_not_null().sum().alias("rpm_n"),
             pl.mean("axis").alias("axis"),
             pl.col("axis").is_not_null().sum().alias("axis_n"),
-            pl.mean("spin_efficiency").alias("spin_efficiency"),
+            (pl.mean("spin_efficiency") * 100).alias("spin_efficiency"),
             pl.col("spin_efficiency").is_not_null().sum().alias("spin_efficiency_n"),
             pl.col("primary_tag")
             .filter(pl.col("primary_tag").is_not_null())
@@ -930,7 +935,9 @@ def build_league_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
     df = _tag_pitch(df)
-    league_pitch_types = df.group_by(["season", "pitcher_hand", "pitch_tag"]).agg(
+    league_pitch_types = df.group_by(
+        ["season", "level_id", "pitcher_hand", "pitch_tag"]
+    ).agg(
         [
             pl.len().alias("pitches"),
             pl.mean("pitch_velo").alias("velo"),
@@ -974,7 +981,7 @@ def build_league_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
         (
             100
             * pl.col("pitches")
-            / pl.col("pitches").sum().over(["season", "pitcher_hand"])
+            / pl.col("pitches").sum().over(["season", "level_id", "pitcher_hand"])
         ).alias("pct"),
         pl.col("pitcher_hand").alias("throws"),
     )
@@ -1361,7 +1368,7 @@ def compute_stuff_percentiles(
     raw_col: str = "stuff_raw",
     min_pitches: int = 50,
 ) -> pl.DataFrame:
-    """Compute stuff grade percentile thresholds by season + pitch_tag."""
+    """Compute stuff grade percentile thresholds from MLB only (level_id=1)."""
     if df.is_empty() or raw_col not in df.columns:
         return pl.DataFrame()
 
@@ -1435,7 +1442,7 @@ def apply_stuff_grade(
             )
             .clip(20, 80)
             .round(0)
-            .cast(pl.Int64)
+            .cast(pl.Int64, strict=False)
         )
         .otherwise(pl.lit(None))
     )
@@ -1502,49 +1509,49 @@ def add_percentiles(
     return pl.from_pandas(df_pd)
 
 
-def write_csv(df: pl.DataFrame, name: str, out_dir: Path) -> None:
+def write_parquet(df: pl.DataFrame, name: str, out_dir: Path) -> None:
     path = out_dir / name
-    df.to_pandas().to_csv(path, index=False)
+    start = perf_counter()
+    try:
+        df.write_parquet(path)
+    except Exception as exc:
+        raise RuntimeError(f"Failed writing {path}") from exc
     print(f"Wrote {len(df):,} rows to {path}")
+    print(f"Write time: {perf_counter() - start:0.2f}s")
 
 
-def main(
-    parquet_path: Path,
-    out_dir: Path,
+def _build_outputs(
+    pitch: pl.DataFrame,
     min_season: int,
     max_season: int,
-) -> None:
-    """Read parquet data and generate aggregated CSV files."""
-    print(f"Reading pitch data from {parquet_path}...")
-    pitch = pl.read_parquet(parquet_path)
-    print(f"Loaded {len(pitch):,} pitch rows.")
-
+) -> dict[str, pl.DataFrame]:
     # Tag pitches for aggregation
     pitch = _tag_pitch(pitch)
 
     # Compute stuff grade percentiles from pitcher-level averages
+    print(f"Computing stuff percentiles...{_mem_note()}")
     stuff_percentiles = compute_stuff_percentiles(pitch, min_pitches=50)
 
     # Build aggregated tables
-    print("Building hitters...")
+    print(f"Building hitters...{_mem_note()}")
     hitters = build_hitters(pitch)
 
-    print("Building pitchers...")
+    print(f"Building pitchers...{_mem_note()}")
     pitchers = build_pitchers(pitch)
 
-    print("Building pitch types...")
+    print(f"Building pitch types...{_mem_note()}")
     pitch_types = build_pitch_types(pitch)
 
-    print("Building team hitting...")
+    print(f"Building team hitting...{_mem_note()}")
     team_hitting = build_team_hitting(pitch)
 
-    print("Building team pitching...")
+    print(f"Building team pitching...{_mem_note()}")
     team_pitching = build_team_pitching(pitch)
 
-    print("Building league hitting...")
+    print(f"Building league hitting...{_mem_note()}")
     league_hitting = build_league_hitting(pitch)
 
-    print("Building league pitching...")
+    print(f"Building league pitching...{_mem_note()}")
     league_pitching = build_league_pitching(pitch)
 
     print("Building league pitch types...")
@@ -1637,19 +1644,8 @@ def main(
         .drop("stuff_grade")
     )
 
-    # Write CSV files
-    out_dir.mkdir(parents=True, exist_ok=True)
-    write_csv(hitters, f"damage_pos_{min_season}_{max_season}.csv", out_dir)
-    write_csv(pitchers, "pitcher_stuff_new.csv", out_dir)
-    write_csv(pitch_types, "new_pitch_types.csv", out_dir)
-    write_csv(team_hitting, "new_team_damage.csv", out_dir)
-    write_csv(team_pitching, "new_team_stuff.csv", out_dir)
-    write_csv(league_pitch_types_shapes, "league_pitch_types.csv", out_dir)
-    write_csv(hitter_splits, "hitter_splits.csv", out_dir)
-    write_csv(pitcher_splits, "pitcher_splits.csv", out_dir)
-    write_csv(pitch_type_splits, "pitch_types_splits.csv", out_dir)
-
     # Add percentiles
+    print(f"Computing hitter percentiles...{_mem_note()}")
     hitter_pct = add_percentiles(
         hitters,
         group_cols=["season", "level_id"],
@@ -1670,8 +1666,8 @@ def main(
         filter_col="PA",
         min_threshold=200,
     )
-    write_csv(hitter_pct, "hitter_pctiles.csv", out_dir)
 
+    print(f"Computing pitcher percentiles...{_mem_note()}")
     pitcher_pct = add_percentiles(
         pitchers,
         group_cols=["season", "level_id"],
@@ -1692,7 +1688,6 @@ def main(
         filter_col="IP",
         min_threshold=40,
     )
-    write_csv(pitcher_pct, "pitcher_pctiles.csv", out_dir)
 
     pitch_types_value_cols = [
         "pct",
@@ -1713,6 +1708,8 @@ def main(
     pitch_types_value_cols = [
         col for col in pitch_types_value_cols if col in pitch_types.columns
     ]
+
+    print(f"Computing pitch type percentiles...{_mem_note()}")
     pitch_types_pct = add_percentiles(
         pitch_types,
         group_cols=["season", "level_id", "pitch_tag"],
@@ -1720,16 +1717,95 @@ def main(
         filter_col="pitches",
         min_threshold=100,
     )
-    write_csv(pitch_types_pct, "pitch_types_pctiles.csv", out_dir)
 
-    write_csv(league_hitting, "new_hitting_lg_avg.csv", out_dir)
-    write_csv(league_pitching, "new_lg_stuff.csv", out_dir)
+    return {
+        f"damage_pos_{min_season}_{max_season}.parquet": hitters,
+        "pitcher_stuff_new.parquet": pitchers,
+        "new_pitch_types.parquet": pitch_types,
+        "new_team_damage.parquet": team_hitting,
+        "new_team_stuff.parquet": team_pitching,
+        "league_pitch_types.parquet": league_pitch_types_shapes,
+        "hitter_splits.parquet": hitter_splits,
+        "pitcher_splits.parquet": pitcher_splits,
+        "pitch_types_splits.parquet": pitch_type_splits,
+        "hitter_pctiles.parquet": hitter_pct,
+        "pitcher_pctiles.parquet": pitcher_pct,
+        "pitch_types_pctiles.parquet": pitch_types_pct,
+        "new_hitting_lg_avg.parquet": league_hitting,
+        "new_lg_stuff.parquet": league_pitching,
+    }
+
+
+def _mem_note() -> str:
+    if psutil is None:
+        return ""
+    try:
+        proc = psutil.Process()
+        rss_gb = proc.memory_info().rss / (1024**3)
+        return f" | RSS {rss_gb:0.2f} GB"
+    except Exception:
+        return ""
+
+
+def main(
+    parquet_path: Path,
+    out_dir: Path,
+    min_season: int,
+    max_season: int,
+    chunk_by_season: bool = False,
+    chunk_dir: Path | None = None,
+) -> None:
+    """Read parquet data and generate aggregated parquet files."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if not chunk_by_season:
+        print(f"Reading pitch data from {parquet_path}...")
+        pitch = pl.read_parquet(parquet_path)
+        print(f"Loaded {len(pitch):,} pitch rows.")
+
+        outputs = _build_outputs(pitch, min_season, max_season)
+        print(f"Writing parquet files to {out_dir}...{_mem_note()}")
+        for name, df in outputs.items():
+            write_parquet(df, name, out_dir)
+        print("Aggregation complete!")
+        return
+
+    if chunk_dir is None:
+        chunk_dir = out_dir / "_season_chunks"
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Chunking by season into {chunk_dir}...")
+    scan = pl.scan_parquet(parquet_path)
+
+    chunk_map: dict[str, list[Path]] = {}
+    final_damage_name = f"damage_pos_{min_season}_{max_season}.parquet"
+    for season in range(min_season, max_season + 1):
+        print(f"Processing season {season}...{_mem_note()}")
+        pitch = scan.filter(pl.col("season") == season).collect()
+        print(f"Loaded {len(pitch):,} pitch rows for {season}.")
+        outputs = _build_outputs(pitch, season, season)
+        for name, df in outputs.items():
+            final_name = (
+                final_damage_name
+                if name.startswith("damage_pos_")
+                else name
+            )
+            stem = Path(final_name).stem
+            chunk_name = f"{stem}.season_{season}.parquet"
+            chunk_path = chunk_dir / chunk_name
+            write_parquet(df, chunk_name, chunk_dir)
+            chunk_map.setdefault(final_name, []).append(chunk_path)
+
+    print(f"Combining season chunks into {out_dir}...{_mem_note()}")
+    for final_name, parts in chunk_map.items():
+        lazy_frames = [pl.scan_parquet(p) for p in parts]
+        combined = pl.concat(lazy_frames, how="diagonal_relaxed")
+        combined.sink_parquet(out_dir / final_name)
+        print(f"Wrote {final_name} from {len(parts)} chunks")
 
     print("Aggregation complete!")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Aggregate pitch data into CSVs")
+    parser = argparse.ArgumentParser(description="Aggregate pitch data into parquet files")
     parser.add_argument("--min-season", type=int, default=2015)
     parser.add_argument("--max-season", type=int, default=2025)
     parser.add_argument(
@@ -1742,7 +1818,18 @@ if __name__ == "__main__":
         "--out-dir",
         type=Path,
         default=DATA_DIR,
-        help="Output directory for CSVs",
+        help="Output directory for parquet files",
+    )
+    parser.add_argument(
+        "--chunk-by-season",
+        action="store_true",
+        help="Process one season at a time to reduce memory usage",
+    )
+    parser.add_argument(
+        "--chunk-dir",
+        type=Path,
+        default=None,
+        help="Directory to store per-season chunk outputs (default: <out-dir>/_season_chunks)",
     )
     args = parser.parse_args()
 
@@ -1750,10 +1837,17 @@ if __name__ == "__main__":
         args.parquet_path = (
             args.out_dir / f"pitch_data_{args.min_season}_{args.max_season}.parquet"
         )
+    if not args.parquet_path.exists():
+        raise FileNotFoundError(
+            "Input parquet not found. Provide --parquet-path or ensure the default "
+            f"file exists: {args.parquet_path}"
+        )
 
     main(
         parquet_path=args.parquet_path,
         out_dir=args.out_dir,
         min_season=args.min_season,
         max_season=args.max_season,
+        chunk_by_season=args.chunk_by_season,
+        chunk_dir=args.chunk_dir,
     )

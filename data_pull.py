@@ -11,7 +11,9 @@ import os
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import Iterable
+from urllib.parse import quote_plus
 
 import numpy as np
 import pandas as pd
@@ -48,6 +50,10 @@ try:
     from sklearn.preprocessing import LabelEncoder
 except ImportError:  # optional dependency
     LabelEncoder = None
+try:
+    import connectorx as cx
+except ImportError:  # optional dependency
+    cx = None
 
 import pickle
 
@@ -223,6 +229,17 @@ def _get_env(name: str, default: str | None = None) -> str:
     return val
 
 
+def _time_step(
+    label: str, timings: dict[str, float], enabled: bool, func, *args, **kwargs
+):
+    if not enabled:
+        return func(*args, **kwargs)
+    start = perf_counter()
+    result = func(*args, **kwargs)
+    timings[label] = perf_counter() - start
+    return result
+
+
 def load_db_config() -> DbConfig:
     return DbConfig(
         dbname=_get_env("POOBAH_DB", "cage"),
@@ -234,8 +251,18 @@ def load_db_config() -> DbConfig:
 
 
 def read_pitch_data(
-    cfg: DbConfig, min_season: int, max_season: int, level_ids: Iterable[int]
+    cfg: DbConfig,
+    min_season: int,
+    max_season: int,
+    level_ids: Iterable[int],
+    exclude_level_ids: Iterable[int] | None = None,
+    use_connectorx: bool = False,
 ) -> pl.DataFrame:
+    exclude_level_ids = exclude_level_ids or []
+    if exclude_level_ids:
+        level_ids = [lid for lid in level_ids if int(lid) not in set(exclude_level_ids)]
+    if not level_ids:
+        raise ValueError("No level_ids remain after applying exclusions.")
     level_clause = ",".join(str(int(x)) for x in level_ids)
     query = f"""
         SELECT
@@ -350,6 +377,19 @@ def read_pitch_data(
             AND a.level_id IN ({level_clause})
             AND a.game_type = 'R'
     """
+    print(
+        f"Running pitch query for seasons {min_season}-{max_season} and levels {level_clause}..."
+    )
+    if use_connectorx and cx is not None:
+        user = quote_plus(cfg.user)
+        password = quote_plus(cfg.password)
+        host = cfg.host
+        dbname = cfg.dbname
+        conn_str = f"postgresql://{user}:{password}@{host}:{cfg.port}/{dbname}"
+        df = cx.read_sql(conn_str, query, return_type="pandas")
+        print(f"Fetched {len(df):,} pitch rows via connectorx.")
+        return pl.from_pandas(df)
+
     with psycopg2.connect(
         dbname=cfg.dbname,
         user=cfg.user,
@@ -357,12 +397,31 @@ def read_pitch_data(
         host=cfg.host,
         port=cfg.port,
     ) as conn:
-        print(
-            f"Running pitch query for seasons {min_season}-{max_season} and levels {level_clause}..."
-        )
         df = pd.read_sql_query(query, conn)
         print(f"Fetched {len(df):,} pitch rows.")
     return pl.from_pandas(df)
+
+
+def fetch_level_ids(cfg: DbConfig, min_season: int, max_season: int) -> list[int]:
+    query = f"""
+        SELECT DISTINCT a.level_id
+        FROM pitchinfo.pitches_public a
+        WHERE a.season >= {min_season}
+            AND a.season <= {max_season}
+            AND a.game_type = 'R'
+        ORDER BY a.level_id
+    """
+    with psycopg2.connect(
+        dbname=cfg.dbname,
+        user=cfg.user,
+        password=cfg.password,
+        host=cfg.host,
+        port=cfg.port,
+    ) as conn:
+        level_df = pd.read_sql_query(query, conn)
+    levels = level_df["level_id"].dropna().astype(int).tolist()
+    print(f"Found {len(levels)} level_id values: {levels}")
+    return levels
 
 
 def add_baseout(cfg: DbConfig, pitch_df: pl.DataFrame) -> pl.DataFrame:
@@ -844,29 +903,84 @@ def main(
     min_season: int,
     max_season: int,
     out_dir: Path,
+    out_file: Path | None,
     level_ids: list[int],
+    exclude_level_ids: list[int] | None,
     save_parquet: bool = True,
+    profile: bool = False,
+    use_connectorx: bool = False,
 ) -> None:
     """Pull pitch data, apply models, and save to parquet for aggregation."""
-    cfg = load_db_config()
-    models = load_models()
-    pitch = read_pitch_data(cfg, min_season, max_season, level_ids)
-    pitch = add_baseout(cfg, pitch)
-    pitch = add_features(pitch)
-    pitch = apply_models(pitch, models)
+    timings: dict[str, float] = {}
+    cfg = _time_step("load_db_config", timings, profile, load_db_config)
+    models = _time_step("load_models", timings, profile, load_models)
+    if not level_ids:
+        level_ids = _time_step(
+            "fetch_level_ids",
+            timings,
+            profile,
+            fetch_level_ids,
+            cfg,
+            min_season,
+            max_season,
+        )
+    if exclude_level_ids:
+        level_ids = [lid for lid in level_ids if int(lid) not in set(exclude_level_ids)]
+    if not level_ids:
+        raise ValueError("No level_ids remain after applying exclusions.")
+    pitch = _time_step(
+        "read_pitch_data",
+        timings,
+        profile,
+        read_pitch_data,
+        cfg,
+        min_season,
+        max_season,
+        level_ids,
+        exclude_level_ids,
+        use_connectorx,
+    )
+    pitch = _time_step("add_baseout", timings, profile, add_baseout, cfg, pitch)
+    pitch = _time_step("add_features", timings, profile, add_features, pitch)
+    pitch = _time_step("apply_models", timings, profile, apply_models, pitch, models)
 
-    out_dir.mkdir(parents=True, exist_ok=True)
     if save_parquet:
-        parquet_path = out_dir / f"pitch_data_{min_season}_{max_season}.parquet"
-        pitch.write_parquet(parquet_path)
+        if out_file is None:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            parquet_path = out_dir / f"pitch_data_{min_season}_{max_season}.parquet"
+        else:
+            parquet_path = out_file
+            parquet_path.parent.mkdir(parents=True, exist_ok=True)
+        _time_step(
+            "write_parquet", timings, profile, pitch.write_parquet, parquet_path
+        )
         print(f"Saved {len(pitch):,} pitch rows to {parquet_path}")
+    if profile:
+        total = sum(timings.values())
+        print("Timing summary:")
+        for label, seconds in sorted(timings.items(), key=lambda item: item[1], reverse=True):
+            print(f"  {label}: {seconds:0.2f}s")
+        print(f"  total: {total:0.2f}s")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pull pitch data and apply models")
     parser.add_argument("--min-season", type=int, default=2025)
     parser.add_argument("--max-season", type=int, default=2025)
-    parser.add_argument("--level-ids", type=int, nargs="+", default=[1])
+    parser.add_argument(
+        "--level-ids",
+        type=int,
+        nargs="*",
+        default=None,
+        help="Optional list of level_id values. If omitted, all available levels are used.",
+    )
+    parser.add_argument(
+        "--exclude-level-ids",
+        type=int,
+        nargs="*",
+        default=None,
+        help="Exclude specific level_id values from the pull.",
+    )
     parser.add_argument(
         "--out-dir",
         type=Path,
@@ -874,15 +988,35 @@ if __name__ == "__main__":
         help="Output directory for parquet file",
     )
     parser.add_argument(
+        "--out-file",
+        type=Path,
+        default=None,
+        help="Optional output parquet file path (overrides --out-dir)",
+    )
+    parser.add_argument(
         "--no-save",
         action="store_true",
         help="Skip saving the parquet file",
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Print timing information for each step",
+    )
+    parser.add_argument(
+        "--use-connectorx",
+        action="store_true",
+        help="Use connectorx for faster database reads if installed",
     )
     args = parser.parse_args()
     main(
         min_season=args.min_season,
         max_season=args.max_season,
         out_dir=args.out_dir,
+        out_file=args.out_file,
         level_ids=args.level_ids,
+        exclude_level_ids=args.exclude_level_ids,
         save_parquet=not args.no_save,
+        profile=args.profile,
+        use_connectorx=args.use_connectorx,
     )
