@@ -362,7 +362,9 @@ def read_pitch_data(
             sc.api_break_x_batter_in as hb_batter_in,
             sc.woba_value,
             sc.delta_run_exp,
-            sc.n_thruorder_pitcher
+            sc.n_thruorder_pitcher,
+            coalesce(sc.age_pit_legacy, sc.age_pit) as pitcher_age,
+            coalesce(sc.age_bat_legacy, sc.age_bat) as batter_age
         FROM pitchinfo.pitches_public a
         LEFT JOIN mlbapi.batted_balls sp
             ON a.game_pk = sp.game_pk
@@ -951,14 +953,14 @@ def main(
         else:
             parquet_path = out_file
             parquet_path.parent.mkdir(parents=True, exist_ok=True)
-        _time_step(
-            "write_parquet", timings, profile, pitch.write_parquet, parquet_path
-        )
+        _time_step("write_parquet", timings, profile, pitch.write_parquet, parquet_path)
         print(f"Saved {len(pitch):,} pitch rows to {parquet_path}")
     if profile:
         total = sum(timings.values())
         print("Timing summary:")
-        for label, seconds in sorted(timings.items(), key=lambda item: item[1], reverse=True):
+        for label, seconds in sorted(
+            timings.items(), key=lambda item: item[1], reverse=True
+        ):
             print(f"  {label}: {seconds:0.2f}s")
         print(f"  total: {total:0.2f}s")
 

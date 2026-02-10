@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import argparse
 from pathlib import Path
+import unicodedata
 from typing import Iterable
 from time import perf_counter
 
@@ -84,6 +85,44 @@ def _tag_pitch(df: pl.DataFrame) -> pl.DataFrame:
         .then(pl.lit("CU"))
         .otherwise(pl.lit("XX"))
         .alias("pitch_tag")
+    )
+
+
+def _strip_accents(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)
+    )
+
+
+def _normalize_player_names(df: pl.DataFrame) -> pl.DataFrame:
+    if df.is_empty():
+        return df
+    cols = [col for col in ["hitter_name", "name"] if col in df.columns]
+    if not cols:
+        return df
+    return df.with_columns(
+        [pl.col(col).map_elements(_strip_accents, return_dtype=pl.Utf8).alias(col) for col in cols]
+    )
+
+
+def _normalize_age_columns(df: pl.DataFrame) -> pl.DataFrame:
+    if df.is_empty():
+        return df
+    cols = [col for col in ["batter_age", "pitcher_age"] if col in df.columns]
+    if not cols:
+        return df
+    return df.with_columns(
+        [
+            pl.col(col)
+            .cast(pl.Float64, strict=False)
+            .round(0)
+            .cast(pl.Int64, strict=False)
+            .alias(col)
+            for col in cols
+        ]
     )
 
 
@@ -363,6 +402,16 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
         df.group_by(["batter_mlbid", "hitter_name", "level_id", "season"])
         .agg(
             [
+                pl.col("batter_age")
+                .cast(pl.Float64, strict=False)
+                .filter(
+                    pl.col("batter_age")
+                    .cast(pl.Float64, strict=False)
+                    .is_not_null()
+                    & ~pl.col("batter_age").cast(pl.Float64, strict=False).is_nan()
+                )
+                .first()
+                .alias("baseball_age"),
                 pl.len().alias("pitches"),
                 pl.n_unique("pa_id").alias("PA"),
                 pl.sum("bbe").alias("bbe"),
@@ -603,10 +652,43 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
 
+    fastball_tags = ["FA", "SI", "HC", "SP"]
+    fb_primary_tag = (
+        df.filter(pl.col("pitch_tag").is_in(fastball_tags))
+        .group_by(["pitcher_mlbid", "level_id", "season", "pitch_tag"])
+        .agg(pl.len().alias("pitch_count"))
+        .sort(
+            ["pitcher_mlbid", "level_id", "season", "pitch_count"],
+            descending=[False, False, False, True],
+        )
+        .group_by(["pitcher_mlbid", "level_id", "season"])
+        .agg(pl.first("pitch_tag").alias("primary_fb_tag"))
+    )
+    fb_vaa = (
+        df.join(
+            fb_primary_tag,
+            on=["pitcher_mlbid", "level_id", "season"],
+            how="left",
+        )
+        .filter(pl.col("pitch_tag") == pl.col("primary_fb_tag"))
+        .group_by(["pitcher_mlbid", "level_id", "season"])
+        .agg(pl.mean("vaa").alias("fastball_vaa_override"))
+    )
+
     pitchers = df.group_by(
         ["pitcher_mlbid", "name", "season", "level_id", "pitcher_hand"]
     ).agg(
         [
+            pl.col("pitcher_age")
+            .cast(pl.Float64, strict=False)
+            .filter(
+                pl.col("pitcher_age")
+                .cast(pl.Float64, strict=False)
+                .is_not_null()
+                & ~pl.col("pitcher_age").cast(pl.Float64, strict=False).is_nan()
+            )
+            .first()
+            .alias("baseball_age"),
             pl.len().alias("pitches"),
             pl.n_unique("pa_id").alias("TBF"),
             (pl.sum("outs_recorded") / 3).round(1).alias("IP"),
@@ -756,6 +838,11 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
             .alias("team"),
         ]
     )
+    pitchers = pitchers.join(
+        fb_vaa, on=["pitcher_mlbid", "level_id", "season"], how="left"
+    ).with_columns(
+        pl.coalesce(["fastball_vaa_override", "fastball_vaa"]).alias("fastball_vaa")
+    ).drop("fastball_vaa_override")
     return pitchers
 
 
@@ -787,6 +874,16 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
         ]
     ).agg(
         [
+            pl.col("pitcher_age")
+            .cast(pl.Float64, strict=False)
+            .filter(
+                pl.col("pitcher_age")
+                .cast(pl.Float64, strict=False)
+                .is_not_null()
+                & ~pl.col("pitcher_age").cast(pl.Float64, strict=False).is_nan()
+            )
+            .first()
+            .alias("baseball_age"),
             pl.len().alias("pitches"),
             (pl.len() / pl.first("total_pitches") * 100).alias("pct"),
             pl.mean("stuff_raw").alias("stuff_raw"),
@@ -1363,6 +1460,77 @@ def build_league_pitching(df: pl.DataFrame) -> pl.DataFrame:
     return league
 
 
+def build_park_data(df: pl.DataFrame) -> pl.DataFrame:
+    if df.is_empty():
+        return df
+    required = {
+        "park_mlbid",
+        "stands",
+        "season",
+        "level_id",
+        "pitch_outcome",
+        "home_team",
+        "damage_pred",
+        "exit_velo",
+        "launch_angle",
+        "spray_angle_adj",
+        "is_in_play",
+    }
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns for park_data: {sorted(missing)}")
+    damage_mask = (
+        (pl.col("is_in_play") == True)
+        & (pl.col("damage_pred").is_not_null())
+        & (pl.col("exit_velo") >= pl.col("damage_pred"))
+        & (pl.col("launch_angle") > 0)
+        & (pl.col("spray_angle_adj") >= -50)
+        & (pl.col("spray_angle_adj") <= 50)
+    )
+    bbe_mask = (
+        (pl.col("bbe") == 1) if "bbe" in df.columns else (pl.col("is_in_play") == True)
+    )
+    hit_mask = pl.col("pitch_outcome").is_in(["1B", "2B", "3B", "HR"])
+    xbh_mask = pl.col("pitch_outcome").is_in(["2B", "3B", "HR"])
+    hr_damage = (pl.col("pitch_outcome") == "HR") & damage_mask
+    xbh_damage = xbh_mask & damage_mask
+    hit_bbe = hit_mask & bbe_mask
+    park = (
+        df.filter(
+            pl.col("park_mlbid").is_not_null()
+            & pl.col("home_team").is_not_null()
+        )
+        .group_by(["park_mlbid", "home_team", "stands", "season", "level_id"])
+        .agg(
+            [
+                damage_mask.sum().alias("damage_bbe"),
+                hr_damage.sum().alias("hr_damage_bbe"),
+                xbh_damage.sum().alias("xbh_damage_bbe"),
+                hit_bbe.sum().alias("hits_bbe"),
+                bbe_mask.sum().alias("bbe_total"),
+            ]
+        )
+        .filter(pl.col("damage_bbe") >= 100)
+        .with_columns(
+            pl.when(pl.col("damage_bbe") > 0)
+            .then((pl.col("hr_damage_bbe") / pl.col("damage_bbe")) * 100)
+            .otherwise(None)
+            .alias("HR_per_damage_BBE_pct")
+        )
+        .with_columns(
+            pl.when(pl.col("damage_bbe") > 0)
+            .then((pl.col("xbh_damage_bbe") / pl.col("damage_bbe")) * 100)
+            .otherwise(None)
+            .alias("XBH_per_damage_BBE_pct"),
+            pl.when(pl.col("bbe_total") > 0)
+            .then((pl.col("hits_bbe") / pl.col("bbe_total")) * 100)
+            .otherwise(None)
+            .alias("Hits_per_BBE_pct"),
+        )
+    )
+    return park
+
+
 def compute_stuff_percentiles(
     df: pl.DataFrame,
     raw_col: str = "stuff_raw",
@@ -1525,6 +1693,9 @@ def _build_outputs(
     min_season: int,
     max_season: int,
 ) -> dict[str, pl.DataFrame]:
+    # Normalize names so accents don't split groupings across seasons
+    pitch = _normalize_player_names(pitch)
+    pitch = _normalize_age_columns(pitch)
     # Tag pitches for aggregation
     pitch = _tag_pitch(pitch)
 
@@ -1553,6 +1724,9 @@ def _build_outputs(
 
     print(f"Building league pitching...{_mem_note()}")
     league_pitching = build_league_pitching(pitch)
+
+    print(f"Building park data...{_mem_note()}")
+    park_data = build_park_data(pitch)
 
     print("Building league pitch types...")
     league_pitch_types_shapes = build_league_pitch_types(pitch)
@@ -1733,6 +1907,7 @@ def _build_outputs(
         "pitch_types_pctiles.parquet": pitch_types_pct,
         "new_hitting_lg_avg.parquet": league_hitting,
         "new_lg_stuff.parquet": league_pitching,
+        "park_data.parquet": park_data,
     }
 
 
@@ -1754,12 +1929,39 @@ def main(
     max_season: int,
     chunk_by_season: bool = False,
     chunk_dir: Path | None = None,
+    parquet_path_level1: Path | None = None,
+    parquet_path_no_level1: Path | None = None,
+    input_dir: Path | None = None,
 ) -> None:
     """Read parquet data and generate aggregated parquet files."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    input_dir = input_dir or out_dir
     if not chunk_by_season:
-        print(f"Reading pitch data from {parquet_path}...")
-        pitch = pl.read_parquet(parquet_path)
+        if parquet_path is not None:
+            print(f"Reading pitch data from {parquet_path}...")
+            pitch = pl.read_parquet(parquet_path)
+        else:
+            if parquet_path_level1 is None:
+                parquet_path_level1 = (
+                    input_dir / f"pitch_data_{min_season}_{max_season}_level1.parquet"
+                )
+            if parquet_path_no_level1 is None:
+                parquet_path_no_level1 = (
+                    input_dir / f"pitch_data_2021_{max_season}_no_level1.parquet"
+                )
+            if not parquet_path_level1.exists():
+                raise FileNotFoundError(
+                    f"Input parquet not found: {parquet_path_level1}"
+                )
+            if not parquet_path_no_level1.exists():
+                raise FileNotFoundError(
+                    f"Input parquet not found: {parquet_path_no_level1}"
+                )
+            print(f"Reading pitch data from {parquet_path_level1}...")
+            pitch_level1 = pl.read_parquet(parquet_path_level1)
+            print(f"Reading pitch data from {parquet_path_no_level1}...")
+            pitch_no_level1 = pl.read_parquet(parquet_path_no_level1)
+            pitch = pl.concat([pitch_level1, pitch_no_level1], how="diagonal_relaxed")
         print(f"Loaded {len(pitch):,} pitch rows.")
 
         outputs = _build_outputs(pitch, min_season, max_season)
@@ -1773,7 +1975,26 @@ def main(
         chunk_dir = out_dir / "_season_chunks"
     chunk_dir.mkdir(parents=True, exist_ok=True)
     print(f"Chunking by season into {chunk_dir}...")
-    scan = pl.scan_parquet(parquet_path)
+    if parquet_path is not None:
+        scan = pl.scan_parquet(parquet_path)
+    else:
+        if parquet_path_level1 is None:
+            parquet_path_level1 = (
+                input_dir / f"pitch_data_{min_season}_{max_season}_level1.parquet"
+            )
+        if parquet_path_no_level1 is None:
+            parquet_path_no_level1 = (
+                input_dir / f"pitch_data_2021_{max_season}_no_level1.parquet"
+            )
+        if not parquet_path_level1.exists():
+            raise FileNotFoundError(f"Input parquet not found: {parquet_path_level1}")
+        if not parquet_path_no_level1.exists():
+            raise FileNotFoundError(
+                f"Input parquet not found: {parquet_path_no_level1}"
+            )
+        scan_level1 = pl.scan_parquet(parquet_path_level1)
+        scan_no_level1 = pl.scan_parquet(parquet_path_no_level1)
+        scan = pl.concat([scan_level1, scan_no_level1], how="diagonal_relaxed")
 
     chunk_map: dict[str, list[Path]] = {}
     final_damage_name = f"damage_pos_{min_season}_{max_season}.parquet"
@@ -1815,10 +2036,28 @@ if __name__ == "__main__":
         help="Path to input parquet file (default: pitch_data_{min}_{max}.parquet)",
     )
     parser.add_argument(
+        "--parquet-path-level1",
+        type=Path,
+        default=None,
+        help="Path to level 1 parquet file (default: pitch_data_{min}_{max}_level1.parquet)",
+    )
+    parser.add_argument(
+        "--parquet-path-no-level1",
+        type=Path,
+        default=None,
+        help="Path to non-level1 parquet file (default: pitch_data_2021_{max}_no_level1.parquet)",
+    )
+    parser.add_argument(
         "--out-dir",
         type=Path,
         default=DATA_DIR,
         help="Output directory for parquet files",
+    )
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=None,
+        help="Input directory for default parquet files (defaults to --out-dir)",
     )
     parser.add_argument(
         "--chunk-by-season",
@@ -1833,14 +2072,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    if args.parquet_path is None:
-        args.parquet_path = (
-            args.out_dir / f"pitch_data_{args.min_season}_{args.max_season}.parquet"
-        )
-    if not args.parquet_path.exists():
+    if args.parquet_path is not None and not args.parquet_path.exists():
         raise FileNotFoundError(
-            "Input parquet not found. Provide --parquet-path or ensure the default "
-            f"file exists: {args.parquet_path}"
+            "Input parquet not found. Provide --parquet-path or ensure the file exists: "
+            f"{args.parquet_path}"
         )
 
     main(
@@ -1850,4 +2085,7 @@ if __name__ == "__main__":
         max_season=args.max_season,
         chunk_by_season=args.chunk_by_season,
         chunk_dir=args.chunk_dir,
+        parquet_path_level1=args.parquet_path_level1,
+        parquet_path_no_level1=args.parquet_path_no_level1,
+        input_dir=args.input_dir,
     )

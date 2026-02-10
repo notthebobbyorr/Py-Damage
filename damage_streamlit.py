@@ -14,7 +14,7 @@ from st_paywall import add_auth
 
 DATA_DIR = Path(__file__).resolve().parent
 _TABLE_COUNTER = 0
-DEFAULT_NO_FORMAT_COLS = {"Season", "PA", "BBE", "TBF", "IP"}
+DEFAULT_NO_FORMAT_COLS = {"Season", "PA", "BBE", "TBF", "IP", "Age"}
 # Columns where higher values are worse (red=high, green=low) - inverted color scale
 HIGHER_IS_WORSE_COLS = {
     "Hittable Pitch Take (%)",
@@ -649,6 +649,7 @@ def render_table(
     show_controls: bool = True,
     include_team_label: bool = False,
     label_cols: list[str] | None = None,
+    hide_cols: set[str] | None = None,
 ) -> None:
     if df.empty:
         st.info("No data available yet.")
@@ -670,7 +671,12 @@ def render_table(
             st.info("No data after filters.")
             return
 
-    display_cols = [col for col in df.columns if not col.startswith("__")]
+    hide_cols = hide_cols or set()
+    # Hide Player ID by default from display while keeping it for downloads.
+    hide_cols = set(hide_cols) | {"Player ID"}
+    display_cols = [
+        col for col in df.columns if not col.startswith("__") and col not in hide_cols
+    ]
     df_display = df[display_cols].copy()
 
     _render_plot_controls(
@@ -905,6 +911,7 @@ hitter_splits_df = load_csv("hitter_splits.csv")
 pitcher_splits_df = load_csv("pitcher_splits.csv")
 pitch_type_splits_df = load_csv("pitch_types_splits.csv")
 league_pitch_types = load_csv("league_pitch_types.csv")
+park_data = load_csv("park_data.parquet")
 
 
 # Normalize team column names: new CSVs use "team", old use "pitching_code"/"hitting_code"
@@ -1098,9 +1105,9 @@ I hope you find everything useful!
 Navigate via the sidebar to explore the pages available:
 
 The Auto Regressed (AR) pages contain the same information as the Individual Stats pages but have been 
-tabilized for smaller samples to make players comparable across different seasons and playing time.
+stabilized for smaller samples to make players comparable across different seasons and playing time.
 
-The Comps pages allow you to see similar player-seasons based on the same stats you'll find on the Stats and AR pages.
+The Comps pages allow you to see similar player-seasons based on the same stats you'll find on the Stats and AR pages. The criteria used to make the comparison is customizable via the Similarity Score Columns area, where each metric available in the dataset can be included or excluded from the similarity calculation. The Similarity Score is displayed as a percentile compared to all other player-seasons in the dataset.
 
 The Splits pages contain breakdowns by platoon matchup (vL/vR), home/away, 1st half/2nd half, and by month.
 
@@ -1199,6 +1206,7 @@ def hitter_individual_stats():
 
             columns = [
                 "hitter_name",
+                "batter_mlbid",
                 "hitting_code",
                 "season",
                 "PA",
@@ -1223,6 +1231,7 @@ def hitter_individual_stats():
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
                 "hitter_name": "Name",
+                "batter_mlbid": "Player ID",
                 "hitting_code": "Team",
                 "season": "Season",
                 "bbe": "BBE",
@@ -1332,8 +1341,9 @@ def hitter_percentiles():
 
             columns = [
                 "hitter_name",
-                "season",
+                "batter_mlbid",
                 "hitting_code",
+                "season",
                 "SEAGER_pctile",
                 "selection_skill_pctile",
                 "hittable_pitches_taken_pctile",
@@ -1353,6 +1363,7 @@ def hitter_percentiles():
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
                 "hitter_name": "Name",
+                "batter_mlbid": "Player ID",
                 "hitting_code": "Team",
                 "season": "Season",
                 "SEAGER_pctile": "SEAGER",
@@ -1426,7 +1437,6 @@ def hitter_comps():
             )
             if team_choice:
                 player_df = filter_by_team_token(player_df, "hitting_code", team_choice)
-
             default_feature_cols = [
                 "damage_rate_reg",
                 "EV90th_reg",
@@ -1501,7 +1511,9 @@ def hitter_comps():
                 eligible_all, display_map, exclude_cols
             )
             numeric_cols = [c for c in numeric_cols if c in allowed_cols]
-            default_feature_cols = [c for c in default_feature_cols if c in numeric_cols]
+            default_feature_cols = [
+                c for c in default_feature_cols if c in numeric_cols
+            ]
             feature_cols = st.multiselect(
                 "Similarity Score Columns",
                 options=numeric_cols,
@@ -1627,6 +1639,10 @@ def hitter_comps():
                     "__season",
                     "__level",
                 ]
+                # Ensure selected similarity columns appear in the target row too.
+                target_display_cols = list(
+                    dict.fromkeys(target_display_cols + feature_cols)
+                )
                 target_df = player_df.assign(
                     __season=player_df["season"], __level=player_df["level_id"]
                 )
@@ -1747,6 +1763,7 @@ def hitter_ar():
 
             columns = [
                 "hitter_name",
+                "batter_mlbid",
                 "hitting_code",
                 "season",
                 "PA",
@@ -1772,6 +1789,7 @@ def hitter_ar():
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
                 "hitter_name": "Name",
+                "batter_mlbid": "Player ID",
                 "hitting_code": "Team",
                 "season": "Season",
                 "bbe": "BBE",
@@ -1920,6 +1938,7 @@ def hitter_splits():
 
                 columns = [
                     "hitter_name",
+                    "batter_mlbid",
                     "hitting_code",
                     "season",
                     "split",
@@ -1945,6 +1964,7 @@ def hitter_splits():
                 df = df[[col for col in columns if col in df.columns]].copy()
                 rename_map = {
                     "hitter_name": "Name",
+                    "batter_mlbid": "Player ID",
                     "hitting_code": "Team",
                     "season": "Season",
                     "split": "Split",
@@ -2068,8 +2088,9 @@ def pitcher_individual_stats():
 
             columns = [
                 "name",
-                "season",
+                "pitcher_mlbid",
                 "pitching_code",
+                "season",
                 "TBF",
                 "IP",
                 "stuff",
@@ -2099,6 +2120,7 @@ def pitcher_individual_stats():
                 df["stuff"] = df["stuff"].round(0)
             rename_map = {
                 "name": "Name",
+                "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
                 "season": "Season",
                 "stuff": "Pitch Grade",
@@ -2203,8 +2225,9 @@ def pitcher_percentiles():
 
             columns = [
                 "name",
-                "season",
+                "pitcher_mlbid",
                 "pitching_code",
+                "season",
                 "stuff_pctile",
                 "fastball_velo_pctile",
                 "max_velo_pctile",
@@ -2224,6 +2247,7 @@ def pitcher_percentiles():
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
                 "name": "Name",
+                "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
                 "season": "Season",
                 "stuff_pctile": "Pitch Grade Pctile",
@@ -2296,7 +2320,6 @@ def pitcher_comps():
                 player_df = filter_by_team_token(
                     player_df, "pitching_code", team_choice
                 )
-
             default_feature_cols = [
                 "stuff",
                 "fastball_velo_reg",
@@ -2375,7 +2398,9 @@ def pitcher_comps():
                 eligible_all, display_map, exclude_cols
             )
             numeric_cols = [c for c in numeric_cols if c in allowed_cols]
-            default_feature_cols = [c for c in default_feature_cols if c in numeric_cols]
+            default_feature_cols = [
+                c for c in default_feature_cols if c in numeric_cols
+            ]
             feature_cols = st.multiselect(
                 "Similarity Score Columns",
                 options=numeric_cols,
@@ -2504,6 +2529,10 @@ def pitcher_comps():
                     "__season",
                     "__level",
                 ]
+                # Ensure selected similarity columns appear in the target row too.
+                target_display_cols = list(
+                    dict.fromkeys(target_display_cols + feature_cols)
+                )
                 target_df = player_df.assign(
                     __season=player_df["season"], __level=player_df["level_id"]
                 )
@@ -2631,8 +2660,9 @@ def pitcher_ar():
 
             columns = [
                 "name",
-                "season",
+                "pitcher_mlbid",
                 "pitching_code",
+                "season",
                 "TBF",
                 "IP",
                 "stuff",
@@ -2656,6 +2686,7 @@ def pitcher_ar():
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
                 "name": "Name",
+                "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
                 "season": "Season",
                 "stuff": "Pitch Grade",
@@ -2804,9 +2835,10 @@ def pitcher_splits():
 
                 columns = [
                     "name",
-                    "season",
+                    "pitcher_mlbid",
                     "split",
                     "pitching_code",
+                    "season",
                     "TBF",
                     "IP",
                     "stuff",
@@ -2834,6 +2866,7 @@ def pitcher_splits():
                     df["stuff"] = df["stuff"].round(0)
                 rename_map = {
                     "name": "Name",
+                    "pitcher_mlbid": "Player ID",
                     "pitching_code": "Team",
                     "season": "Season",
                     "split": "Split",
@@ -2966,6 +2999,7 @@ def pitch_shapes_outcomes():
 
             columns = [
                 "name",
+                "pitcher_mlbid",
                 "pitching_code",
                 "season",
                 "pitch_tag",
@@ -2994,6 +3028,7 @@ def pitch_shapes_outcomes():
                 df["stuff"] = df["stuff"].round(0)
             rename_map = {
                 "name": "Name",
+                "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
                 "season": "Season",
                 "pitch_tag": "Pitch Type",
@@ -3121,6 +3156,7 @@ def pitch_ar():
 
             columns = [
                 "name",
+                "pitcher_mlbid",
                 "pitching_code",
                 "season",
                 "pitch_tag",
@@ -3145,6 +3181,7 @@ def pitch_ar():
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
                 "name": "Name",
+                "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
                 "season": "Season",
                 "pitch_tag": "Pitch Type",
@@ -3258,6 +3295,7 @@ def pitch_percentiles():
 
             columns = [
                 "name",
+                "pitcher_mlbid",
                 "pitching_code",
                 "season",
                 "pitch_tag",
@@ -3283,6 +3321,7 @@ def pitch_percentiles():
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
                 "name": "Name",
+                "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
                 "season": "Season",
                 "pitch_tag": "Pitch Type",
@@ -3446,6 +3485,7 @@ def pitch_splits():
 
                 columns = [
                     "name",
+                    "pitcher_mlbid",
                     "pitching_code",
                     "season",
                     "split",
@@ -3473,6 +3513,7 @@ def pitch_splits():
                     df["stuff"] = df["stuff"].round(0)
                 rename_map = {
                     "name": "Name",
+                    "pitcher_mlbid": "Player ID",
                     "pitching_code": "Team",
                     "season": "Season",
                     "split": "Split",
@@ -3977,6 +4018,124 @@ def league_pitch_level():
 
 
 # =============================================================================
+# PARKS PAGE
+# =============================================================================
+
+
+def park_data_page():
+    """Parks - HR per Damage BBE page"""
+    st.title("Park HR per Damage BBE")
+
+    if park_data.empty:
+        st.info("Missing park_data.parquet")
+        return
+
+    left, right = st.columns([1, 3])
+    with left:
+        level = st.selectbox(
+            "Select Level",
+            ["All", "MLB", "Triple-A", "Low-A", "Low Minors"],
+            index=1,
+            key="park_level",
+        )
+        season = st.multiselect(
+            "Select Season",
+            season_options(park_data),
+            default=(
+                [season_options(park_data)[1]]
+                if len(season_options(park_data)) > 1
+                else ["All"]
+            ),
+            key="park_season",
+        )
+        stands = st.multiselect(
+            "Select Batter Handedness",
+            ["All"] + sorted(park_data["stands"].dropna().unique().tolist()),
+            default=["All"],
+            key="park_stands",
+        )
+        team = st.selectbox(
+            "Select Home Team",
+            ["All"] + sorted(park_data["home_team"].dropna().unique().tolist()),
+            index=0,
+            key="park_home_team",
+        )
+        park_pairs = (
+            park_data[["park_mlbid", "home_team"]]
+            .dropna()
+            .drop_duplicates()
+            .sort_values(by=["park_mlbid", "home_team"])
+            .values.tolist()
+        )
+        park_options = ["All"] + [tuple(pair) for pair in park_pairs]
+        park = st.selectbox(
+            "Select Park",
+            park_options,
+            index=0,
+            key="park_mlbid",
+            format_func=lambda v: (
+                "All" if v == "All" else f"{v[0]} - {v[1]}"
+            ),
+        )
+    with right:
+        level_map = {
+            "All": [1, 11, 14, 16],
+            "MLB": [1],
+            "Triple-A": [11],
+            "Low-A": [14],
+            "Low Minors": [16],
+        }
+        df = park_data.copy()
+        df = df[df["level_id"].isin(level_map[level])]
+        df = filter_by_values(df, "season", season)
+        df = filter_by_values(df, "stands", stands)
+        if team != "All":
+            df = df[df["home_team"] == team]
+        if park != "All":
+            df = df[(df["park_mlbid"] == park[0]) & (df["home_team"] == park[1])]
+        df = df.assign(
+            Level=df["level_id"].map(
+                {1: "MLB", 11: "Triple-A", 14: "Low-A", 16: "Low Minors"}
+            ),
+            __season=df["season"],
+            __level=df["level_id"],
+        )
+
+        columns = [
+            "park_mlbid",
+            "home_team",
+            "season",
+            "stands",
+            "Level",
+            "damage_bbe",
+            "HR_per_damage_BBE_pct",
+            "XBH_per_damage_BBE_pct",
+            "Hits_per_BBE_pct",
+            "__season",
+            "__level",
+        ]
+        df = df[[col for col in columns if col in df.columns]].copy()
+        rename_map = {
+            "park_mlbid": "Park ID",
+            "home_team": "Home Team",
+            "stands": "Batter Hand",
+            "season": "Season",
+            "damage_bbe": "Damage BBE",
+            "HR_per_damage_BBE_pct": "HR per Damage BBE (%)",
+            "XBH_per_damage_BBE_pct": "XBH per Damage BBE (%)",
+            "Hits_per_BBE_pct": "Hits per BBE (%)",
+        }
+        df = df.rename(columns=rename_map)
+        df = df.sort_values(by="HR per Damage BBE (%)", ascending=False)
+        render_table(
+            df,
+            group_cols=["__season", "__level"],
+            no_format_cols=DEFAULT_NO_FORMAT_COLS | {"Park ID", "Damage BBE"},
+        )
+        download_button(df, "park_data", "park_data_download")
+
+
+# =============================================================================
 # GLOSSARY PAGES
 # =============================================================================
 
@@ -4173,6 +4332,9 @@ pages = {
         st.Page(league_hitting, title="Hitting Stats", icon="🌐"),
         st.Page(league_pitching, title="Pitching Stats", icon="🌐"),
         st.Page(league_pitch_level, title="Pitch Level Shapes", icon="🌐"),
+    ],
+    "Parks": [
+        st.Page(park_data_page, title="Park HR per Damage BBE", icon="🏟️"),
     ],
     "Glossary": [
         st.Page(glossary_hitting, title="Hitting Glossary", icon="📖"),
