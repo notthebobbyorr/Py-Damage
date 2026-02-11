@@ -911,7 +911,7 @@ hitter_splits_df = load_csv("hitter_splits.csv")
 pitcher_splits_df = load_csv("pitcher_splits.csv")
 pitch_type_splits_df = load_csv("pitch_types_splits.csv")
 league_pitch_types = load_csv("league_pitch_types.csv")
-park_data = load_csv("park_data.parquet")
+park_data = load_csv("park_data.csv")
 
 
 # Normalize team column names: new CSVs use "team", old use "pitching_code"/"hitting_code"
@@ -4027,7 +4027,7 @@ def park_data_page():
     st.title("Park HR per Damage BBE")
 
     if park_data.empty:
-        st.info("Missing park_data.parquet")
+        st.info("Missing park_data.csv (or park_data.parquet)")
         return
 
     left, right = st.columns([1, 3])

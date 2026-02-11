@@ -7,6 +7,11 @@ import pandas as pd
 def main() -> None:
     data_dir = Path(__file__).resolve().parent
     csv_files = sorted(data_dir.glob("*.csv"))
+    park_csv = data_dir / "park_data.csv"
+    if park_csv.exists() and park_csv not in csv_files:
+        csv_files.insert(0, park_csv)
+    if not park_csv.exists():
+        print("Warning: park_data.csv not found; parks page will require it.")
     if not csv_files:
         print("No CSV files found.")
         return
