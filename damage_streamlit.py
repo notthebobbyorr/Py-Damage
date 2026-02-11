@@ -61,7 +61,7 @@ def _get_user_email() -> str | None:
     except Exception:
         return None
 
-
+@st.cache_data(ttl=3600, max_entries=10)
 def _create_billing_portal_url(email: str) -> str | None:
     api_key = _get_stripe_api_key()
     if not api_key:
@@ -131,15 +131,41 @@ st.markdown(
 )
 
 
-@st.cache_data
+@st.cache_data(ttl=3600, max_entries=50)
 def _load_csv_cached(path_str: str, mtime: float) -> pd.DataFrame:
     path = Path(path_str)
     if not path.exists():
         return pd.DataFrame()
     if path.suffix == ".parquet":
-        return pd.read_parquet(path)
-    return pd.read_csv(path)
+        df = pd.read_parquet(path)
+        return _optimize_dataframe_memory(df)
+    df = pd.read_csv(path)
+    return _optimize_dataframe_memory(df)
 
+def _optimize_dataframe_memory(df: pd.DataFrame) -> pd.DataFrame:
+    """Reduce DataFrame memory footprint by optimizing dtypes"""
+    if df.empty:
+        return df
+    
+    # Convert object columns to category where appropriate (50%+ savings)
+    for col in df.select_dtypes(include=['object']).columns:
+        # Skip ID columns
+        if col.endswith('_mlbid') or col.endswith('_id'):
+            continue
+        num_unique = df[col].nunique()
+        num_total = len(df[col])
+        # If less than 50% unique values, use category
+        if num_unique / num_total < 0.5:
+            df[col] = df[col].astype('category')
+    
+    # Downcast numeric types (30-50% savings)
+    for col in df.select_dtypes(include=['int64']).columns:
+        df[col] = pd.to_numeric(df[col], downcast='integer')
+    
+    for col in df.select_dtypes(include=['float64']).columns:
+        df[col] = pd.to_numeric(df[col], downcast='float')
+    
+    return df
 
 def load_csv(name: str) -> pd.DataFrame:
     path = DATA_DIR / name
@@ -151,7 +177,7 @@ def load_csv(name: str) -> pd.DataFrame:
         return pd.DataFrame()
     return _load_csv_cached(str(path), path.stat().st_mtime)
 
-
+@st.cache_data(ttl=3600, max_entries=5)
 def load_damage_df() -> pd.DataFrame:
     # Prefer the most comprehensive file with newest data
     preferred_files = [
@@ -160,15 +186,19 @@ def load_damage_df() -> pd.DataFrame:
     for preferred in preferred_files:
         parquet_preferred = preferred.with_suffix(".parquet")
         if parquet_preferred.exists():
-            return pd.read_parquet(parquet_preferred)
+            df = pd.read_parquet(parquet_preferred)
+            return _optimize_dataframe_memory(df)
         if preferred.exists():
-            return pd.read_csv(preferred)
+            df = pd.read_csv(preferred)
+            return _optimize_dataframe_memory(df)
     candidates = sorted(DATA_DIR.glob("damage_pos_*.parquet"))
     if candidates:
-        return pd.read_parquet(candidates[-1])
+        df = pd.read_parquet(candidates[-1])
+        return _optimize_dataframe_memory(df)
     candidates = sorted(DATA_DIR.glob("damage_pos_*.csv"))
     if candidates:
-        return pd.read_csv(candidates[-1])
+        df = pd.read_csv(candidates[-1])
+        return _optimize_dataframe_memory(df)
     return pd.DataFrame()
 
 
