@@ -4328,6 +4328,21 @@ else:
     )
 st.markdown("---")
 
+# ── Session timeout ───────────────────────────────────────────────────────────
+import time as _time
+SESSION_TIMEOUT_MINUTES = 30
+if "last_activity" not in st.session_state:
+    st.session_state.last_activity = _time.time()
+else:
+    idle_minutes = (_time.time() - st.session_state.last_activity) / 60
+    if idle_minutes > SESSION_TIMEOUT_MINUTES:
+        st.warning("⏱️ Session timed out after 30 minutes of inactivity. Please refresh.")
+        st.stop()
+st.session_state.last_activity = _time.time()
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Define page navigation with hierarchical groups
+pages = {
 # Define page navigation with hierarchical groups
 pages = {
     "Home": [
