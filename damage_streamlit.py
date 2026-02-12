@@ -4340,9 +4340,6 @@ else:
         st.stop()
 st.session_state.last_activity = _time.time()
 # ─────────────────────────────────────────────────────────────────────────────
-
-# Define page navigation with hierarchical groups
-pages = {
 # Define page navigation with hierarchical groups
 pages = {
     "Home": [
