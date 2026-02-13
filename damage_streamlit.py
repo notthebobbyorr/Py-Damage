@@ -61,7 +61,8 @@ def _get_user_email() -> str | None:
     except Exception:
         return None
 
-@st.cache_data(ttl=3600, max_entries=10)
+
+@st.cache_data(ttl=86400, max_entries=5)
 def _create_billing_portal_url(email: str) -> str | None:
     api_key = _get_stripe_api_key()
     if not api_key:
@@ -131,7 +132,7 @@ st.markdown(
 )
 
 
-@st.cache_data(ttl=3600, max_entries=50)
+@st.cache_data(ttl=86400, max_entries=20)
 def _load_csv_cached(path_str: str, mtime: float) -> pd.DataFrame:
     path = Path(path_str)
     if not path.exists():
@@ -142,30 +143,32 @@ def _load_csv_cached(path_str: str, mtime: float) -> pd.DataFrame:
     df = pd.read_csv(path)
     return _optimize_dataframe_memory(df)
 
+
 def _optimize_dataframe_memory(df: pd.DataFrame) -> pd.DataFrame:
     """Reduce DataFrame memory footprint by optimizing dtypes"""
     if df.empty:
         return df
-    
+
     # Convert object columns to category where appropriate (50%+ savings)
-    for col in df.select_dtypes(include=['object']).columns:
+    for col in df.select_dtypes(include=["object"]).columns:
         # Skip ID columns
-        if col.endswith('_mlbid') or col.endswith('_id'):
+        if col.endswith("_mlbid") or col.endswith("_id"):
             continue
         num_unique = df[col].nunique()
         num_total = len(df[col])
         # If less than 50% unique values, use category
         if num_unique / num_total < 0.5:
-            df[col] = df[col].astype('category')
-    
+            df[col] = df[col].astype("category")
+
     # Downcast numeric types (30-50% savings)
-    for col in df.select_dtypes(include=['int64']).columns:
-        df[col] = pd.to_numeric(df[col], downcast='integer')
-    
-    for col in df.select_dtypes(include=['float64']).columns:
-        df[col] = pd.to_numeric(df[col], downcast='float')
-    
+    for col in df.select_dtypes(include=["int64"]).columns:
+        df[col] = pd.to_numeric(df[col], downcast="integer")
+
+    for col in df.select_dtypes(include=["float64"]).columns:
+        df[col] = pd.to_numeric(df[col], downcast="float")
+
     return df
+
 
 def load_csv(name: str) -> pd.DataFrame:
     path = DATA_DIR / name
@@ -177,7 +180,8 @@ def load_csv(name: str) -> pd.DataFrame:
         return pd.DataFrame()
     return _load_csv_cached(str(path), path.stat().st_mtime)
 
-@st.cache_data(ttl=3600, max_entries=5)
+
+@st.cache_data(ttl=86400, max_entries=3)
 def load_damage_df() -> pd.DataFrame:
     # Prefer the most comprehensive file with newest data
     preferred_files = [
@@ -4103,9 +4107,7 @@ def park_data_page():
             park_options,
             index=0,
             key="park_mlbid",
-            format_func=lambda v: (
-                "All" if v == "All" else f"{v[0]} - {v[1]}"
-            ),
+            format_func=lambda v: ("All" if v == "All" else f"{v[0]} - {v[1]}"),
         )
     with right:
         level_map = {
@@ -4330,13 +4332,16 @@ st.markdown("---")
 
 # ── Session timeout ───────────────────────────────────────────────────────────
 import time as _time
+
 SESSION_TIMEOUT_MINUTES = 30
 if "last_activity" not in st.session_state:
     st.session_state.last_activity = _time.time()
 else:
     idle_minutes = (_time.time() - st.session_state.last_activity) / 60
     if idle_minutes > SESSION_TIMEOUT_MINUTES:
-        st.warning("⏱️ Session timed out after 30 minutes of inactivity. Please refresh.")
+        st.warning(
+            "⏱️ Session timed out after 30 minutes of inactivity. Please refresh."
+        )
         st.stop()
 st.session_state.last_activity = _time.time()
 # ─────────────────────────────────────────────────────────────────────────────
