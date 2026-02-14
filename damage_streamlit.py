@@ -27,6 +27,63 @@ ABS_GRADIENT_COLS_PITCH_TYPES = {"HAA", "HB (in.)"}
 ANNUAL_PAYMENT_LINK = "https://buy.stripe.com/6oU14p7OEgrCfTsbyQ6J202"
 MONTHLY_PAYMENT_LINK = "https://buy.stripe.com/aFaaEZ0mc6R2cHg5as6J204"
 PREVIEW_ROWS = 10
+LEVEL_LABELS = {1: "MLB", 11: "Triple-A", 14: "Low-A", 16: "Low Minors"}
+HITTER_COMPS_BASE_FEATURE_COLS = [
+    "damage_rate_reg",
+    "EV90th_reg",
+    "pull_FB_pct_reg",
+    "LA_gte_20_reg",
+    "LA_lte_0_reg",
+    "SEAGER_reg",
+    "selection_skill_reg",
+    "hittable_pitches_taken_reg",
+    "chase_reg",
+    "z_con_reg",
+    "secondary_whiff_pct_reg",
+    "whiffs_vs_95_reg",
+    "contact_vs_avg_reg",
+]
+HITTER_COMPS_EXTRA_FEATURE_COLS = [
+    "LD_pct_reg",
+    "bat_speed_reg",
+    "swing_length_reg",
+    "attack_angle_reg",
+    "swing_path_tilt_reg",
+    "max_EV_reg",
+]
+HITTER_HIGHER_IS_WORSE_METRICS = {
+    "hittable_pitches_taken_reg",
+    "secondary_whiff_pct_reg",
+    "whiffs_vs_95_reg",
+    "chase_reg",
+    "LA_lte_0_reg",
+    "swing_length_reg",
+    "attack_angle_reg",
+    "swing_path_tilt_reg",
+}
+HITTER_MLB_DIRECTION_MAP = {
+    "damage_rate_reg": "down",
+    "pull_FB_pct_reg": "down",
+    "LA_gte_20_reg": "down",
+    "LA_lte_0_reg": "up",
+    "SEAGER_reg": "down",
+    "selection_skill_reg": "down",
+    "hittable_pitches_taken_reg": "up",
+    "chase_reg": "up",
+    "z_con_reg": "down",
+    "secondary_whiff_pct_reg": "up",
+    "whiffs_vs_95_reg": "up",
+    "contact_vs_avg_reg": "down",
+}
+HITTER_MLB_MIN_SHIFT_SCALE = 0.75
+HITTER_MLB_MIN_SHIFT_SCALE_OVERRIDES = {
+    "LA_gte_20_reg": 1.25,
+    "LA_lte_0_reg": 1.5,
+}
+HITTER_MLB_MIN_SHIFT_FLOOR = {
+    "LA_gte_20_reg": 2.0,
+    "LA_lte_0_reg": 2.0,
+}
 
 
 def _get_stripe_api_key() -> str | None:
@@ -218,10 +275,21 @@ def season_options(df: pd.DataFrame, column: str = "season") -> list:
     return ["All"] + sorted_vals
 
 
-def filter_by_values(df: pd.DataFrame, column: str, values: list) -> pd.DataFrame:
-    if df.empty or "All" in values:
+def filter_by_values(df: pd.DataFrame, column: str, values) -> pd.DataFrame:
+    if df.empty:
         return df
-    return df[df[column].isin(values)]
+    if values is None:
+        return df
+    if isinstance(values, (str, bytes)):
+        if values == "All":
+            return df
+        return df[df[column] == values]
+    if not isinstance(values, (list, tuple, set, pd.Index, np.ndarray, pd.Series)):
+        return df[df[column] == values]
+    values_list = list(values)
+    if not values_list or "All" in values_list:
+        return df
+    return df[df[column].isin(values_list)]
 
 
 def _split_team_tokens(value: str) -> list[str]:
@@ -684,6 +752,7 @@ def render_table(
     include_team_label: bool = False,
     label_cols: list[str] | None = None,
     hide_cols: set[str] | None = None,
+    round_decimals: int = 1,
 ) -> None:
     if df.empty:
         st.info("No data available yet.")
@@ -705,9 +774,29 @@ def render_table(
             st.info("No data after filters.")
             return
 
+    def _contains_non_mlb_rows(table_df: pd.DataFrame) -> bool:
+        level_cols = ["__level", "level_id", "Level"]
+        for col in level_cols:
+            if col not in table_df.columns:
+                continue
+            s = table_df[col]
+            if col in {"__level", "level_id"}:
+                vals = pd.to_numeric(s, errors="coerce")
+                if vals.notna().any() and (vals != 1).any():
+                    return True
+            else:
+                text = s.astype(str).str.strip().str.lower()
+                milb_tokens = {"triple-a", "low-a", "low minors"}
+                if text.isin(milb_tokens).any():
+                    return True
+        return False
+
     hide_cols = hide_cols or set()
     # Hide Player ID by default from display while keeping it for downloads.
     hide_cols = set(hide_cols) | {"Player ID"}
+    # Hide Team column whenever the displayed table contains any non-MLB rows.
+    if _contains_non_mlb_rows(df):
+        hide_cols = set(hide_cols) | {"Team"}
     display_cols = [
         col for col in df.columns if not col.startswith("__") and col not in hide_cols
     ]
@@ -762,9 +851,11 @@ def render_table(
     format_cols = [col for col in numeric_cols if col not in no_format_cols]
 
     if len(numeric_cols) > 0:
-        df_page_display[numeric_cols] = df_page_display[numeric_cols].round(1)
+        df_page_display[numeric_cols] = df_page_display[numeric_cols].round(
+            round_decimals
+        )
     if len(float_cols) > 0:
-        df_page_display[float_cols] = df_page_display[float_cols].round(1)
+        df_page_display[float_cols] = df_page_display[float_cols].round(round_decimals)
 
     if len(format_cols) > 0 and total_cells <= max_elements:
         stats_source = stats_df if stats_df is not None else df
@@ -877,6 +968,15 @@ def render_table(
                 if pd.isna(vmin) or pd.isna(vmax) or vmin == vmax:
                     styles.append("")
                     continue
+                if pd.isna(vcenter):
+                    styles.append("")
+                    continue
+                # TwoSlopeNorm requires strict ordering: vmin < vcenter < vmax.
+                if not (vmin < vcenter < vmax):
+                    vcenter = (vmin + vmax) / 2
+                if not (vmin < vcenter < vmax):
+                    styles.append("")
+                    continue
                 norm = colors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
                 val = row[col]
                 if pd.isna(val):
@@ -895,7 +995,7 @@ def render_table(
 
         styler = df_page_display.style.apply(style_row, axis=1)
         if len(float_cols) > 0:
-            format_map = {col: "{:.1f}" for col in float_cols}
+            format_map = {col: f"{{:.{round_decimals}f}}" for col in float_cols}
             # Format integer-value columns without decimals
             int_keywords = ["Similarity", "Pitch Grade", "BB Spin", "Pctile", "#"]
             for col in df_page_display.columns:
@@ -917,7 +1017,9 @@ def render_table(
         if other_float_cols:
             df_page_display[other_float_cols] = df_page_display[
                 other_float_cols
-            ].applymap(lambda x: f"{x:.1f}" if pd.notna(x) else x)
+            ].applymap(
+                lambda x: f"{x:.{round_decimals}f}" if pd.notna(x) else x
+            )
         for col in int_cols:
             if col in df_page_display.columns:
                 df_page_display[col] = df_page_display[col].apply(
@@ -1023,7 +1125,351 @@ def _merge_regressed(
     ]
     keep_cols = list(dict.fromkeys(keys + reg_cols))
     reg_small = reg_df[keep_cols].drop_duplicates(subset=keys)
-    return base_df.merge(reg_small, on=keys, how="left")
+    # Normalize key dtypes before merge to avoid pandas factorizer crashes
+    # with mixed/downcast integer dtypes (e.g. int8/int16/int32).
+    left = base_df.copy()
+    right = reg_small.copy()
+    for key in keys:
+        if key not in left.columns or key not in right.columns:
+            continue
+        left_key = left[key]
+        right_key = right[key]
+        if pd.api.types.is_numeric_dtype(left_key) or pd.api.types.is_numeric_dtype(
+            right_key
+        ):
+            left[key] = pd.to_numeric(left_key, errors="coerce").astype("Int64")
+            right[key] = pd.to_numeric(right_key, errors="coerce").astype("Int64")
+        else:
+            left[key] = left_key.astype("string")
+            right[key] = right_key.astype("string")
+    return left.merge(right, on=keys, how="left")
+
+
+def _hitter_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
+    display_map = {
+        "hitter_name": "Name",
+        "hitting_code": "Team",
+        "season": "Season",
+        "bbe": "BBE",
+        "damage_rate_reg": "Damage/BBE (%)",
+        "EV90th_reg": "90th Pctile EV",
+        "pull_FB_pct_reg": "Pulled FB (%)",
+        "selection_skill_reg": "Selectivity (%)",
+        "hittable_pitches_taken_reg": "Hittable Pitch Take (%)",
+        "chase_reg": "Chase (%)",
+        "z_con_reg": "Z-Contact (%)",
+        "secondary_whiff_pct_reg": "Whiff vs. Secondaries (%)",
+        "similarity_score": "Similarity (0-100)",
+        "LA_gte_20_reg": "LA>=20 (%)",
+        "LA_lte_0_reg": "LA<=0%",
+        "SEAGER_reg": "SEAGER",
+        "whiffs_vs_95_reg": "Whiff vs. 95+ (%)",
+        "contact_vs_avg_reg": "Contact Over Expected (%)",
+        "LD_pct_reg": "0<LA<20 (%)",
+        "bat_speed_reg": "Bat Speed",
+        "swing_length_reg": "Swing Length",
+        "attack_angle_reg": "Attack Angle",
+        "swing_path_tilt_reg": "VBA",
+        "max_EV_reg": "Max EV",
+    }
+    if not include_mlb_eq:
+        return display_map
+    eq_map = {}
+    for col, label in display_map.items():
+        if col.endswith("_reg"):
+            eq_map[f"{col}_mlb_eq"] = f"{label} MLB Eq"
+    return {**display_map, **eq_map}
+
+
+def _compose_linear(a1: float, b1: float, a2: float, b2: float) -> tuple[float, float]:
+    return a2 + (b2 * a1), b2 * b1
+
+
+def _weighted_linear_fit(
+    x: np.ndarray, y: np.ndarray, w: np.ndarray
+) -> tuple[float, float, int]:
+    valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(w) & (w > 0)
+    n = int(valid.sum())
+    if n < 2:
+        return np.nan, np.nan, n
+    xv = x[valid]
+    yv = y[valid]
+    wv = w[valid]
+    design = np.column_stack([np.ones(len(xv)), xv])
+    sqrt_w = np.sqrt(wv)
+    try:
+        coef, *_ = np.linalg.lstsq(design * sqrt_w[:, None], yv * sqrt_w, rcond=None)
+    except Exception:
+        return np.nan, np.nan, n
+    return float(coef[0]), float(coef[1]), n
+
+
+def _build_hitter_mlb_equivalencies(
+    base_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    if base_df.empty:
+        return pd.DataFrame(), pd.DataFrame(), []
+    if "PA" not in base_df.columns:
+        return base_df.copy(), pd.DataFrame(), []
+
+    metric_cols = [
+        col
+        for col in base_df.select_dtypes(include="number").columns
+        if col.endswith("_reg") and col != "reg_prop"
+    ]
+    if not metric_cols:
+        return base_df.copy(), pd.DataFrame(), []
+
+    keys = ["batter_mlbid", "season", "level_id"]
+    base_cols = [col for col in keys + ["PA"] + metric_cols if col in base_df.columns]
+    fit_df = base_df[base_cols].copy()
+    grouped = fit_df.groupby(keys, as_index=False).agg(
+        {"PA": "sum", **{col: "mean" for col in metric_cols}}
+    )
+
+    means = grouped.groupby(["season", "level_id"])[metric_cols].mean()
+    stds = grouped.groupby(["season", "level_id"])[metric_cols].std(ddof=0)
+    means = means.add_suffix("__mean")
+    stds = stds.add_suffix("__std")
+    moments = means.join(stds).reset_index()
+
+    z_df = grouped.merge(moments, on=["season", "level_id"], how="left")
+    for col in metric_cols:
+        std_col = f"{col}__std"
+        z_df[f"{col}__z"] = (z_df[col] - z_df[f"{col}__mean"]) / z_df[std_col].replace(
+            0, np.nan
+        )
+
+    src = z_df.rename(
+        columns={
+            "season": "src_season",
+            "level_id": "src_level",
+            "PA": "src_PA",
+            **{f"{col}__z": f"src_{col}__z" for col in metric_cols},
+        }
+    )
+    dst = z_df.rename(
+        columns={
+            "season": "dst_season",
+            "level_id": "dst_level",
+            "PA": "dst_PA",
+            **{f"{col}__z": f"dst_{col}__z" for col in metric_cols},
+        }
+    )
+    # Train on both same-season transitions and adjacent-season transitions
+    # (season n -> season n+1) for each level edge.
+    same_pairs = src.merge(
+        dst,
+        left_on=["batter_mlbid", "src_season"],
+        right_on=["batter_mlbid", "dst_season"],
+        how="inner",
+    ).assign(pair_group="same_season")
+    dst_next = dst.copy()
+    dst_next["src_season"] = dst_next["dst_season"] - 1
+    next_pairs = src.merge(
+        dst_next,
+        on=["batter_mlbid", "src_season"],
+        how="inner",
+    ).assign(pair_group="next_season")
+    pairs = pd.concat([same_pairs, next_pairs], ignore_index=True, sort=False)
+    pairs = pairs[pairs["src_level"] > pairs["dst_level"]]
+
+    edge_thresholds: dict[tuple[int, int], tuple[int, int]] = {
+        (11, 1): (50, 50),
+        (14, 11): (50, 50),
+        (16, 14): (10, 10),
+    }
+    prior_a = 0.0
+    prior_b = 0.5
+    shrink_k = 50.0
+    edge_coeff: dict[tuple[int, int, str], tuple[float, float, int]] = {}
+    coeff_rows: list[dict[str, object]] = []
+
+    for (src_level, dst_level), (min_src_pa, min_dst_pa) in edge_thresholds.items():
+        edge_df = pairs[
+            (pairs["src_level"] == src_level)
+            & (pairs["dst_level"] == dst_level)
+            & (pairs["src_PA"] >= min_src_pa)
+            & (pairs["dst_PA"] >= min_dst_pa)
+        ].copy()
+        if edge_df.empty:
+            for col in metric_cols:
+                edge_coeff[(src_level, dst_level, col)] = (prior_a, prior_b, 0)
+                coeff_rows.append(
+                    {
+                        "src_level": src_level,
+                        "dst_level": dst_level,
+                        "metric": col,
+                        "a": prior_a,
+                        "b": prior_b,
+                        "n": 0,
+                        "min_src_pa": min_src_pa,
+                        "min_dst_pa": min_dst_pa,
+                        "fit_type": "intra+inter-season",
+                    }
+                )
+            continue
+
+        weights = np.sqrt(
+            np.clip(edge_df["src_PA"].to_numpy(dtype=float), 0, None)
+            * np.clip(edge_df["dst_PA"].to_numpy(dtype=float), 0, None)
+        )
+        for col in metric_cols:
+            x = edge_df[f"src_{col}__z"].to_numpy(dtype=float)
+            y = edge_df[f"dst_{col}__z"].to_numpy(dtype=float)
+            raw_a, raw_b, n = _weighted_linear_fit(x, y, weights)
+            if not np.isfinite(raw_a):
+                raw_a = prior_a
+            if not np.isfinite(raw_b):
+                raw_b = prior_b
+            reliability = n / (n + shrink_k) if n > 0 else 0.0
+            fit_a = reliability * raw_a + (1.0 - reliability) * prior_a
+            fit_b = reliability * raw_b + (1.0 - reliability) * prior_b
+            fit_a = float(np.clip(fit_a, -1.5, 1.5))
+            fit_b = float(np.clip(fit_b, -0.25, 1.25))
+            edge_coeff[(src_level, dst_level, col)] = (fit_a, fit_b, n)
+            coeff_rows.append(
+                {
+                    "src_level": src_level,
+                    "dst_level": dst_level,
+                    "metric": col,
+                    "a": fit_a,
+                    "b": fit_b,
+                    "n": n,
+                    "min_src_pa": min_src_pa,
+                    "min_dst_pa": min_dst_pa,
+                    "fit_type": "intra+inter-season",
+                }
+            )
+
+    level_mlb_coeff: dict[tuple[int, str], tuple[float, float, int]] = {}
+    for col in metric_cols:
+        a11, b11, n11 = edge_coeff[(11, 1, col)]
+        a14, b14, n14 = edge_coeff[(14, 11, col)]
+        a16, b16, n16 = edge_coeff[(16, 14, col)]
+        a14_to_1, b14_to_1 = _compose_linear(a14, b14, a11, b11)
+        a16_to_11, b16_to_11 = _compose_linear(a16, b16, a14, b14)
+        a16_to_1, b16_to_1 = _compose_linear(a16_to_11, b16_to_11, a11, b11)
+        level_mlb_coeff[(1, col)] = (0.0, 1.0, n11)
+        level_mlb_coeff[(11, col)] = (a11, b11, n11)
+        level_mlb_coeff[(14, col)] = (a14_to_1, b14_to_1, min(n14, n11))
+        level_mlb_coeff[(16, col)] = (a16_to_1, b16_to_1, min(n16, n14, n11))
+        coeff_rows.extend(
+            [
+                {
+                    "src_level": 14,
+                    "dst_level": 1,
+                    "metric": col,
+                    "a": a14_to_1,
+                    "b": b14_to_1,
+                    "n": min(n14, n11),
+                    "min_src_pa": 50,
+                    "min_dst_pa": 50,
+                    "fit_type": "chained",
+                },
+                {
+                    "src_level": 16,
+                    "dst_level": 1,
+                    "metric": col,
+                    "a": a16_to_1,
+                    "b": b16_to_1,
+                    "n": min(n16, n14, n11),
+                    "min_src_pa": 10,
+                    "min_dst_pa": 50,
+                    "fit_type": "chained",
+                },
+            ]
+        )
+
+    mlb_moments = moments[moments["level_id"] == 1].drop(columns=["level_id"]).copy()
+    mlb_moments = mlb_moments.rename(
+        columns={
+            f"{col}__mean": f"{col}__mlb_mean"
+            for col in metric_cols
+            if f"{col}__mean" in mlb_moments.columns
+        }
+        | {
+            f"{col}__std": f"{col}__mlb_std"
+            for col in metric_cols
+            if f"{col}__std" in mlb_moments.columns
+        }
+    )
+
+    out = base_df.copy()
+    out = out.merge(moments, on=["season", "level_id"], how="left")
+    out = out.merge(mlb_moments, on=["season"], how="left")
+
+    for col in metric_cols:
+        src_mean_col = f"{col}__mean"
+        src_std_col = f"{col}__std"
+        mlb_mean_col = f"{col}__mlb_mean"
+        mlb_std_col = f"{col}__mlb_std"
+        if (
+            col not in out.columns
+            or src_mean_col not in out.columns
+            or src_std_col not in out.columns
+            or mlb_mean_col not in out.columns
+            or mlb_std_col not in out.columns
+        ):
+            continue
+        src_z = (out[col] - out[src_mean_col]) / out[src_std_col].replace(0, np.nan)
+        a_map = {
+            level_id: level_mlb_coeff.get((level_id, col), (prior_a, prior_b, 0))[0]
+            for level_id in LEVEL_LABELS
+        }
+        b_map = {
+            level_id: level_mlb_coeff.get((level_id, col), (prior_a, prior_b, 0))[1]
+            for level_id in LEVEL_LABELS
+        }
+        pred_z = out["level_id"].map(a_map) + (out["level_id"].map(b_map) * src_z)
+        pred = out[mlb_mean_col] + (pred_z * out[mlb_std_col])
+        mlb_mask = out["level_id"] == 1
+        non_mlb_mask = ~mlb_mask
+        if col in HITTER_HIGHER_IS_WORSE_METRICS:
+            pred.loc[non_mlb_mask] = np.maximum(
+                pred.loc[non_mlb_mask],
+                out.loc[non_mlb_mask, col],
+            )
+        else:
+            pred.loc[non_mlb_mask] = np.minimum(
+                pred.loc[non_mlb_mask],
+                out.loc[non_mlb_mask, col],
+            )
+        # Enforce a minimum directional shift (relative to source) for key MLB
+        # equivalency metrics, anchored to season-level source-vs-MLB mean gaps.
+        direction = HITTER_MLB_DIRECTION_MAP.get(col)
+        if direction in {"up", "down"}:
+            shift_scale = HITTER_MLB_MIN_SHIFT_SCALE_OVERRIDES.get(
+                col, HITTER_MLB_MIN_SHIFT_SCALE
+            )
+            shift = (
+                (out[src_mean_col] - out[mlb_mean_col]).abs() * shift_scale
+            ).fillna(0.0)
+            shift_floor = HITTER_MLB_MIN_SHIFT_FLOOR.get(col, 0.0)
+            if shift_floor > 0:
+                shift = shift.clip(lower=shift_floor)
+            if direction == "up":
+                pred.loc[non_mlb_mask] = np.maximum(
+                    pred.loc[non_mlb_mask],
+                    out.loc[non_mlb_mask, col] + shift.loc[non_mlb_mask],
+                )
+            else:
+                pred.loc[non_mlb_mask] = np.minimum(
+                    pred.loc[non_mlb_mask],
+                    out.loc[non_mlb_mask, col] - shift.loc[non_mlb_mask],
+                )
+        pred.loc[mlb_mask] = out.loc[mlb_mask, col]
+        out[f"{col}_mlb_eq"] = pred
+
+    helper_cols: list[str] = []
+    for col in metric_cols:
+        helper_cols.extend(
+            [f"{col}__mean", f"{col}__std", f"{col}__mlb_mean", f"{col}__mlb_std"]
+        )
+    out = out.drop(columns=[col for col in helper_cols if col in out.columns])
+
+    coeff_df = pd.DataFrame(coeff_rows)
+    return out, coeff_df, metric_cols
 
 
 damage_df = _normalize_team_col(damage_df, "hitting_code")
@@ -1099,6 +1545,9 @@ pitch_types_reg_df = _merge_regressed(
     pitch_types,
     pitch_types_regressed,
     ["pitcher_mlbid", "name", "pitcher_hand", "season", "level_id", "pitch_tag"],
+)
+hitters_mlb_eq_df, hitter_mlb_eq_coeffs, hitter_mlb_eq_metrics = (
+    _build_hitter_mlb_equivalencies(hitters_reg_df)
 )
 
 
@@ -1434,286 +1883,460 @@ def hitter_comps():
 
     if hitters_reg_df.empty:
         st.info("Missing hitters_regressed.csv")
-    else:
-        player_pool = hitters_reg_df.copy()
-        player_pool = player_pool[
-            (player_pool["level_id"] == 1) & (player_pool["PA"] >= 20)
-        ]
-        eligible_all = hitters_reg_df.copy()
-        eligible_all = eligible_all[
-            (eligible_all["level_id"] == 1) & (eligible_all["PA"] >= 200)
-        ]
-        if player_pool.empty:
-            st.info("No eligible MLB hitter seasons (min 20 PA).")
-        else:
-            seasons = season_options(player_pool, "season")[1:]
-            season_choice = st.selectbox(
-                "Season", seasons, index=0, key="hitter_comps_season"
-            )
-            season_df = player_pool[player_pool["season"] == season_choice]
-            player_options, player_name_map = player_id_options(
-                season_df, "batter_mlbid", "hitter_name"
-            )
-            player_choice = st.selectbox(
-                "Player",
-                [opt for opt in player_options if opt != "All"],
-                index=0,
-                format_func=lambda v: f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
-                key="hitter_comps_player",
-            )
-            player_df = season_df[season_df["batter_mlbid"] == player_choice]
-            player_all = hitters_reg_df[hitters_reg_df["batter_mlbid"] == player_choice]
-            teams = team_options(player_all, "hitting_code")[1:]
-            team_choice = (
-                st.selectbox("Team", teams, index=0, key="hitter_comps_team")
-                if len(teams) > 1
-                else (teams[0] if teams else None)
-            )
-            if team_choice:
-                player_df = filter_by_team_token(player_df, "hitting_code", team_choice)
-            default_feature_cols = [
-                "damage_rate_reg",
-                "EV90th_reg",
-                "pull_FB_pct_reg",
-                "LA_gte_20_reg",
-                "LA_lte_0_reg",
-                "SEAGER_reg",
-                "selection_skill_reg",
-                "hittable_pitches_taken_reg",
-                "chase_reg",
-                "z_con_reg",
-                "secondary_whiff_pct_reg",
-                "whiffs_vs_95_reg",
-                "contact_vs_avg_reg",
-            ]
-            display_map = {
-                "hitter_name": "Name",
-                "hitting_code": "Team",
-                "season": "Season",
-                "bbe": "BBE",
-                "damage_rate_reg": "Damage/BBE (%)",
-                "EV90th_reg": "90th Pctile EV",
-                "pull_FB_pct_reg": "Pulled FB (%)",
-                "selection_skill_reg": "Selectivity (%)",
-                "hittable_pitches_taken_reg": "Hittable Pitch Take (%)",
-                "chase_reg": "Chase (%)",
-                "z_con_reg": "Z-Contact (%)",
-                "secondary_whiff_pct_reg": "Whiff vs. Secondaries (%)",
-                "similarity_score": "Similarity (0-100)",
-                "LA_gte_20_reg": "LA>=20 (%)",
-                "LA_lte_0_reg": "LA<=0%",
-                "SEAGER_reg": "SEAGER",
-                "whiffs_vs_95_reg": "Whiff vs. 95+ (%)",
-                "contact_vs_avg_reg": "Contact Over Expected (%)",
-                "LD_pct_reg": "0<LA<20 (%)",
-                "bat_speed_reg": "Bat Speed",
-                "swing_length_reg": "Swing Length",
-                "attack_angle_reg": "Attack Angle",
-                "swing_path_tilt_reg": "VBA",
-                "max_EV_reg": "Max EV",
-            }
-            exclude_cols = {
-                "batter_mlbid",
-                "pitcher_mlbid",
-                "level_id",
-                "game_pk",
-                "PA",
-                "IP",
-                "TBF",
-                "pitches",
-                "pitches_n",
-                "pitches_num",
-                "pitches_den",
-                "bbe",
-                "season",
-                "lg_contact_baseline",
-            }
-            allowed_cols = list(
-                dict.fromkeys(
-                    default_feature_cols
-                    + [
-                        "LD_pct_reg",
-                        "bat_speed_reg",
-                        "swing_length_reg",
-                        "attack_angle_reg",
-                        "swing_path_tilt_reg",
-                        "max_EV_reg",
-                    ]
-                )
-            )
-            numeric_cols, similarity_labels = _similarity_choice_labels(
-                eligible_all, display_map, exclude_cols
-            )
-            numeric_cols = [c for c in numeric_cols if c in allowed_cols]
-            default_feature_cols = [
-                c for c in default_feature_cols if c in numeric_cols
-            ]
-            feature_cols = st.multiselect(
-                "Similarity Score Columns",
-                options=numeric_cols,
-                default=default_feature_cols,
-                key="hitter_comps_similarity_cols",
-                format_func=lambda c: similarity_labels.get(c, c),
-            )
-            if not feature_cols:
-                st.info("Select at least one column to compute similarity scores.")
-                return
-            eligible_comp = eligible_all.dropna(subset=feature_cols)
-            if player_df.empty:
-                st.info("No season row found for that selection.")
-            else:
-                eligible_comp = eligible_comp[
-                    ~(eligible_comp["batter_mlbid"] == player_choice)
-                ]
-                stats = eligible_comp[feature_cols]
-                means = stats.mean()
-                stds = stats.std(ddof=0).replace(0, np.nan)
-                zscores = (stats - means) / stds
-                zscores = zscores.fillna(0)
-                target_vec = (
-                    ((player_df[feature_cols] - means) / stds)
-                    .fillna(0)
-                    .iloc[0]
-                    .to_numpy()
-                )
-                distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
-                max_dist = distances.max() if len(distances) else 0.0
-                if max_dist == 0:
-                    similarity = np.full_like(distances, 100.0, dtype=float)
-                else:
-                    similarity = 100 * (1 - (distances / max_dist))
-                eligible_comp = eligible_comp.copy()
-                eligible_comp["similarity_score"] = similarity.round(0)
-                eligible_comp = eligible_comp.sort_values(
-                    "similarity_score", ascending=False
-                )
+        return
 
-                display_cols = [
-                    "hitter_name",
-                    "hitting_code",
-                    "season",
-                    "PA",
-                    "bbe",
-                    "similarity_score",
-                    *feature_cols,
-                ]
-                eligible_comp = eligible_comp.assign(
-                    __season=eligible_comp["season"], __level=eligible_comp["level_id"]
-                )
-                display_cols += ["__season", "__level"]
-                df = eligible_comp[display_cols].copy()
-                base_rename = {
-                    "hitter_name": "Name",
-                    "hitting_code": "Team",
-                    "season": "Season",
-                    "bbe": "BBE",
-                    "similarity_score": "Similarity (0-100)",
+    use_mlb_eq = st.toggle(
+        "Use MLB-equivalent translated stats",
+        value=False,
+        key="hitter_comps_use_mlb_eq",
+        help=(
+            "Use intra+inter-season level translations to compare non-MLB seasons "
+            "against MLB seasons in MLB-equivalent space."
+        ),
+    )
+    comp_df = hitters_reg_df.copy()
+    if use_mlb_eq:
+        if hitters_mlb_eq_df.empty:
+            st.info("MLB-equivalent translation table is unavailable; using raw AR stats.")
+            use_mlb_eq = False
+        else:
+            comp_df = hitters_mlb_eq_df.copy()
+
+    if use_mlb_eq:
+        player_pool = comp_df[(comp_df["PA"] >= 20)].copy()
+        eligible_all = comp_df[
+            (comp_df["level_id"] == 1) & (comp_df["PA"] >= 200)
+        ].copy()
+        if player_pool.empty:
+            st.info("No eligible hitter seasons (min 20 PA).")
+            return
+        target_levels = sorted(player_pool["level_id"].dropna().unique().tolist())
+        if not target_levels:
+            st.info("No target levels available.")
+            return
+        target_level = st.selectbox(
+            "Target Level",
+            target_levels,
+            index=0,
+            key="hitter_comps_target_level",
+            format_func=lambda v: LEVEL_LABELS.get(int(v), str(int(v))),
+        )
+        player_pool = player_pool[player_pool["level_id"] == target_level]
+    else:
+        player_pool = comp_df[(comp_df["level_id"] == 1) & (comp_df["PA"] >= 20)].copy()
+        eligible_all = comp_df[
+            (comp_df["level_id"] == 1) & (comp_df["PA"] >= 200)
+        ].copy()
+
+    if player_pool.empty:
+        st.info("No eligible MLB hitter seasons (min 20 PA).")
+        return
+    if eligible_all.empty:
+        st.info("No eligible MLB comparison seasons (min 200 PA).")
+        return
+
+    seasons = season_options(player_pool, "season")[1:]
+    if not seasons:
+        st.info("No seasons available for this view.")
+        return
+    season_choice = st.selectbox("Season", seasons, index=0, key="hitter_comps_season")
+    season_df = player_pool[player_pool["season"] == season_choice]
+    if season_df.empty:
+        st.info("No player rows for this season selection.")
+        return
+
+    player_options, player_name_map = player_id_options(
+        season_df, "batter_mlbid", "hitter_name"
+    )
+    player_values = [opt for opt in player_options if opt != "All"]
+    if not player_values:
+        st.info("No players available for this filter.")
+        return
+    player_choice = st.selectbox(
+        "Player",
+        player_values,
+        index=0,
+        format_func=lambda v: f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+        key="hitter_comps_player",
+    )
+    player_df = season_df[season_df["batter_mlbid"] == player_choice]
+    teams = team_options(player_df, "hitting_code")
+    team_choice = st.selectbox("Team", teams, index=0, key="hitter_comps_team")
+    if team_choice and team_choice != "All":
+        filtered_player_df = filter_by_team_token(player_df, "hitting_code", team_choice)
+        if filtered_player_df.empty:
+            st.warning(
+                "No rows for that team at this level/season; using all team rows for selection."
+            )
+        else:
+            player_df = filtered_player_df
+
+    metric_suffix = "_mlb_eq" if use_mlb_eq else ""
+    default_feature_cols = [
+        f"{col}{metric_suffix}" for col in HITTER_COMPS_BASE_FEATURE_COLS
+    ]
+    allowed_cols = list(
+        dict.fromkeys(
+            default_feature_cols
+            + [f"{col}{metric_suffix}" for col in HITTER_COMPS_EXTRA_FEATURE_COLS]
+        )
+    )
+
+    display_map = _hitter_display_map(include_mlb_eq=False)
+    if use_mlb_eq:
+        base_display_map = _hitter_display_map(include_mlb_eq=False)
+        for col, label in base_display_map.items():
+            if col.endswith("_reg"):
+                display_map[f"{col}_mlb_eq"] = label
+    exclude_cols = {
+        "batter_mlbid",
+        "pitcher_mlbid",
+        "level_id",
+        "game_pk",
+        "PA",
+        "IP",
+        "TBF",
+        "pitches",
+        "pitches_n",
+        "pitches_num",
+        "pitches_den",
+        "bbe",
+        "season",
+        "lg_contact_baseline",
+    }
+    numeric_cols, similarity_labels = _similarity_choice_labels(
+        eligible_all, display_map, exclude_cols
+    )
+    numeric_cols = [col for col in numeric_cols if col in allowed_cols]
+    default_feature_cols = [col for col in default_feature_cols if col in numeric_cols]
+
+    similarity_key = (
+        "hitter_comps_similarity_cols_mlb_eq"
+        if use_mlb_eq
+        else "hitter_comps_similarity_cols_raw"
+    )
+    feature_cols = st.multiselect(
+        "Similarity Score Columns",
+        options=numeric_cols,
+        default=default_feature_cols,
+        key=similarity_key,
+        format_func=lambda col: similarity_labels.get(col, col),
+    )
+    feature_cols = [col for col in feature_cols if col in numeric_cols]
+    feature_cols = list(dict.fromkeys(feature_cols))
+    if not feature_cols:
+        st.info("Select at least one column to compute similarity scores.")
+        return
+    if player_df.empty:
+        st.info("No season row found for that selection.")
+        return
+
+    eligible_comp = eligible_all.copy()
+    eligible_comp = eligible_comp[~(eligible_comp["batter_mlbid"] == player_choice)]
+    eligible_comp = eligible_comp[eligible_comp[feature_cols].notna().any(axis=1)]
+    if eligible_comp.empty:
+        st.info("No comparable MLB rows found after filters.")
+        return
+
+    stats = eligible_comp[feature_cols].copy()
+    means = stats.mean().fillna(0.0)
+    stats = stats.fillna(means)
+    stds = stats.std(ddof=0).replace(0, np.nan)
+    zscores = ((stats - means) / stds).fillna(0)
+    target_stats = player_df[feature_cols].copy().fillna(means)
+    target_vec = (((target_stats - means) / stds).fillna(0).iloc[0].to_numpy())
+    distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
+    max_dist = distances.max() if len(distances) else 0.0
+    if max_dist == 0:
+        similarity = np.full_like(distances, 100.0, dtype=float)
+    else:
+        similarity = 100 * (1 - (distances / max_dist))
+
+    eligible_comp = eligible_comp.copy()
+    eligible_comp["similarity_score"] = similarity.round(0)
+    eligible_comp = eligible_comp.sort_values("similarity_score", ascending=False)
+    eligible_comp = eligible_comp.assign(
+        __season=eligible_comp["season"], __level=eligible_comp["level_id"]
+    )
+
+    base_rename = {
+        "hitter_name": "Name",
+        "hitting_code": "Team",
+        "season": "Season",
+        "bbe": "BBE",
+        "similarity_score": "Similarity (0-100)",
+    }
+    display_cols = [
+        "hitter_name",
+        "hitting_code",
+        "season",
+        "PA",
+        "bbe",
+        "similarity_score",
+        *feature_cols,
+        "__season",
+        "__level",
+    ]
+    df = eligible_comp[[col for col in display_cols if col in eligible_comp.columns]].copy()
+    df = df.rename(columns={**base_rename, **similarity_labels})
+    df = df.loc[:, ~df.columns.duplicated()]
+
+    stats_df = eligible_all.copy()
+    stats_df = stats_df.assign(__season=stats_df["season"], __level=stats_df["level_id"])
+    stats_columns = [
+        "hitter_name",
+        "hitting_code",
+        "season",
+        "PA",
+        "bbe",
+        *list(dict.fromkeys(default_feature_cols + feature_cols)),
+        "__season",
+        "__level",
+    ]
+    stats_df = stats_df[
+        [col for col in stats_columns if col in stats_df.columns]
+    ].rename(columns={**base_rename, **similarity_labels})
+    stats_df = stats_df.loc[:, ~stats_df.columns.duplicated()]
+
+    target_cols = [
+        "hitter_name",
+        "hitting_code",
+        "season",
+        "PA",
+        "bbe",
+        *list(dict.fromkeys(default_feature_cols + feature_cols)),
+        "__season",
+        "__level",
+    ]
+    target_df = player_df.assign(__season=player_df["season"], __level=player_df["level_id"])
+    target_df = target_df[[col for col in target_cols if col in target_df.columns]].copy()
+    target_df = target_df.rename(columns={**base_rename, **similarity_labels})
+    target_df = target_df.loc[:, ~target_df.columns.duplicated()]
+
+    reverse_hitters = HIGHER_IS_WORSE_COLS | {
+        "LA<=0%",
+        "Chase (%)",
+        "Swing Length",
+        "Attack Angle",
+        "VBA",
+    }
+
+    if use_mlb_eq:
+        level_label = LEVEL_LABELS.get(int(target_level), str(int(target_level)))
+        player_name = str(
+            player_df["hitter_name"].iloc[0]
+            if "hitter_name" in player_df.columns and not player_df.empty
+            else player_name_map.get(player_choice, "Player")
+        )
+        st.caption(
+            f"{player_name}'s MLB-equivalent statistics derived from their "
+            f"{level_label} statistics:"
+        )
+    else:
+        st.caption("Selected season")
+    render_table(
+        target_df,
+        reverse_cols=reverse_hitters,
+        group_cols=["__season", "__level"],
+        stats_df=stats_df,
+        show_controls=False,
+    )
+    if use_mlb_eq:
+        st.caption("Most similar MLB seasons by translated MLB-equivalent stats (PA >= 200)")
+    else:
+        st.caption("Most similar MLB seasons (PA >= 200)")
+    render_table(
+        df,
+        reverse_cols=reverse_hitters,
+        group_cols=["__season", "__level"],
+        stats_df=stats_df,
+    )
+
+
+def hitter_mlb_equivalencies():
+    """Hitters - MLB equivalency translations (intra+inter-season chained)."""
+    st.title("Hitter MLB Equivalencies")
+
+    if hitters_mlb_eq_df.empty:
+        st.info("MLB-equivalent table is unavailable.")
+        return
+
+    st.caption(
+        "Intra+inter-season chained translations in season-adjusted z-score space "
+        "(16->14->11->1)."
+    )
+    st.caption(
+        "Final translated values also apply directional minimum-shift calibration "
+        "for key hitter metrics."
+    )
+    st.caption(
+        "Regression fits are trained on both same-season and season n->n+1 "
+        "level transitions."
+    )
+
+    view = hitters_mlb_eq_df.copy()
+    if "PA" in view.columns:
+        min_pa = st.number_input(
+            "Minimum PA",
+            min_value=0,
+            max_value=1000,
+            value=20,
+            step=5,
+            key="hitter_mlb_eq_min_pa",
+        )
+        view = view[view["PA"] >= min_pa]
+
+    season_vals = season_options(view)
+    season = st.selectbox(
+        "Season",
+        season_vals,
+        index=(1 if len(season_vals) > 1 else 0),
+        key="hitter_mlb_eq_season",
+    )
+    view = filter_by_values(view, "season", season)
+
+    level_options = ["All", "MLB", "Triple-A", "Low-A", "Low Minors"]
+    level_choice = st.selectbox(
+        "Level",
+        level_options,
+        index=0,
+        key="hitter_mlb_eq_level",
+    )
+    level_map = {
+        "All": [1, 11, 14, 16],
+        "MLB": [1],
+        "Triple-A": [11],
+        "Low-A": [14],
+        "Low Minors": [16],
+    }
+    view = view[view["level_id"].isin(level_map[level_choice])]
+
+    team = st.selectbox(
+        "Team",
+        team_options(view, "hitting_code"),
+        index=0,
+        key="hitter_mlb_eq_team",
+    )
+    view = filter_by_team_token(view, "hitting_code", team)
+    if view.empty:
+        st.info("No rows after filtering.")
+        return
+
+    metric_base_cols = [
+        col
+        for col in HITTER_COMPS_BASE_FEATURE_COLS + HITTER_COMPS_EXTRA_FEATURE_COLS
+        if col in view.columns and f"{col}_mlb_eq" in view.columns
+    ]
+    default_metrics = [
+        col for col in HITTER_COMPS_BASE_FEATURE_COLS if col in metric_base_cols
+    ]
+    selected_metrics = st.multiselect(
+        "Metric Columns",
+        options=metric_base_cols,
+        default=default_metrics,
+        key="hitter_mlb_eq_metrics",
+        format_func=lambda col: _hitter_display_map().get(col, col),
+    )
+    if not selected_metrics:
+        st.info("Select at least one metric column.")
+        return
+
+    table_df = view.copy()
+    for col in selected_metrics:
+        eq_col = f"{col}_mlb_eq"
+        delta_col = f"{col}_mlb_delta"
+        table_df[delta_col] = table_df[eq_col] - table_df[col]
+    table_df = table_df.assign(
+        Level=table_df["level_id"].map(lambda v: LEVEL_LABELS.get(int(v), str(int(v)))),
+        __season=table_df["season"],
+        __level=table_df["level_id"],
+    )
+
+    metric_cols: list[str] = []
+    for col in selected_metrics:
+        metric_cols.extend([col, f"{col}_mlb_eq", f"{col}_mlb_delta"])
+
+    show_cols = [
+        "hitter_name",
+        "batter_mlbid",
+        "hitting_code",
+        "season",
+        "Level",
+        "PA",
+        "bbe",
+        *metric_cols,
+        "__season",
+        "__level",
+    ]
+    show_cols = [col for col in show_cols if col in table_df.columns]
+    table_df = table_df[show_cols].copy()
+
+    rename_map = {
+        "hitter_name": "Name",
+        "batter_mlbid": "Player ID",
+        "hitting_code": "Team",
+        "season": "Season",
+        "bbe": "BBE",
+    }
+    display_map = _hitter_display_map(include_mlb_eq=True)
+    for col in selected_metrics:
+        rename_map[col] = display_map.get(col, col)
+        rename_map[f"{col}_mlb_eq"] = display_map.get(f"{col}_mlb_eq", f"{col} MLB Eq")
+        rename_map[f"{col}_mlb_delta"] = (
+            f"{display_map.get(f'{col}_mlb_eq', f'{col} MLB Eq')} Delta"
+        )
+    table_df = table_df.rename(columns=rename_map)
+
+    reverse_cols = HIGHER_IS_WORSE_COLS | {"LA<=0%", "Chase (%)"}
+    reverse_cols = reverse_cols | {f"{name} MLB Eq" for name in reverse_cols}
+    render_table(
+        table_df,
+        reverse_cols=reverse_cols,
+        group_cols=["__season", "__level"],
+        stats_df=table_df,
+    )
+    download_button(table_df, "hitter_mlb_equivalencies", "hitter_mlb_eq_download")
+
+    if not hitter_mlb_eq_coeffs.empty:
+        with st.expander("Translation coefficients", expanded=False):
+            coeff_df = hitter_mlb_eq_coeffs.copy()
+            coeff_df = coeff_df.assign(
+                from_level=coeff_df["src_level"].map(
+                    lambda v: LEVEL_LABELS.get(int(v), str(int(v)))
+                ),
+                to_level=coeff_df["dst_level"].map(
+                    lambda v: LEVEL_LABELS.get(int(v), str(int(v)))
+                ),
+            )
+            coeff_df["metric"] = coeff_df["metric"].map(
+                lambda c: _hitter_display_map().get(c, c)
+            )
+            coeff_df = coeff_df.rename(
+                columns={
+                    "metric": "Metric",
+                    "from_level": "From",
+                    "to_level": "To",
+                    "a": "Intercept (a)",
+                    "b": "Rate (b)",
+                    "n": "Sample",
+                    "fit_type": "Type",
+                    "min_src_pa": "Min PA (From)",
+                    "min_dst_pa": "Min PA (To)",
                 }
-                df = df.rename(columns={**base_rename, **similarity_labels})
-                if "FA Spin Efficiency (%)" in df.columns:
-                    df["FA Spin Efficiency (%)"] = (
-                        df["FA Spin Efficiency (%)"] * 100
-                    ).round(0)
-                stats_df = hitters_reg_df.copy()
-                stats_df = stats_df.assign(
-                    __season=stats_df["season"], __level=stats_df["level_id"]
-                )
-                stats_columns = [
-                    "hitter_name",
-                    "hitting_code",
-                    "season",
-                    "PA",
-                    "bbe",
-                    "damage_rate_reg",
-                    "EV90th_reg",
-                    "pull_FB_pct_reg",
-                    "LA_gte_20_reg",
-                    "LA_lte_0_reg",
-                    "SEAGER_reg",
-                    "selection_skill_reg",
-                    "hittable_pitches_taken_reg",
-                    "chase_reg",
-                    "z_con_reg",
-                    "secondary_whiff_pct_reg",
-                    "whiffs_vs_95_reg",
-                    "contact_vs_avg_reg",
-                    "__season",
-                    "__level",
-                ]
-                stats_df = stats_df[
-                    [col for col in stats_columns if col in stats_df.columns]
-                ].rename(
-                    columns={
-                        "hitter_name": "Name",
-                        "hitting_code": "Team",
-                        "season": "Season",
-                        "bbe": "BBE",
-                        **similarity_labels,
-                    }
-                )
-                target_display_cols = [
-                    "hitter_name",
-                    "hitting_code",
-                    "season",
-                    "PA",
-                    "bbe",
-                    "damage_rate_reg",
-                    "EV90th_reg",
-                    "pull_FB_pct_reg",
-                    "LA_gte_20_reg",
-                    "LA_lte_0_reg",
-                    "SEAGER_reg",
-                    "selection_skill_reg",
-                    "hittable_pitches_taken_reg",
-                    "chase_reg",
-                    "z_con_reg",
-                    "secondary_whiff_pct_reg",
-                    "whiffs_vs_95_reg",
-                    "contact_vs_avg_reg",
-                    "__season",
-                    "__level",
-                ]
-                # Ensure selected similarity columns appear in the target row too.
-                target_display_cols = list(
-                    dict.fromkeys(target_display_cols + feature_cols)
-                )
-                target_df = player_df.assign(
-                    __season=player_df["season"], __level=player_df["level_id"]
-                )
-                target_df = target_df[
-                    [col for col in target_display_cols if col in target_df.columns]
-                ].copy()
-                target_df = target_df.rename(
-                    columns={
-                        "hitter_name": "Name",
-                        "hitting_code": "Team",
-                        "season": "Season",
-                        "bbe": "BBE",
-                        **similarity_labels,
-                    }
-                )
-                st.caption("Selected season")
-                reverse_hitters = HIGHER_IS_WORSE_COLS | {
-                    "LA<=0%",
-                    "Chase (%)",
-                    "Swing Length",
-                    "Attack Angle",
-                    "VBA",
-                }
-                render_table(
-                    target_df,
-                    reverse_cols=reverse_hitters,
-                    group_cols=["__season", "__level"],
-                    stats_df=stats_df,
-                    show_controls=False,
-                )
-                st.caption("Most similar MLB seasons (PA >= 200)")
-                render_table(
-                    df,
-                    reverse_cols=reverse_hitters,
-                    group_cols=["__season", "__level"],
-                    stats_df=stats_df,
-                )
+            )
+            coeff_cols = [
+                "Metric",
+                "From",
+                "To",
+                "Type",
+                "Intercept (a)",
+                "Rate (b)",
+                "Sample",
+                "Min PA (From)",
+                "Min PA (To)",
+            ]
+            coeff_df = coeff_df[[col for col in coeff_cols if col in coeff_df.columns]]
+            render_table(coeff_df, show_controls=False, round_decimals=2)
 
 
 def hitter_ar():
@@ -4354,6 +4977,7 @@ pages = {
         st.Page(hitter_individual_stats, title="Individual Stats", icon="⚾"),
         st.Page(hitter_percentiles, title="Percentiles", icon="📊"),
         st.Page(hitter_comps, title="Hitter Comps", icon="🔍"),
+        st.Page(hitter_mlb_equivalencies, title="MLB Equivalencies", icon="🔁"),
         st.Page(hitter_ar, title="Auto Regressed (AR)", icon="📈"),
         st.Page(hitter_splits, title="Splits", icon="📋"),
     ],
