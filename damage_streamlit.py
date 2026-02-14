@@ -2110,6 +2110,9 @@ def hitter_comps():
     ]
     target_df = player_df.assign(__season=player_df["season"], __level=player_df["level_id"])
     target_df = target_df[[col for col in target_cols if col in target_df.columns]].copy()
+    if use_mlb_eq and "__level" in target_df.columns:
+        # MLB-equivalent stats should be color-scaled against MLB season baselines.
+        target_df["__level"] = 1
     target_df = target_df.rename(columns={**base_rename, **similarity_labels})
     target_df = target_df.loc[:, ~target_df.columns.duplicated()]
 
@@ -2140,6 +2143,7 @@ def hitter_comps():
         group_cols=["__season", "__level"],
         stats_df=stats_df,
         show_controls=False,
+        hide_cols={"Team"},
     )
     if use_mlb_eq:
         st.caption("Most similar MLB seasons by translated MLB-equivalent stats (PA >= 200)")
