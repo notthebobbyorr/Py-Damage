@@ -77,6 +77,22 @@ def _coalesce_age_columns(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
+def _prep_age_join_rows(ages: pl.DataFrame) -> pl.DataFrame:
+    required_cols = [*JOIN_KEYS, "pitcher_age_src", "batter_age_src"]
+    for col in required_cols:
+        if col not in ages.columns:
+            ages = ages.with_columns(pl.lit(None).alias(col))
+    ages = ages.select(required_cols)
+    # Keep one row per pitch key to avoid one-to-many joins and duplicate suffix cols.
+    ages = ages.group_by(JOIN_KEYS).agg(
+        [
+            pl.col("pitcher_age_src").drop_nulls().first().alias("pitcher_age_src"),
+            pl.col("batter_age_src").drop_nulls().first().alias("batter_age_src"),
+        ]
+    )
+    return ages
+
+
 def _infer_levels_and_seasons(lf: pl.LazyFrame) -> tuple[list[int], list[int]]:
     levels = (
         lf.select(pl.col("level_id").drop_nulls().unique())
@@ -121,6 +137,7 @@ def backfill_file(
         ages = ages.rename(
             {"pitcher_age": "pitcher_age_src", "batter_age": "batter_age_src"}
         )
+        ages = _prep_age_join_rows(ages)
         df = lf.collect()
         df = df.join(ages, on=JOIN_KEYS, how="left")
         df = _coalesce_age_columns(df)
@@ -139,6 +156,7 @@ def backfill_file(
         ages = ages.rename(
             {"pitcher_age": "pitcher_age_src", "batter_age": "batter_age_src"}
         )
+        ages = _prep_age_join_rows(ages)
         df_season = lf.filter(pl.col("season") == season).collect()
         df_season = df_season.join(ages, on=JOIN_KEYS, how="left")
         df_season = _coalesce_age_columns(df_season)

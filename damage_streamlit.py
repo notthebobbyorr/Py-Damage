@@ -14,7 +14,7 @@ from st_paywall import add_auth
 
 DATA_DIR = Path(__file__).resolve().parent
 _TABLE_COUNTER = 0
-DEFAULT_NO_FORMAT_COLS = {"Season", "PA", "BBE", "TBF", "IP", "Age"}
+DEFAULT_NO_FORMAT_COLS = {"Season", "PA", "BBE", "TBF", "IP", "GS", "Age"}
 # Columns where higher values are worse (red=high, green=low) - inverted color scale
 HIGHER_IS_WORSE_COLS = {
     "Hittable Pitch Take (%)",
@@ -26,8 +26,20 @@ ABS_GRADIENT_COLS_PITCHERS = {"Horizontal Release (ft.)"}
 ABS_GRADIENT_COLS_PITCH_TYPES = {"HAA", "HB (in.)"}
 ANNUAL_PAYMENT_LINK = "https://buy.stripe.com/6oU14p7OEgrCfTsbyQ6J202"
 MONTHLY_PAYMENT_LINK = "https://buy.stripe.com/aFaaEZ0mc6R2cHg5as6J204"
-PREVIEW_ROWS = 10
+PREVIEW_ROWS = 5
 LEVEL_LABELS = {1: "MLB", 11: "Triple-A", 14: "Low-A", 16: "Low Minors"}
+POSITION_FILTER_COLS = ["UT", "C", "X1B", "X2B", "X3B", "SS", "OF", "P"]
+POSITION_FILTER_LABELS = {
+    "UT": "Utility",
+    "C": "Catcher",
+    "X1B": "1B",
+    "X2B": "2B",
+    "X3B": "3B",
+    "SS": "SS",
+    "OF": "OF",
+    "P": "Pitcher",
+}
+POSITION_COUNT_THRESHOLD = 20
 HITTER_COMPS_BASE_FEATURE_COLS = [
     "damage_rate_reg",
     "EV90th_reg",
@@ -83,6 +95,64 @@ HITTER_MLB_MIN_SHIFT_SCALE_OVERRIDES = {
 HITTER_MLB_MIN_SHIFT_FLOOR = {
     "LA_gte_20_reg": 2.0,
     "LA_lte_0_reg": 2.0,
+}
+PITCHER_COMPS_BASE_FEATURE_COLS = [
+    "stuff",
+    "fastball_velo_reg",
+    "fastball_vaa_reg",
+    "FA_pct_reg",
+    "BB_rpm_reg",
+    "SwStr_reg",
+    "Ball_pct_reg",
+    "Z_Contact_reg",
+    "Chase_reg",
+    "LA_lte_0_reg",
+    "rel_z_reg",
+    "rel_x_reg",
+    "ext_reg",
+]
+PITCHER_COMPS_EXTRA_FEATURE_COLS = [
+    "Zone_reg",
+    "CSW_reg",
+    "loc_adj_vaa_reg",
+    "FA_spin_eff_reg",
+    "LD_pct_reg",
+    "LA_gte_20_reg",
+    "arm_angle_reg",
+]
+PITCHER_MLB_PASS_THROUGH_COLS = {
+    "stuff",
+    "stuff_raw_reg",
+    "fastball_velo_reg",
+    "rel_z_reg",
+    "rel_x_reg",
+    "ext_reg",
+    "arm_angle_reg",
+}
+PITCHER_MLB_HIGHER_IS_WORSE_METRICS = {
+    "Ball_pct_reg",
+    "Z_Contact_reg",
+    "LD_pct_reg",
+    "LA_gte_20_reg",
+}
+PITCHER_MLB_DIRECTION_MAP = {
+    "SwStr_reg": "down",
+    "Chase_reg": "down",
+    "LA_lte_0_reg": "down",
+    "CSW_reg": "down",
+    "Ball_pct_reg": "up",
+    "Z_Contact_reg": "up",
+    "LD_pct_reg": "up",
+    "LA_gte_20_reg": "up",
+}
+PITCHER_MLB_MIN_SHIFT_SCALE = 0.75
+PITCHER_REVERSE_DISPLAY_COLS = {
+    "Ball (%)",
+    "FA VAA",
+    "Z-Contact (%)",
+    "0<LA<20 (%)",
+    "LA>=20 (%)",
+    "Arm Angle",
 }
 
 
@@ -315,6 +385,48 @@ def filter_by_team_token(df: pd.DataFrame, column: str, team: str) -> pd.DataFra
     return df[mask]
 
 
+def position_options(df: pd.DataFrame) -> list[str]:
+    if df.empty:
+        return ["All"]
+    options = [
+        pos
+        for pos in POSITION_FILTER_COLS
+        if pos in df.columns or f"is_{pos}" in df.columns
+    ]
+    return ["All"] + options if options else ["All"]
+
+
+def filter_by_positions(
+    df: pd.DataFrame,
+    positions,
+    min_count: int = POSITION_COUNT_THRESHOLD,
+) -> pd.DataFrame:
+    if df.empty or positions is None:
+        return df
+    if isinstance(positions, (str, bytes)):
+        positions = [positions]
+    if not isinstance(positions, (list, tuple, set, pd.Index, np.ndarray, pd.Series)):
+        positions = [positions]
+    selected = [pos for pos in positions if pos != "All"]
+    if not selected:
+        return df
+    mask = pd.Series(False, index=df.index)
+    for pos in selected:
+        binary_col = f"is_{pos}"
+        if binary_col in df.columns:
+            values = pd.to_numeric(df[binary_col], errors="coerce").fillna(0)
+            mask |= values >= 1
+            continue
+        if pos not in df.columns:
+            continue
+        values = pd.to_numeric(df[pos], errors="coerce").fillna(0)
+        threshold = 1 if values.max(skipna=True) <= 1 else min_count
+        mask |= values >= threshold
+    if not mask.any():
+        return df.iloc[0:0]
+    return df[mask]
+
+
 def player_id_options(
     df: pd.DataFrame, id_col: str, name_col: str
 ) -> tuple[list, dict]:
@@ -342,6 +454,17 @@ def numeric_filter(df: pd.DataFrame, column: str, min_value: float) -> pd.DataFr
     if df.empty:
         return df
     return df[df[column] >= min_value]
+
+
+def pitcher_workload_filter(
+    df: pd.DataFrame, filter_type: str, min_value: float
+) -> pd.DataFrame:
+    if df.empty:
+        return df
+    metric = filter_type if filter_type in {"IP", "TBF", "GS"} else "TBF"
+    if metric not in df.columns:
+        return df
+    return numeric_filter(df, metric, min_value)
 
 
 def download_button(df: pd.DataFrame, label: str, key: str) -> None:
@@ -1017,9 +1140,7 @@ def render_table(
         if other_float_cols:
             df_page_display[other_float_cols] = df_page_display[
                 other_float_cols
-            ].applymap(
-                lambda x: f"{x:.{round_decimals}f}" if pd.notna(x) else x
-            )
+            ].applymap(lambda x: f"{x:.{round_decimals}f}" if pd.notna(x) else x)
         for col in int_cols:
             if col in df_page_display.columns:
                 df_page_display[col] = df_page_display[col].apply(
@@ -1177,6 +1298,45 @@ def _hitter_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
     eq_map = {}
     for col, label in display_map.items():
         if col.endswith("_reg"):
+            eq_map[f"{col}_mlb_eq"] = f"{label} MLB Eq"
+    return {**display_map, **eq_map}
+
+
+def _pitcher_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
+    display_map = {
+        "name": "Name",
+        "pitching_code": "Team",
+        "season": "Season",
+        "stuff": "Pitch Grade",
+        "stuff_raw_reg": "Pitch Grade (Raw Model)",
+        "fastball_velo_reg": "FA mph",
+        "max_velo_reg": "Max FA mph",
+        "fastball_vaa_reg": "FA VAA",
+        "loc_adj_vaa_reg": "Loc-Adj VAA",
+        "SwStr_reg": "SwStr (%)",
+        "Ball_pct_reg": "Ball (%)",
+        "Chase_reg": "Chase (%)",
+        "Z_Contact_reg": "Z-Contact (%)",
+        "Zone_reg": "Zone (%)",
+        "CSW_reg": "CSW (%)",
+        "pWhiff_reg": "pWhiff (%)",
+        "FA_pct_reg": "FA (%)",
+        "BB_rpm_reg": "BB RPM",
+        "FA_spin_eff_reg": "FA Spin Efficiency (%)",
+        "LA_lte_0_reg": "LA<=0%",
+        "LD_pct_reg": "0<LA<20 (%)",
+        "LA_gte_20_reg": "LA>=20 (%)",
+        "rel_z_reg": "Vertical Release (ft.)",
+        "rel_x_reg": "Horizontal Release (ft.)",
+        "ext_reg": "Extension (ft.)",
+        "arm_angle_reg": "Arm Angle",
+        "similarity_score": "Similarity (0-100)",
+    }
+    if not include_mlb_eq:
+        return display_map
+    eq_map: dict[str, str] = {}
+    for col, label in display_map.items():
+        if col.endswith("_reg") or col == "stuff":
             eq_map[f"{col}_mlb_eq"] = f"{label} MLB Eq"
     return {**display_map, **eq_map}
 
@@ -1472,6 +1632,285 @@ def _build_hitter_mlb_equivalencies(
     return out, coeff_df, metric_cols
 
 
+def _build_pitcher_mlb_equivalencies(
+    base_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    if base_df.empty:
+        return pd.DataFrame(), pd.DataFrame(), []
+    if "TBF" not in base_df.columns:
+        return base_df.copy(), pd.DataFrame(), []
+
+    metric_cols = [
+        col
+        for col in base_df.select_dtypes(include="number").columns
+        if col.endswith("_reg")
+        and col != "reg_prop"
+        and col not in PITCHER_MLB_PASS_THROUGH_COLS
+    ]
+    if not metric_cols:
+        out = base_df.copy()
+        for col in PITCHER_MLB_PASS_THROUGH_COLS:
+            if col in out.columns:
+                out[f"{col}_mlb_eq"] = out[col]
+        pass_through_metrics = [
+            col
+            for col in PITCHER_MLB_PASS_THROUGH_COLS
+            if f"{col}_mlb_eq" in out.columns
+        ]
+        return out, pd.DataFrame(), pass_through_metrics
+
+    keys = ["pitcher_mlbid", "season", "level_id"]
+    base_cols = [col for col in keys + ["TBF"] + metric_cols if col in base_df.columns]
+    fit_df = base_df[base_cols].copy()
+    grouped = fit_df.groupby(keys, as_index=False).agg(
+        {"TBF": "sum", **{col: "mean" for col in metric_cols}}
+    )
+
+    means = grouped.groupby(["season", "level_id"])[metric_cols].mean()
+    stds = grouped.groupby(["season", "level_id"])[metric_cols].std(ddof=0)
+    means = means.add_suffix("__mean")
+    stds = stds.add_suffix("__std")
+    moments = means.join(stds).reset_index()
+
+    z_df = grouped.merge(moments, on=["season", "level_id"], how="left")
+    for col in metric_cols:
+        std_col = f"{col}__std"
+        z_df[f"{col}__z"] = (z_df[col] - z_df[f"{col}__mean"]) / z_df[std_col].replace(
+            0, np.nan
+        )
+
+    src = z_df.rename(
+        columns={
+            "season": "src_season",
+            "level_id": "src_level",
+            "TBF": "src_TBF",
+            **{f"{col}__z": f"src_{col}__z" for col in metric_cols},
+        }
+    )
+    dst = z_df.rename(
+        columns={
+            "season": "dst_season",
+            "level_id": "dst_level",
+            "TBF": "dst_TBF",
+            **{f"{col}__z": f"dst_{col}__z" for col in metric_cols},
+        }
+    )
+    same_pairs = src.merge(
+        dst,
+        left_on=["pitcher_mlbid", "src_season"],
+        right_on=["pitcher_mlbid", "dst_season"],
+        how="inner",
+    ).assign(pair_group="same_season")
+    dst_next = dst.copy()
+    dst_next["src_season"] = dst_next["dst_season"] - 1
+    next_pairs = src.merge(
+        dst_next,
+        on=["pitcher_mlbid", "src_season"],
+        how="inner",
+    ).assign(pair_group="next_season")
+    pairs = pd.concat([same_pairs, next_pairs], ignore_index=True, sort=False)
+    pairs = pairs[pairs["src_level"] > pairs["dst_level"]]
+
+    edge_thresholds: dict[tuple[int, int], tuple[int, int]] = {
+        (11, 1): (60, 60),
+        (14, 11): (60, 60),
+        (16, 14): (60, 60),
+    }
+    prior_a = 0.0
+    prior_b = 0.5
+    shrink_k = 50.0
+    edge_coeff: dict[tuple[int, int, str], tuple[float, float, int]] = {}
+    coeff_rows: list[dict[str, object]] = []
+
+    for (src_level, dst_level), (min_src_tbf, min_dst_tbf) in edge_thresholds.items():
+        edge_df = pairs[
+            (pairs["src_level"] == src_level)
+            & (pairs["dst_level"] == dst_level)
+            & (pairs["src_TBF"] >= min_src_tbf)
+            & (pairs["dst_TBF"] >= min_dst_tbf)
+        ].copy()
+        if edge_df.empty:
+            for col in metric_cols:
+                edge_coeff[(src_level, dst_level, col)] = (prior_a, prior_b, 0)
+                coeff_rows.append(
+                    {
+                        "src_level": src_level,
+                        "dst_level": dst_level,
+                        "metric": col,
+                        "a": prior_a,
+                        "b": prior_b,
+                        "n": 0,
+                        "min_src_tbf": min_src_tbf,
+                        "min_dst_tbf": min_dst_tbf,
+                        "fit_type": "intra+inter-season",
+                    }
+                )
+            continue
+
+        weights = np.sqrt(
+            np.clip(edge_df["src_TBF"].to_numpy(dtype=float), 0, None)
+            * np.clip(edge_df["dst_TBF"].to_numpy(dtype=float), 0, None)
+        )
+        for col in metric_cols:
+            x = edge_df[f"src_{col}__z"].to_numpy(dtype=float)
+            y = edge_df[f"dst_{col}__z"].to_numpy(dtype=float)
+            raw_a, raw_b, n = _weighted_linear_fit(x, y, weights)
+            if not np.isfinite(raw_a):
+                raw_a = prior_a
+            if not np.isfinite(raw_b):
+                raw_b = prior_b
+            reliability = n / (n + shrink_k) if n > 0 else 0.0
+            fit_a = reliability * raw_a + (1.0 - reliability) * prior_a
+            fit_b = reliability * raw_b + (1.0 - reliability) * prior_b
+            fit_a = float(np.clip(fit_a, -1.5, 1.5))
+            fit_b = float(np.clip(fit_b, -0.25, 1.25))
+            edge_coeff[(src_level, dst_level, col)] = (fit_a, fit_b, n)
+            coeff_rows.append(
+                {
+                    "src_level": src_level,
+                    "dst_level": dst_level,
+                    "metric": col,
+                    "a": fit_a,
+                    "b": fit_b,
+                    "n": n,
+                    "min_src_tbf": min_src_tbf,
+                    "min_dst_tbf": min_dst_tbf,
+                    "fit_type": "intra+inter-season",
+                }
+            )
+
+    level_mlb_coeff: dict[tuple[int, str], tuple[float, float, int]] = {}
+    for col in metric_cols:
+        a11, b11, n11 = edge_coeff[(11, 1, col)]
+        a14, b14, n14 = edge_coeff[(14, 11, col)]
+        a16, b16, n16 = edge_coeff[(16, 14, col)]
+        a14_to_1, b14_to_1 = _compose_linear(a14, b14, a11, b11)
+        a16_to_11, b16_to_11 = _compose_linear(a16, b16, a14, b14)
+        a16_to_1, b16_to_1 = _compose_linear(a16_to_11, b16_to_11, a11, b11)
+        level_mlb_coeff[(1, col)] = (0.0, 1.0, n11)
+        level_mlb_coeff[(11, col)] = (a11, b11, n11)
+        level_mlb_coeff[(14, col)] = (a14_to_1, b14_to_1, min(n14, n11))
+        level_mlb_coeff[(16, col)] = (a16_to_1, b16_to_1, min(n16, n14, n11))
+        coeff_rows.extend(
+            [
+                {
+                    "src_level": 14,
+                    "dst_level": 1,
+                    "metric": col,
+                    "a": a14_to_1,
+                    "b": b14_to_1,
+                    "n": min(n14, n11),
+                    "min_src_tbf": 60,
+                    "min_dst_tbf": 60,
+                    "fit_type": "chained",
+                },
+                {
+                    "src_level": 16,
+                    "dst_level": 1,
+                    "metric": col,
+                    "a": a16_to_1,
+                    "b": b16_to_1,
+                    "n": min(n16, n14, n11),
+                    "min_src_tbf": 60,
+                    "min_dst_tbf": 60,
+                    "fit_type": "chained",
+                },
+            ]
+        )
+
+    mlb_moments = moments[moments["level_id"] == 1].drop(columns=["level_id"]).copy()
+    mlb_moments = mlb_moments.rename(
+        columns={
+            f"{col}__mean": f"{col}__mlb_mean"
+            for col in metric_cols
+            if f"{col}__mean" in mlb_moments.columns
+        }
+        | {
+            f"{col}__std": f"{col}__mlb_std"
+            for col in metric_cols
+            if f"{col}__std" in mlb_moments.columns
+        }
+    )
+
+    out = base_df.copy()
+    out = out.merge(moments, on=["season", "level_id"], how="left")
+    out = out.merge(mlb_moments, on=["season"], how="left")
+
+    for col in metric_cols:
+        src_mean_col = f"{col}__mean"
+        src_std_col = f"{col}__std"
+        mlb_mean_col = f"{col}__mlb_mean"
+        mlb_std_col = f"{col}__mlb_std"
+        if (
+            col not in out.columns
+            or src_mean_col not in out.columns
+            or src_std_col not in out.columns
+            or mlb_mean_col not in out.columns
+            or mlb_std_col not in out.columns
+        ):
+            continue
+        src_z = (out[col] - out[src_mean_col]) / out[src_std_col].replace(0, np.nan)
+        a_map = {
+            level_id: level_mlb_coeff.get((level_id, col), (prior_a, prior_b, 0))[0]
+            for level_id in LEVEL_LABELS
+        }
+        b_map = {
+            level_id: level_mlb_coeff.get((level_id, col), (prior_a, prior_b, 0))[1]
+            for level_id in LEVEL_LABELS
+        }
+        pred_z = out["level_id"].map(a_map) + (out["level_id"].map(b_map) * src_z)
+        pred = out[mlb_mean_col] + (pred_z * out[mlb_std_col])
+        mlb_mask = out["level_id"] == 1
+        non_mlb_mask = ~mlb_mask
+        direction = PITCHER_MLB_DIRECTION_MAP.get(col)
+        if direction == "up":
+            pred.loc[non_mlb_mask] = np.maximum(
+                pred.loc[non_mlb_mask],
+                out.loc[non_mlb_mask, col],
+            )
+            shift = (
+                (out[src_mean_col] - out[mlb_mean_col]).abs()
+                * PITCHER_MLB_MIN_SHIFT_SCALE
+            ).fillna(0.0)
+            pred.loc[non_mlb_mask] = np.maximum(
+                pred.loc[non_mlb_mask],
+                out.loc[non_mlb_mask, col] + shift.loc[non_mlb_mask],
+            )
+        elif direction == "down":
+            pred.loc[non_mlb_mask] = np.minimum(
+                pred.loc[non_mlb_mask],
+                out.loc[non_mlb_mask, col],
+            )
+            shift = (
+                (out[src_mean_col] - out[mlb_mean_col]).abs()
+                * PITCHER_MLB_MIN_SHIFT_SCALE
+            ).fillna(0.0)
+            pred.loc[non_mlb_mask] = np.minimum(
+                pred.loc[non_mlb_mask],
+                out.loc[non_mlb_mask, col] - shift.loc[non_mlb_mask],
+            )
+        pred.loc[mlb_mask] = out.loc[mlb_mask, col]
+        out[f"{col}_mlb_eq"] = pred
+
+    for col in PITCHER_MLB_PASS_THROUGH_COLS:
+        if col in out.columns:
+            out[f"{col}_mlb_eq"] = out[col]
+
+    helper_cols: list[str] = []
+    for col in metric_cols:
+        helper_cols.extend(
+            [f"{col}__mean", f"{col}__std", f"{col}__mlb_mean", f"{col}__mlb_std"]
+        )
+    out = out.drop(columns=[col for col in helper_cols if col in out.columns])
+
+    coeff_df = pd.DataFrame(coeff_rows)
+    all_mlb_eq_metrics = metric_cols + [
+        col for col in PITCHER_MLB_PASS_THROUGH_COLS if f"{col}_mlb_eq" in out.columns
+    ]
+    all_mlb_eq_metrics = list(dict.fromkeys(all_mlb_eq_metrics))
+    return out, coeff_df, all_mlb_eq_metrics
+
+
 damage_df = _normalize_team_col(damage_df, "hitting_code")
 damage_df = _normalize_la_cols(damage_df)
 hitter_pct = _normalize_team_col(hitter_pct, "hitting_code")
@@ -1548,6 +1987,9 @@ pitch_types_reg_df = _merge_regressed(
 )
 hitters_mlb_eq_df, hitter_mlb_eq_coeffs, hitter_mlb_eq_metrics = (
     _build_hitter_mlb_equivalencies(hitters_reg_df)
+)
+pitchers_mlb_eq_df, pitcher_mlb_eq_coeffs, pitcher_mlb_eq_metrics = (
+    _build_pitcher_mlb_equivalencies(pitchers_reg_df)
 )
 
 
@@ -1649,6 +2091,15 @@ def hitter_individual_stats():
                 index=0,
                 key="hitter_stats_team",
             )
+            position = st.multiselect(
+                "Select Position",
+                position_options(damage_df),
+                default=["All"],
+                key="hitter_stats_position",
+                format_func=lambda v: (
+                    "All" if v == "All" else POSITION_FILTER_LABELS.get(v, v)
+                ),
+            )
             player_options, player_name_map = player_id_options(
                 damage_df, "batter_mlbid", "hitter_name"
             )
@@ -1679,6 +2130,7 @@ def hitter_individual_stats():
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
             df = filter_by_team_token(df, "hitting_code", team)
+            df = filter_by_positions(df, position)
             df = filter_by_values(df, "batter_mlbid", player)
             df = df.assign(__season=df["season"], __level=df["level_id"])
 
@@ -1789,6 +2241,15 @@ def hitter_percentiles():
                 index=0,
                 key="hitter_pct_team",
             )
+            position = st.multiselect(
+                "Select Position",
+                position_options(hitter_pct),
+                default=["All"],
+                key="hitter_pct_position",
+                format_func=lambda v: (
+                    "All" if v == "All" else POSITION_FILTER_LABELS.get(v, v)
+                ),
+            )
             player_options, player_name_map = player_id_options(
                 hitter_pct, "batter_mlbid", "hitter_name"
             )
@@ -1815,6 +2276,7 @@ def hitter_percentiles():
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
             df = filter_by_team_token(df, "hitting_code", team)
+            df = filter_by_positions(df, position)
             df = filter_by_values(df, "batter_mlbid", player)
 
             if value_type == "PA":
@@ -1897,7 +2359,9 @@ def hitter_comps():
     comp_df = hitters_reg_df.copy()
     if use_mlb_eq:
         if hitters_mlb_eq_df.empty:
-            st.info("MLB-equivalent translation table is unavailable; using raw AR stats.")
+            st.info(
+                "MLB-equivalent translation table is unavailable; using raw AR stats."
+            )
             use_mlb_eq = False
         else:
             comp_df = hitters_mlb_eq_df.copy()
@@ -1927,6 +2391,18 @@ def hitter_comps():
         eligible_all = comp_df[
             (comp_df["level_id"] == 1) & (comp_df["PA"] >= 200)
         ].copy()
+
+    position = st.multiselect(
+        "Select Position",
+        position_options(player_pool),
+        default=["All"],
+        key="hitter_comps_position",
+        format_func=lambda v: (
+            "All" if v == "All" else POSITION_FILTER_LABELS.get(v, v)
+        ),
+    )
+    player_pool = filter_by_positions(player_pool, position)
+    eligible_all = filter_by_positions(eligible_all, position)
 
     if player_pool.empty:
         st.info("No eligible MLB hitter seasons (min 20 PA).")
@@ -1963,7 +2439,9 @@ def hitter_comps():
     teams = team_options(player_df, "hitting_code")
     team_choice = st.selectbox("Team", teams, index=0, key="hitter_comps_team")
     if team_choice and team_choice != "All":
-        filtered_player_df = filter_by_team_token(player_df, "hitting_code", team_choice)
+        filtered_player_df = filter_by_team_token(
+            player_df, "hitting_code", team_choice
+        )
         if filtered_player_df.empty:
             st.warning(
                 "No rows for that team at this level/season; using all team rows for selection."
@@ -1996,6 +2474,7 @@ def hitter_comps():
         "PA",
         "IP",
         "TBF",
+        "GS",
         "pitches",
         "pitches_n",
         "pitches_num",
@@ -2044,7 +2523,7 @@ def hitter_comps():
     stds = stats.std(ddof=0).replace(0, np.nan)
     zscores = ((stats - means) / stds).fillna(0)
     target_stats = player_df[feature_cols].copy().fillna(means)
-    target_vec = (((target_stats - means) / stds).fillna(0).iloc[0].to_numpy())
+    target_vec = ((target_stats - means) / stds).fillna(0).iloc[0].to_numpy()
     distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
     max_dist = distances.max() if len(distances) else 0.0
     if max_dist == 0:
@@ -2077,12 +2556,16 @@ def hitter_comps():
         "__season",
         "__level",
     ]
-    df = eligible_comp[[col for col in display_cols if col in eligible_comp.columns]].copy()
+    df = eligible_comp[
+        [col for col in display_cols if col in eligible_comp.columns]
+    ].copy()
     df = df.rename(columns={**base_rename, **similarity_labels})
     df = df.loc[:, ~df.columns.duplicated()]
 
     stats_df = eligible_all.copy()
-    stats_df = stats_df.assign(__season=stats_df["season"], __level=stats_df["level_id"])
+    stats_df = stats_df.assign(
+        __season=stats_df["season"], __level=stats_df["level_id"]
+    )
     stats_columns = [
         "hitter_name",
         "hitting_code",
@@ -2108,8 +2591,12 @@ def hitter_comps():
         "__season",
         "__level",
     ]
-    target_df = player_df.assign(__season=player_df["season"], __level=player_df["level_id"])
-    target_df = target_df[[col for col in target_cols if col in target_df.columns]].copy()
+    target_df = player_df.assign(
+        __season=player_df["season"], __level=player_df["level_id"]
+    )
+    target_df = target_df[
+        [col for col in target_cols if col in target_df.columns]
+    ].copy()
     if use_mlb_eq and "__level" in target_df.columns:
         # MLB-equivalent stats should be color-scaled against MLB season baselines.
         target_df["__level"] = 1
@@ -2146,7 +2633,9 @@ def hitter_comps():
         hide_cols={"Team"},
     )
     if use_mlb_eq:
-        st.caption("Most similar MLB seasons by translated MLB-equivalent stats (PA >= 200)")
+        st.caption(
+            "Most similar MLB seasons by translated MLB-equivalent stats (PA >= 200)"
+        )
     else:
         st.caption("Most similar MLB seasons (PA >= 200)")
     render_table(
@@ -2222,6 +2711,16 @@ def hitter_mlb_equivalencies():
         key="hitter_mlb_eq_team",
     )
     view = filter_by_team_token(view, "hitting_code", team)
+    position = st.multiselect(
+        "Position",
+        position_options(view),
+        default=["All"],
+        key="hitter_mlb_eq_position",
+        format_func=lambda v: (
+            "All" if v == "All" else POSITION_FILTER_LABELS.get(v, v)
+        ),
+    )
+    view = filter_by_positions(view, position)
     if view.empty:
         st.info("No rows after filtering.")
         return
@@ -2385,6 +2884,15 @@ def hitter_ar():
                 index=0,
                 key="hitter_ar_team",
             )
+            position = st.multiselect(
+                "Select Position",
+                position_options(hitters_reg_df),
+                default=["All"],
+                key="hitter_ar_position",
+                format_func=lambda v: (
+                    "All" if v == "All" else POSITION_FILTER_LABELS.get(v, v)
+                ),
+            )
             player_options, player_name_map = player_id_options(
                 hitters_reg_df, "batter_mlbid", "hitter_name"
             )
@@ -2415,6 +2923,7 @@ def hitter_ar():
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
             df = filter_by_team_token(df, "hitting_code", team)
+            df = filter_by_positions(df, position)
             df = filter_by_values(df, "batter_mlbid", player)
 
             if value_type == "PA":
@@ -2557,6 +3066,15 @@ def hitter_splits():
                     index=0,
                     key=f"hitter_splits_team_{idx}",
                 )
+                position = st.multiselect(
+                    "Select Position",
+                    position_options(split_df),
+                    default=["All"],
+                    key=f"hitter_splits_position_{idx}",
+                    format_func=lambda v: (
+                        "All" if v == "All" else POSITION_FILTER_LABELS.get(v, v)
+                    ),
+                )
                 player_options, player_name_map = player_id_options(
                     split_df, "batter_mlbid", "hitter_name"
                 )
@@ -2589,6 +3107,7 @@ def hitter_splits():
                 df = filter_by_values(df, "season", season)
                 df = filter_by_values(df, "split", split_choice)
                 df = filter_by_team_token(df, "hitting_code", team)
+                df = filter_by_positions(df, position)
                 df = filter_by_values(df, "batter_mlbid", player)
                 df = df.assign(__season=df["season"], __level=df["level_id"])
 
@@ -2701,7 +3220,7 @@ def pitcher_individual_stats():
                 key="pitcher_stats_min_value",
             )
             filter_type = st.selectbox(
-                "Filter By", ["IP", "TBF"], index=1, key="pitcher_stats_filter_type"
+                "Filter By", ["IP", "TBF", "GS"], index=1, key="pitcher_stats_filter_type"
             )
             team = st.selectbox(
                 "Select Team",
@@ -2742,10 +3261,7 @@ def pitcher_individual_stats():
             df = filter_by_values(df, "pitcher_mlbid", player)
             df = df.assign(__season=df["season"], __level=df["level_id"])
 
-            if filter_type == "IP":
-                df = numeric_filter(df, "IP", min_value)
-            else:
-                df = numeric_filter(df, "TBF", min_value)
+            df = pitcher_workload_filter(df, filter_type, min_value)
 
             columns = [
                 "name",
@@ -2754,6 +3270,7 @@ def pitcher_individual_stats():
                 "season",
                 "TBF",
                 "IP",
+                "GS",
                 "stuff",
                 "fastball_velo",
                 "max_velo",
@@ -2784,6 +3301,7 @@ def pitcher_individual_stats():
                 "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
                 "season": "Season",
+                "GS": "GS",
                 "stuff": "Pitch Grade",
                 "fastball_velo": "FA mph",
                 "max_velo": "Max FA mph",
@@ -2842,12 +3360,18 @@ def pitcher_percentiles():
                 key="pitcher_pct_season",
             )
             min_value = st.number_input(
-                "Minimum TBF",
+                "Minimum Value",
                 min_value=0,
                 max_value=1000,
                 value=100,
                 step=1,
                 key="pitcher_pct_min_value",
+            )
+            filter_type = st.selectbox(
+                "Filter By",
+                ["TBF", "IP", "GS"],
+                index=0,
+                key="pitcher_pct_filter_type",
             )
             team = st.selectbox(
                 "Select Team",
@@ -2882,13 +3406,14 @@ def pitcher_percentiles():
             df = filter_by_values(df, "season", season)
             df = filter_by_team_token(df, "pitching_code", team)
             df = filter_by_values(df, "pitcher_mlbid", player)
-            df = numeric_filter(df, "TBF", min_value)
+            df = pitcher_workload_filter(df, filter_type, min_value)
 
             columns = [
                 "name",
                 "pitcher_mlbid",
                 "pitching_code",
                 "season",
+                "GS",
                 "stuff_pctile",
                 "fastball_velo_pctile",
                 "max_velo_pctile",
@@ -2911,6 +3436,7 @@ def pitcher_percentiles():
                 "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
                 "season": "Season",
+                "GS": "GS",
                 "stuff_pctile": "Pitch Grade Pctile",
                 "fastball_velo_pctile": "Avg FA mph",
                 "max_velo_pctile": "Max FA mph",
@@ -2940,303 +3466,480 @@ def pitcher_comps():
 
     if pitchers_reg_df.empty:
         st.info("Missing pitchers_regressed.csv or pitcher_stuff_new.csv")
-    else:
-        player_pool = pitchers_reg_df.copy()
-        player_pool = player_pool[
-            (player_pool["level_id"] == 1) & (player_pool["IP"] >= 5)
-        ]
-        eligible_all = pitchers_reg_df.copy()
-        eligible_all = eligible_all[
-            (eligible_all["level_id"] == 1) & (eligible_all["IP"] >= 50)
-        ]
-        if player_pool.empty:
-            st.info("No eligible MLB pitcher seasons (min 5 IP).")
+        return
+
+    use_mlb_eq = st.toggle(
+        "Use MLB-equivalent translated stats",
+        value=False,
+        key="pitcher_comps_use_mlb_eq",
+        help=(
+            "Use intra+inter-season level translations to compare non-MLB seasons "
+            "against MLB seasons in MLB-equivalent space."
+        ),
+    )
+    comp_df = pitchers_reg_df.copy()
+    if use_mlb_eq:
+        if pitchers_mlb_eq_df.empty:
+            st.info(
+                "MLB-equivalent translation table is unavailable; using raw AR stats."
+            )
+            use_mlb_eq = False
         else:
-            seasons = season_options(player_pool, "season")[1:]
-            season_choice = st.selectbox(
-                "Season", seasons, index=0, key="pitcher_comps_season"
-            )
-            season_df = player_pool[player_pool["season"] == season_choice]
-            player_options, player_name_map = player_id_options(
-                season_df, "pitcher_mlbid", "name"
-            )
-            player_choice = st.selectbox(
-                "Player",
-                [opt for opt in player_options if opt != "All"],
-                index=0,
-                format_func=lambda v: f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
-                key="pitcher_comps_player",
-            )
-            player_df = season_df[season_df["pitcher_mlbid"] == player_choice]
-            player_all = pitchers_reg_df[
-                pitchers_reg_df["pitcher_mlbid"] == player_choice
-            ]
-            teams = team_options(player_all, "pitching_code")[1:]
-            team_choice = (
-                st.selectbox("Team", teams, index=0, key="pitcher_comps_team")
-                if len(teams) > 1
-                else (teams[0] if teams else None)
-            )
-            if team_choice:
-                player_df = filter_by_team_token(
-                    player_df, "pitching_code", team_choice
-                )
-            default_feature_cols = [
-                "stuff",
-                "fastball_velo_reg",
-                "fastball_vaa_reg",
-                "FA_pct_reg",
-                "BB_rpm_reg",
-                "SwStr_reg",
-                "Ball_pct_reg",
-                "Z_Contact_reg",
-                "Chase_reg",
-                "LA_lte_0_reg",
-                "rel_z_reg",
-                "rel_x_reg",
-                "ext_reg",
-            ]
-            display_map = {
-                "name": "Name",
-                "pitching_code": "Team",
-                "season": "Season",
-                "fastball_velo_reg": "FA mph",
-                "fastball_vaa_reg": "FA VAA",
-                "loc_adj_vaa_reg": "Loc-Adj VAA",
-                "SwStr_reg": "SwStr (%)",
-                "Ball_pct_reg": "Ball (%)",
-                "Chase_reg": "Chase (%)",
-                "Z_Contact_reg": "Z-Contact (%)",
-                "Zone_reg": "Zone (%)",
-                "CSW_reg": "CSW (%)",
-                "LA_lte_0_reg": "LA<=0%",
-                "pWhiff_reg": "pWhiff (%)",
-                "rel_z_reg": "Vertical Release (ft.)",
-                "rel_x_reg": "Horizontal Release (ft.)",
-                "ext_reg": "Extension (ft.)",
-                "similarity_score": "Similarity (0-100)",
-                "stuff": "Pitch Grade",
-                "stuff_z": "Pitch Grade Z",
-                "FA_pct_reg": "FA (%)",
-                "BB_rpm_reg": "BB RPM",
-                "LD_pct_reg": "0<LA<20 (%)",
-                "LA_gte_20_reg": "LA>=20 (%)",
-                "FA_spin_eff_reg": "FA Spin Efficiency (%)",
-                "arm_angle_reg": "Arm Angle",
-            }
-            exclude_cols = {
-                "batter_mlbid",
-                "pitcher_mlbid",
-                "level_id",
-                "game_pk",
-                "PA",
-                "IP",
-                "TBF",
-                "pitches",
-                "pitches_n",
-                "pitches_num",
-                "pitches_den",
-                "bbe",
-                "season",
-            }
-            allowed_cols = list(
-                dict.fromkeys(
-                    default_feature_cols
-                    + [
-                        "Zone_reg",
-                        "CSW_reg",
-                        "loc_adj_vaa_reg",
-                        "FA_pct_reg",
-                        "FA_spin_eff_reg",
-                        "BB_rpm_reg",
-                        "LD_pct_reg",
-                        "LA_gte_20_reg",
-                        "arm_angle_reg",
-                    ]
-                )
-            )
-            numeric_cols, similarity_labels = _similarity_choice_labels(
-                eligible_all, display_map, exclude_cols
-            )
-            numeric_cols = [c for c in numeric_cols if c in allowed_cols]
-            default_feature_cols = [
-                c for c in default_feature_cols if c in numeric_cols
-            ]
-            feature_cols = st.multiselect(
-                "Similarity Score Columns",
-                options=numeric_cols,
-                default=default_feature_cols,
-                key="pitcher_comps_similarity_cols",
-                format_func=lambda c: similarity_labels.get(c, c),
-            )
-            if not feature_cols:
-                st.info("Select at least one column to compute similarity scores.")
-                return
-            eligible_comp = eligible_all.dropna(subset=feature_cols)
-            if player_df.empty:
-                st.info("No season row found for that selection.")
-            else:
-                eligible_comp = eligible_comp[
-                    ~(eligible_comp["pitcher_mlbid"] == player_choice)
-                ]
-                stats = eligible_comp[feature_cols]
-                means = stats.mean()
-                stds = stats.std(ddof=0).replace(0, np.nan)
-                zscores = (stats - means) / stds
-                zscores = zscores.fillna(0)
-                target_vec = (
-                    ((player_df[feature_cols] - means) / stds)
-                    .fillna(0)
-                    .iloc[0]
-                    .to_numpy()
-                )
-                distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
-                max_dist = distances.max() if len(distances) else 0.0
-                if max_dist == 0:
-                    similarity = np.full_like(distances, 100.0, dtype=float)
-                else:
-                    similarity = 100 * (1 - (distances / max_dist))
-                eligible_comp = eligible_comp.copy()
-                eligible_comp["similarity_score"] = similarity.round(0)
-                eligible_comp = eligible_comp.sort_values(
-                    "similarity_score", ascending=False
-                )
+            comp_df = pitchers_mlb_eq_df.copy()
 
-                display_cols = [
-                    "name",
-                    "pitching_code",
-                    "season",
-                    "TBF",
-                    "IP",
-                    "similarity_score",
-                    *feature_cols,
-                ]
-                if "stuff_z" in eligible_comp.columns:
-                    display_cols.insert(6, "stuff_z")
+    if use_mlb_eq:
+        player_pool = comp_df[(comp_df["TBF"] >= 20)].copy()
+        eligible_all = comp_df[
+            (comp_df["level_id"] == 1) & (comp_df["TBF"] >= 200)
+        ].copy()
+        if player_pool.empty:
+            st.info("No eligible pitcher seasons (min 20 TBF).")
+            return
+        target_levels = sorted(player_pool["level_id"].dropna().unique().tolist())
+        if not target_levels:
+            st.info("No target levels available.")
+            return
+        target_level = st.selectbox(
+            "Target Level",
+            target_levels,
+            index=0,
+            key="pitcher_comps_target_level",
+            format_func=lambda v: LEVEL_LABELS.get(int(v), str(int(v))),
+        )
+        player_pool = player_pool[player_pool["level_id"] == target_level]
+    else:
+        player_pool = comp_df[(comp_df["level_id"] == 1) & (comp_df["IP"] >= 5)].copy()
+        eligible_all = comp_df[
+            (comp_df["level_id"] == 1) & (comp_df["IP"] >= 50)
+        ].copy()
 
-                eligible_comp = eligible_comp.assign(
-                    __season=eligible_comp["season"], __level=eligible_comp["level_id"]
-                )
-                display_cols += ["__season", "__level"]
-                df = eligible_comp[
-                    [col for col in display_cols if col in eligible_comp.columns]
-                ].copy()
-                base_rename = {
-                    "name": "Name",
-                    "pitching_code": "Team",
-                    "season": "Season",
-                    "similarity_score": "Similarity (0-100)",
+    if player_pool.empty:
+        if use_mlb_eq:
+            st.info("No eligible pitcher seasons for that level (min 20 TBF).")
+        else:
+            st.info("No eligible MLB pitcher seasons (min 5 IP).")
+        return
+    if eligible_all.empty:
+        if use_mlb_eq:
+            st.info("No eligible MLB comparison seasons (min 200 TBF).")
+        else:
+            st.info("No eligible MLB comparison seasons (min 50 IP).")
+        return
+
+    seasons = season_options(player_pool, "season")[1:]
+    if not seasons:
+        st.info("No seasons available for this view.")
+        return
+    season_choice = st.selectbox("Season", seasons, index=0, key="pitcher_comps_season")
+    season_df = player_pool[player_pool["season"] == season_choice]
+    if season_df.empty:
+        st.info("No player rows for this season selection.")
+        return
+
+    player_options, player_name_map = player_id_options(
+        season_df, "pitcher_mlbid", "name"
+    )
+    player_values = [opt for opt in player_options if opt != "All"]
+    if not player_values:
+        st.info("No players available for this filter.")
+        return
+    player_choice = st.selectbox(
+        "Player",
+        player_values,
+        index=0,
+        format_func=lambda v: f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+        key="pitcher_comps_player",
+    )
+    player_df = season_df[season_df["pitcher_mlbid"] == player_choice]
+    teams = team_options(player_df, "pitching_code")
+    team_choice = st.selectbox("Team", teams, index=0, key="pitcher_comps_team")
+    if team_choice and team_choice != "All":
+        filtered_player_df = filter_by_team_token(
+            player_df, "pitching_code", team_choice
+        )
+        if filtered_player_df.empty:
+            st.warning(
+                "No rows for that team at this level/season; using all team rows for selection."
+            )
+        else:
+            player_df = filtered_player_df
+
+    metric_suffix = "_mlb_eq" if use_mlb_eq else ""
+    default_feature_cols = [
+        f"{col}{metric_suffix}" for col in PITCHER_COMPS_BASE_FEATURE_COLS
+    ]
+    allowed_cols = list(
+        dict.fromkeys(
+            default_feature_cols
+            + [f"{col}{metric_suffix}" for col in PITCHER_COMPS_EXTRA_FEATURE_COLS]
+        )
+    )
+    display_map = _pitcher_display_map(include_mlb_eq=False)
+    if use_mlb_eq:
+        base_display_map = _pitcher_display_map(include_mlb_eq=False)
+        for col, label in base_display_map.items():
+            if (
+                col
+                in PITCHER_COMPS_BASE_FEATURE_COLS + PITCHER_COMPS_EXTRA_FEATURE_COLS
+            ):
+                display_map[f"{col}_mlb_eq"] = label
+
+    exclude_cols = {
+        "batter_mlbid",
+        "pitcher_mlbid",
+        "level_id",
+        "game_pk",
+        "PA",
+        "IP",
+        "TBF",
+        "GS",
+        "pitches",
+        "pitches_n",
+        "pitches_num",
+        "pitches_den",
+        "bbe",
+        "season",
+    }
+    numeric_cols, similarity_labels = _similarity_choice_labels(
+        eligible_all, display_map, exclude_cols
+    )
+    numeric_cols = [col for col in numeric_cols if col in allowed_cols]
+    default_feature_cols = [col for col in default_feature_cols if col in numeric_cols]
+    similarity_key = (
+        "pitcher_comps_similarity_cols_mlb_eq"
+        if use_mlb_eq
+        else "pitcher_comps_similarity_cols_raw"
+    )
+    feature_cols = st.multiselect(
+        "Similarity Score Columns",
+        options=numeric_cols,
+        default=default_feature_cols,
+        key=similarity_key,
+        format_func=lambda col: similarity_labels.get(col, col),
+    )
+    feature_cols = [col for col in feature_cols if col in numeric_cols]
+    feature_cols = list(dict.fromkeys(feature_cols))
+    if not feature_cols:
+        st.info("Select at least one column to compute similarity scores.")
+        return
+    if player_df.empty:
+        st.info("No season row found for that selection.")
+        return
+
+    eligible_comp = eligible_all.copy()
+    eligible_comp = eligible_comp[~(eligible_comp["pitcher_mlbid"] == player_choice)]
+    eligible_comp = eligible_comp[eligible_comp[feature_cols].notna().any(axis=1)]
+    if eligible_comp.empty:
+        st.info("No comparable MLB rows found after filters.")
+        return
+
+    stats = eligible_comp[feature_cols].copy()
+    means = stats.mean().fillna(0.0)
+    stats = stats.fillna(means)
+    stds = stats.std(ddof=0).replace(0, np.nan)
+    zscores = ((stats - means) / stds).fillna(0)
+    target_stats = player_df[feature_cols].copy().fillna(means)
+    target_vec = ((target_stats - means) / stds).fillna(0).iloc[0].to_numpy()
+    distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
+    max_dist = distances.max() if len(distances) else 0.0
+    if max_dist == 0:
+        similarity = np.full_like(distances, 100.0, dtype=float)
+    else:
+        similarity = 100 * (1 - (distances / max_dist))
+
+    eligible_comp = eligible_comp.copy()
+    eligible_comp["similarity_score"] = similarity.round(0)
+    eligible_comp = eligible_comp.sort_values("similarity_score", ascending=False)
+    eligible_comp = eligible_comp.assign(
+        __season=eligible_comp["season"], __level=eligible_comp["level_id"]
+    )
+
+    base_rename = {
+        "name": "Name",
+        "pitching_code": "Team",
+        "season": "Season",
+        "similarity_score": "Similarity (0-100)",
+    }
+    display_cols = [
+        "name",
+        "pitching_code",
+        "season",
+        "TBF",
+        "IP",
+        "GS",
+        "similarity_score",
+        *feature_cols,
+        "__season",
+        "__level",
+    ]
+    df = eligible_comp[
+        [col for col in display_cols if col in eligible_comp.columns]
+    ].copy()
+    df = df.rename(columns={**base_rename, **similarity_labels})
+    df = df.loc[:, ~df.columns.duplicated()]
+
+    stats_df = eligible_all.copy()
+    stats_df = stats_df.assign(
+        __season=stats_df["season"], __level=stats_df["level_id"]
+    )
+    stats_columns = [
+        "name",
+        "pitching_code",
+        "season",
+        "TBF",
+        "IP",
+        "GS",
+        *list(dict.fromkeys(default_feature_cols + feature_cols)),
+        "__season",
+        "__level",
+    ]
+    stats_df = stats_df[
+        [col for col in stats_columns if col in stats_df.columns]
+    ].rename(columns={**base_rename, **similarity_labels})
+    stats_df = stats_df.loc[:, ~stats_df.columns.duplicated()]
+
+    target_cols = [
+        "name",
+        "pitching_code",
+        "season",
+        "TBF",
+        "IP",
+        "GS",
+        *list(dict.fromkeys(default_feature_cols + feature_cols)),
+        "__season",
+        "__level",
+    ]
+    target_df = player_df.assign(
+        __season=player_df["season"], __level=player_df["level_id"]
+    )
+    target_df = target_df[
+        [col for col in target_cols if col in target_df.columns]
+    ].copy()
+    if use_mlb_eq and "__level" in target_df.columns:
+        target_df["__level"] = 1
+    target_df = target_df.rename(columns={**base_rename, **similarity_labels})
+    target_df = target_df.loc[:, ~target_df.columns.duplicated()]
+
+    if use_mlb_eq:
+        level_label = LEVEL_LABELS.get(int(target_level), str(int(target_level)))
+        player_name = str(
+            player_df["name"].iloc[0]
+            if "name" in player_df.columns and not player_df.empty
+            else player_name_map.get(player_choice, "Player")
+        )
+        st.caption(
+            f"{player_name}'s MLB-equivalent statistics derived from their "
+            f"{level_label} statistics:"
+        )
+    else:
+        st.caption("Selected season")
+    render_table(
+        target_df,
+        reverse_cols=PITCHER_REVERSE_DISPLAY_COLS,
+        group_cols=["__season", "__level"],
+        stats_df=stats_df,
+        abs_cols=ABS_GRADIENT_COLS_PITCHERS,
+        show_controls=False,
+        hide_cols={"Team"},
+    )
+    if use_mlb_eq:
+        st.caption(
+            "Most similar MLB seasons by translated MLB-equivalent stats (TBF >= 200)"
+        )
+    else:
+        st.caption("Most similar MLB seasons (IP >= 50)")
+    render_table(
+        df,
+        reverse_cols=PITCHER_REVERSE_DISPLAY_COLS,
+        group_cols=["__season", "__level"],
+        stats_df=stats_df,
+        abs_cols=ABS_GRADIENT_COLS_PITCHERS,
+    )
+
+
+def pitcher_mlb_equivalencies():
+    """Pitchers - MLB equivalency translations (intra+inter-season chained)."""
+    st.title("Pitcher MLB Equivalencies")
+
+    if pitchers_mlb_eq_df.empty:
+        st.info("MLB-equivalent table is unavailable.")
+        return
+
+    st.caption(
+        "Intra+inter-season chained translations in season-adjusted z-score space "
+        "(16->14->11->1)."
+    )
+    st.caption(
+        "Pitch Grade, FA mph, Vertical Release, Horizontal Release, Extension, and "
+        "Arm Angle are treated as MLB-equivalent pass-through metrics."
+    )
+    st.caption("Direct edge fits use TBF >= 60 at both source and destination levels.")
+
+    view = pitchers_mlb_eq_df.copy()
+    if "TBF" in view.columns:
+        min_tbf = st.number_input(
+            "Minimum TBF",
+            min_value=0,
+            max_value=2000,
+            value=20,
+            step=10,
+            key="pitcher_mlb_eq_min_tbf",
+        )
+        view = view[view["TBF"] >= min_tbf]
+
+    season_vals = season_options(view)
+    season = st.selectbox(
+        "Season",
+        season_vals,
+        index=(1 if len(season_vals) > 1 else 0),
+        key="pitcher_mlb_eq_season",
+    )
+    view = filter_by_values(view, "season", season)
+
+    level_options = ["All", "MLB", "Triple-A", "Low-A", "Low Minors"]
+    level_choice = st.selectbox(
+        "Level",
+        level_options,
+        index=0,
+        key="pitcher_mlb_eq_level",
+    )
+    level_map = {
+        "All": [1, 11, 14, 16],
+        "MLB": [1],
+        "Triple-A": [11],
+        "Low-A": [14],
+        "Low Minors": [16],
+    }
+    view = view[view["level_id"].isin(level_map[level_choice])]
+
+    team = st.selectbox(
+        "Team",
+        team_options(view, "pitching_code"),
+        index=0,
+        key="pitcher_mlb_eq_team",
+    )
+    view = filter_by_team_token(view, "pitching_code", team)
+    if view.empty:
+        st.info("No rows after filtering.")
+        return
+
+    metric_base_cols = [
+        col
+        for col in PITCHER_COMPS_BASE_FEATURE_COLS + PITCHER_COMPS_EXTRA_FEATURE_COLS
+        if col in view.columns and f"{col}_mlb_eq" in view.columns
+    ]
+    default_metrics = [
+        col for col in PITCHER_COMPS_BASE_FEATURE_COLS if col in metric_base_cols
+    ]
+    selected_metrics = st.multiselect(
+        "Metric Columns",
+        options=metric_base_cols,
+        default=default_metrics,
+        key="pitcher_mlb_eq_metrics",
+        format_func=lambda col: _pitcher_display_map().get(col, col),
+    )
+    if not selected_metrics:
+        st.info("Select at least one metric column.")
+        return
+
+    table_df = view.copy()
+    for col in selected_metrics:
+        eq_col = f"{col}_mlb_eq"
+        delta_col = f"{col}_mlb_delta"
+        table_df[delta_col] = table_df[eq_col] - table_df[col]
+    table_df = table_df.assign(
+        Level=table_df["level_id"].map(lambda v: LEVEL_LABELS.get(int(v), str(int(v)))),
+        __season=table_df["season"],
+        __level=table_df["level_id"],
+    )
+
+    metric_cols: list[str] = []
+    for col in selected_metrics:
+        metric_cols.extend([col, f"{col}_mlb_eq", f"{col}_mlb_delta"])
+
+    show_cols = [
+        "name",
+        "pitcher_mlbid",
+        "pitching_code",
+        "season",
+        "Level",
+        "TBF",
+        "IP",
+        "GS",
+        *metric_cols,
+        "__season",
+        "__level",
+    ]
+    show_cols = [col for col in show_cols if col in table_df.columns]
+    table_df = table_df[show_cols].copy()
+
+    rename_map = {
+        "name": "Name",
+        "pitcher_mlbid": "Player ID",
+        "pitching_code": "Team",
+        "season": "Season",
+    }
+    display_map = _pitcher_display_map(include_mlb_eq=True)
+    for col in selected_metrics:
+        rename_map[col] = display_map.get(col, col)
+        rename_map[f"{col}_mlb_eq"] = display_map.get(f"{col}_mlb_eq", f"{col} MLB Eq")
+        rename_map[f"{col}_mlb_delta"] = (
+            f"{display_map.get(f'{col}_mlb_eq', f'{col} MLB Eq')} Delta"
+        )
+    table_df = table_df.rename(columns=rename_map)
+
+    reverse_cols = PITCHER_REVERSE_DISPLAY_COLS | {
+        f"{name} MLB Eq" for name in PITCHER_REVERSE_DISPLAY_COLS
+    }
+    render_table(
+        table_df,
+        reverse_cols=reverse_cols,
+        group_cols=["__season", "__level"],
+        stats_df=table_df,
+        abs_cols=ABS_GRADIENT_COLS_PITCHERS,
+    )
+    download_button(table_df, "pitcher_mlb_equivalencies", "pitcher_mlb_eq_download")
+
+    if not pitcher_mlb_eq_coeffs.empty:
+        with st.expander("Translation coefficients", expanded=False):
+            coeff_df = pitcher_mlb_eq_coeffs.copy()
+            coeff_df = coeff_df.assign(
+                from_level=coeff_df["src_level"].map(
+                    lambda v: LEVEL_LABELS.get(int(v), str(int(v)))
+                ),
+                to_level=coeff_df["dst_level"].map(
+                    lambda v: LEVEL_LABELS.get(int(v), str(int(v)))
+                ),
+            )
+            coeff_df["metric"] = coeff_df["metric"].map(
+                lambda c: _pitcher_display_map().get(c, c)
+            )
+            coeff_df = coeff_df.rename(
+                columns={
+                    "metric": "Metric",
+                    "from_level": "From",
+                    "to_level": "To",
+                    "a": "Intercept (a)",
+                    "b": "Rate (b)",
+                    "n": "Sample",
+                    "fit_type": "Type",
+                    "min_src_tbf": "Min TBF (From)",
+                    "min_dst_tbf": "Min TBF (To)",
                 }
-                df = df.rename(columns={**base_rename, **similarity_labels})
-                stats_df = pitchers_reg_df.copy()
-                stats_df = stats_df.assign(
-                    __season=stats_df["season"], __level=stats_df["level_id"]
-                )
-                stats_columns = [
-                    "name",
-                    "pitching_code",
-                    "season",
-                    "TBF",
-                    "IP",
-                    "stuff",
-                    "fastball_velo_reg",
-                    "fastball_vaa_reg",
-                    "FA_pct_reg",
-                    "BB_rpm_reg",
-                    "SwStr_reg",
-                    "Ball_pct_reg",
-                    "Z_Contact_reg",
-                    "Chase_reg",
-                    "LA_lte_0_reg",
-                    "rel_z_reg",
-                    "rel_x_reg",
-                    "ext_reg",
-                    "__season",
-                    "__level",
-                ]
-                stats_df = stats_df[
-                    [col for col in stats_columns if col in stats_df.columns]
-                ].rename(
-                    columns={
-                        "name": "Name",
-                        "pitching_code": "Team",
-                        "season": "Season",
-                        **similarity_labels,
-                    }
-                )
-                if "FA Spin Efficiency (%)" in stats_df.columns:
-                    stats_df["FA Spin Efficiency (%)"] = (
-                        stats_df["FA Spin Efficiency (%)"] * 100
-                    ).round(0)
-                target_display_cols = [
-                    "name",
-                    "pitching_code",
-                    "season",
-                    "TBF",
-                    "IP",
-                    "stuff",
-                    "fastball_velo_reg",
-                    "fastball_vaa_reg",
-                    "FA_pct_reg",
-                    "BB_rpm_reg",
-                    "SwStr_reg",
-                    "Ball_pct_reg",
-                    "Z_Contact_reg",
-                    "Chase_reg",
-                    "LA_lte_0_reg",
-                    "rel_z_reg",
-                    "rel_x_reg",
-                    "ext_reg",
-                    "__season",
-                    "__level",
-                ]
-                # Ensure selected similarity columns appear in the target row too.
-                target_display_cols = list(
-                    dict.fromkeys(target_display_cols + feature_cols)
-                )
-                target_df = player_df.assign(
-                    __season=player_df["season"], __level=player_df["level_id"]
-                )
-                target_df = target_df[
-                    [col for col in target_display_cols if col in target_df.columns]
-                ].copy()
-                target_df = target_df.rename(
-                    columns={
-                        "name": "Name",
-                        "pitching_code": "Team",
-                        "season": "Season",
-                        **similarity_labels,
-                    }
-                )
-                if "FA Spin Efficiency (%)" in target_df.columns:
-                    target_df["FA Spin Efficiency (%)"] = (
-                        target_df["FA Spin Efficiency (%)"] * 100
-                    ).round(0)
-                st.caption("Selected season")
-                reverse_pitchers = {
-                    "Ball (%)",
-                    "FA VAA",
-                    "Z-Contact (%)",
-                    "0<LA<20 (%)",
-                    "LA>=20 (%)",
-                    "Arm Angle",
-                }
-                render_table(
-                    target_df,
-                    reverse_cols=reverse_pitchers,
-                    group_cols=["__season", "__level"],
-                    stats_df=stats_df,
-                    abs_cols=ABS_GRADIENT_COLS_PITCHERS,
-                    show_controls=False,
-                )
-                st.caption("Most similar MLB seasons (IP >= 50)")
-                render_table(
-                    df,
-                    reverse_cols=reverse_pitchers,
-                    group_cols=["__season", "__level"],
-                    stats_df=stats_df,
-                    abs_cols=ABS_GRADIENT_COLS_PITCHERS,
-                )
+            )
+            coeff_cols = [
+                "Metric",
+                "From",
+                "To",
+                "Type",
+                "Intercept (a)",
+                "Rate (b)",
+                "Sample",
+                "Min TBF (From)",
+                "Min TBF (To)",
+            ]
+            coeff_df = coeff_df[[col for col in coeff_cols if col in coeff_df.columns]]
+            render_table(coeff_df, show_controls=False, round_decimals=2)
 
 
 def pitcher_ar():
@@ -3273,7 +3976,7 @@ def pitcher_ar():
                 key="pitcher_ar_min_value",
             )
             filter_type = st.selectbox(
-                "Filter By", ["IP", "TBF"], index=1, key="pitcher_ar_filter_type"
+                "Filter By", ["IP", "TBF", "GS"], index=1, key="pitcher_ar_filter_type"
             )
             team = st.selectbox(
                 "Select Team",
@@ -3314,10 +4017,7 @@ def pitcher_ar():
             df = filter_by_values(df, "pitcher_mlbid", player)
             df = df.assign(__season=df["season"], __level=df["level_id"])
 
-            if filter_type == "IP":
-                df = numeric_filter(df, "IP", min_value)
-            else:
-                df = numeric_filter(df, "TBF", min_value)
+            df = pitcher_workload_filter(df, filter_type, min_value)
 
             columns = [
                 "name",
@@ -3326,6 +4026,7 @@ def pitcher_ar():
                 "season",
                 "TBF",
                 "IP",
+                "GS",
                 "stuff",
                 "fastball_velo_reg",
                 "max_velo_reg",
@@ -3350,6 +4051,7 @@ def pitcher_ar():
                 "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
                 "season": "Season",
+                "GS": "GS",
                 "stuff": "Pitch Grade",
                 "fastball_velo_reg": "FA mph",
                 "max_velo_reg": "Max FA mph",
@@ -3438,7 +4140,7 @@ def pitcher_splits():
                 )
                 filter_type = st.selectbox(
                     "Filter By",
-                    ["IP", "TBF"],
+                    ["IP", "TBF", "GS"],
                     index=1,
                     key=f"pitcher_splits_filter_type_{idx}",
                 )
@@ -3489,10 +4191,7 @@ def pitcher_splits():
                 df = filter_by_values(df, "pitcher_mlbid", player)
                 df = df.assign(__season=df["season"], __level=df["level_id"])
 
-                if filter_type == "IP":
-                    df = numeric_filter(df, "IP", min_value)
-                else:
-                    df = numeric_filter(df, "TBF", min_value)
+                df = pitcher_workload_filter(df, filter_type, min_value)
 
                 columns = [
                     "name",
@@ -3502,6 +4201,7 @@ def pitcher_splits():
                     "season",
                     "TBF",
                     "IP",
+                    "GS",
                     "stuff",
                     "fastball_velo",
                     "max_velo",
@@ -3531,6 +4231,7 @@ def pitcher_splits():
                     "pitching_code": "Team",
                     "season": "Season",
                     "split": "Split",
+                    "GS": "GS",
                     "stuff": "Pitch Grade",
                     "fastball_velo": "FA mph",
                     "max_velo": "Max FA mph",
@@ -4989,6 +5690,7 @@ pages = {
         st.Page(pitcher_individual_stats, title="Individual Stats", icon="⚾"),
         st.Page(pitcher_percentiles, title="Percentiles", icon="📊"),
         st.Page(pitcher_comps, title="Pitcher Comps", icon="🔍"),
+        st.Page(pitcher_mlb_equivalencies, title="MLB Equivalencies", icon="🔁"),
         st.Page(pitcher_ar, title="Auto Regressed (AR)", icon="📈"),
         st.Page(pitcher_splits, title="Splits", icon="📋"),
     ],

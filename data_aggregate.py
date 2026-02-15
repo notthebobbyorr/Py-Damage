@@ -27,6 +27,8 @@ OUT_DIR = DATA_DIR
 
 STUFF_SCALE_MEAN = 50.0
 STUFF_SCALE_STD = 10.0
+POSITION_COUNT_COLS = ["UT", "C", "X1B", "X2B", "X3B", "SS", "OF", "P", "NA"]
+POSITION_BINARY_MIN_COUNT = 20
 
 ALL_STAR_DATES = {
     2025: "2025-07-15",
@@ -123,6 +125,30 @@ def _normalize_age_columns(df: pl.DataFrame) -> pl.DataFrame:
             .alias(col)
             for col in cols
         ]
+    )
+
+
+def _optional_age_expr(df: pl.DataFrame, source_col: str) -> pl.Expr:
+    if source_col not in df.columns:
+        return pl.lit(None).cast(pl.Float64).alias("baseball_age")
+    age_col = pl.col(source_col).cast(pl.Float64, strict=False)
+    return (
+        age_col.filter(age_col.is_not_null() & ~age_col.is_nan())
+        .first()
+        .alias("baseball_age")
+    )
+
+
+def _starter_role_expr(df: pl.DataFrame) -> pl.Expr:
+    role_col = None
+    if "pitcher_role" in df.columns:
+        role_col = "pitcher_role"
+    elif "role" in df.columns:
+        role_col = "role"
+    if role_col is None:
+        return pl.lit(False)
+    return (
+        pl.col(role_col).cast(pl.Utf8).str.strip_chars().str.to_uppercase() == "SP"
     )
 
 
@@ -392,6 +418,7 @@ def build_pitching_splits(
 def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
+    hitter_age_expr = _optional_age_expr(df, "batter_age")
     df = df.with_columns(
         pl.col("batter_position")
         .map_elements(_pos_label, return_dtype=pl.Utf8)
@@ -402,16 +429,7 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
         df.group_by(["batter_mlbid", "hitter_name", "level_id", "season"])
         .agg(
             [
-                pl.col("batter_age")
-                .cast(pl.Float64, strict=False)
-                .filter(
-                    pl.col("batter_age")
-                    .cast(pl.Float64, strict=False)
-                    .is_not_null()
-                    & ~pl.col("batter_age").cast(pl.Float64, strict=False).is_nan()
-                )
-                .first()
-                .alias("baseball_age"),
+                hitter_age_expr,
                 pl.len().alias("pitches"),
                 pl.n_unique("pa_id").alias("PA"),
                 pl.sum("bbe").alias("bbe"),
@@ -640,10 +658,20 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
         how="left",
     )
 
-    desired_pos = ["UT", "C", "X1B", "X2B", "X3B", "SS", "OF", "P", "NA"]
-    for col in desired_pos:
+    for col in POSITION_COUNT_COLS:
         if col not in hitters.columns:
             hitters = hitters.with_columns(pl.lit(0).alias(col))
+    hitters = hitters.with_columns(
+        [
+            pl.when(pl.col(col) >= POSITION_BINARY_MIN_COUNT)
+            .then(1)
+            .otherwise(0)
+            .cast(pl.Int8)
+            .alias(f"is_{col}")
+            for col in POSITION_COUNT_COLS
+            if col != "NA"
+        ]
+    )
 
     return hitters
 
@@ -651,6 +679,14 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
 def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
+
+    pitcher_age_expr = _optional_age_expr(df, "pitcher_age")
+    starter_role = _starter_role_expr(df)
+    gs_expr = (
+        pl.col("game_pk").filter(starter_role).n_unique().alias("GS")
+        if "game_pk" in df.columns
+        else pl.lit(0).alias("GS")
+    )
 
     fastball_tags = ["FA", "SI", "HC", "SP"]
     fb_primary_tag = (
@@ -679,18 +715,10 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
         ["pitcher_mlbid", "name", "season", "level_id", "pitcher_hand"]
     ).agg(
         [
-            pl.col("pitcher_age")
-            .cast(pl.Float64, strict=False)
-            .filter(
-                pl.col("pitcher_age")
-                .cast(pl.Float64, strict=False)
-                .is_not_null()
-                & ~pl.col("pitcher_age").cast(pl.Float64, strict=False).is_nan()
-            )
-            .first()
-            .alias("baseball_age"),
+            pitcher_age_expr,
             pl.len().alias("pitches"),
             pl.n_unique("pa_id").alias("TBF"),
+            gs_expr,
             (pl.sum("outs_recorded") / 3).round(1).alias("IP"),
             (pl.n_unique("pa_id") / pl.n_unique("game_pk")).alias("TBF_per_G"),
             (pl.sum("whiff") / pl.len()).mul(100).alias("SwStr"),
@@ -849,6 +877,7 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
 def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
+    pitcher_age_expr = _optional_age_expr(df, "pitcher_age")
     df = _tag_pitch(df)
     df = df.with_columns(
         pl.len()
@@ -874,16 +903,7 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
         ]
     ).agg(
         [
-            pl.col("pitcher_age")
-            .cast(pl.Float64, strict=False)
-            .filter(
-                pl.col("pitcher_age")
-                .cast(pl.Float64, strict=False)
-                .is_not_null()
-                & ~pl.col("pitcher_age").cast(pl.Float64, strict=False).is_nan()
-            )
-            .first()
-            .alias("baseball_age"),
+            pitcher_age_expr,
             pl.len().alias("pitches"),
             (pl.len() / pl.first("total_pitches") * 100).alias("pct"),
             pl.mean("stuff_raw").alias("stuff_raw"),
