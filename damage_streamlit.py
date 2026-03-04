@@ -189,6 +189,31 @@ def _get_user_email() -> str | None:
         return None
 
 
+def _get_subscription_exempt_emails() -> set[str]:
+    try:
+        raw = st.secrets.get("subscription_exempt_emails", [])
+    except Exception:
+        raw = []
+    if isinstance(raw, str):
+        candidates = re.split(r"[,\n;]", raw)
+    elif isinstance(raw, (list, tuple, set)):
+        candidates = raw
+    else:
+        candidates = []
+    return {
+        str(value).strip().lower()
+        for value in candidates
+        if str(value).strip()
+    }
+
+
+def _is_subscription_exempt_user() -> bool:
+    email = _get_user_email()
+    if not email:
+        return False
+    return email.strip().lower() in _get_subscription_exempt_emails()
+
+
 @st.cache_data(ttl=86400, max_entries=5)
 def _create_billing_portal_url(email: str) -> str | None:
     api_key = _get_stripe_api_key()
@@ -555,8 +580,10 @@ def _resolve_subscription_status(result: object | None = None) -> bool:
     return False
 
 
-def _is_user_subscribed() -> bool:
-    return _resolve_subscription_status()
+def _is_user_subscribed(result: object | None = None) -> bool:
+    if _is_subscription_exempt_user():
+        return True
+    return _resolve_subscription_status(result)
 
 
 def _pick_first_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -5620,7 +5647,7 @@ with st.expander("Manage subscription"):
         subscription_button_text="Subscribe to Access Premium Features",
         button_color="#FF4B4B",
     )
-    is_subscribed = _resolve_subscription_status(subscription_result)
+    is_subscribed = _is_user_subscribed(subscription_result)
     if not is_subscribed:
         st.markdown("Choose a plan:")
         plan_col_annual, plan_col_monthly = st.columns(2)
@@ -5629,6 +5656,8 @@ with st.expander("Manage subscription"):
         with plan_col_monthly:
             st.link_button("Monthly ($5.00)", MONTHLY_PAYMENT_LINK)
         st.caption("Use the same email as your Google login when subscribing.")
+    elif _is_subscription_exempt_user():
+        st.caption("Subscription exception active for this account.")
     st.write("Cancel, pause, or update your subscription via Stripe.")
     billing_email = _get_user_email()
     if not billing_email:

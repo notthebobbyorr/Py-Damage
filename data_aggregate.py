@@ -1512,9 +1512,24 @@ def build_park_data(df: pl.DataFrame) -> pl.DataFrame:
     )
     hit_mask = pl.col("pitch_outcome").is_in(["1B", "2B", "3B", "HR"])
     xbh_mask = pl.col("pitch_outcome").is_in(["2B", "3B", "HR"])
+    la_lte_0_mask = bbe_mask & (pl.col("launch_angle") <= 0)
+    la_0_to_20_mask = bbe_mask & (pl.col("launch_angle") > 0) & (pl.col("launch_angle") < 20)
+    la20_mask = bbe_mask & (pl.col("launch_angle") >= 20)
+    pulled_fb_mask = la20_mask & (pl.col("spray_angle_adj") < -15)
+    non_damage_mask = bbe_mask & (~damage_mask)
+    non_damage_la20_mask = non_damage_mask & (pl.col("launch_angle") >= 20)
+    hr_bbe = (pl.col("pitch_outcome") == "HR") & bbe_mask
     hr_damage = (pl.col("pitch_outcome") == "HR") & damage_mask
+    hr_non_damage = (pl.col("pitch_outcome") == "HR") & non_damage_mask
+    hr_non_damage_la20 = (pl.col("pitch_outcome") == "HR") & non_damage_la20_mask
+    hr_la20 = hr_bbe & (pl.col("launch_angle") >= 20)
+    hr_pulled_fb = hr_bbe & (pl.col("spray_angle_adj") < -15) & (pl.col("launch_angle") >= 20)
     xbh_damage = xbh_mask & damage_mask
+    xbh_bbe = xbh_mask & bbe_mask
     hit_bbe = hit_mask & bbe_mask
+    hits_la_lte_0 = hit_mask & la_lte_0_mask
+    hits_la_0_to_20 = hit_mask & la_0_to_20_mask
+    hits_la_gte_20 = hit_mask & la20_mask
     park = (
         df.filter(
             pl.col("park_mlbid").is_not_null()
@@ -1524,9 +1539,24 @@ def build_park_data(df: pl.DataFrame) -> pl.DataFrame:
         .agg(
             [
                 damage_mask.sum().alias("damage_bbe"),
+                non_damage_mask.sum().alias("non_damage_bbe"),
+                non_damage_la20_mask.sum().alias("non_damage_la_gte_20_bbe"),
                 hr_damage.sum().alias("hr_damage_bbe"),
+                hr_non_damage.sum().alias("hr_non_damage_bbe"),
+                hr_non_damage_la20.sum().alias("hr_non_damage_la_gte_20_bbe"),
+                la_lte_0_mask.sum().alias("la_lte_0_bbe"),
+                la_0_to_20_mask.sum().alias("la_0_to_20_bbe"),
                 xbh_damage.sum().alias("xbh_damage_bbe"),
+                la20_mask.sum().alias("la_gte_20_bbe"),
+                pulled_fb_mask.sum().alias("pulled_fb_bbe"),
+                hr_la20.sum().alias("hr_la_gte_20"),
+                hr_pulled_fb.sum().alias("hr_pulled_fb"),
+                hr_bbe.sum().alias("hr_bbe"),
+                xbh_bbe.sum().alias("xbh_bbe"),
                 hit_bbe.sum().alias("hits_bbe"),
+                hits_la_lte_0.sum().alias("hits_la_lte_0"),
+                hits_la_0_to_20.sum().alias("hits_la_0_to_20"),
+                hits_la_gte_20.sum().alias("hits_la_gte_20"),
                 bbe_mask.sum().alias("bbe_total"),
             ]
         )
@@ -1542,6 +1572,42 @@ def build_park_data(df: pl.DataFrame) -> pl.DataFrame:
             .then((pl.col("xbh_damage_bbe") / pl.col("damage_bbe")) * 100)
             .otherwise(None)
             .alias("XBH_per_damage_BBE_pct"),
+            pl.when(pl.col("la_gte_20_bbe") > 0)
+            .then((pl.col("hr_la_gte_20") / pl.col("la_gte_20_bbe")) * 100)
+            .otherwise(None)
+            .alias("HR_per_LA_gte_20_pct"),
+            pl.when(pl.col("pulled_fb_bbe") > 0)
+            .then((pl.col("hr_pulled_fb") / pl.col("pulled_fb_bbe")) * 100)
+            .otherwise(None)
+            .alias("HR_per_pulled_FB_pct"),
+            pl.when(pl.col("bbe_total") > 0)
+            .then((pl.col("hr_bbe") / pl.col("bbe_total")) * 100)
+            .otherwise(None)
+            .alias("HR_per_BBE_pct"),
+            pl.when(pl.col("non_damage_bbe") > 0)
+            .then((pl.col("hr_non_damage_bbe") / pl.col("non_damage_bbe")) * 100)
+            .otherwise(None)
+            .alias("HR_per_non_damage_BBE_pct"),
+            pl.when(pl.col("non_damage_la_gte_20_bbe") > 0)
+            .then((pl.col("hr_non_damage_la_gte_20_bbe") / pl.col("non_damage_la_gte_20_bbe")) * 100)
+            .otherwise(None)
+            .alias("HR_per_non_damage_LA_gte_20_BBE_pct"),
+            pl.when(pl.col("bbe_total") > 0)
+            .then((pl.col("xbh_bbe") / pl.col("bbe_total")) * 100)
+            .otherwise(None)
+            .alias("XBH_per_BBE_pct"),
+            pl.when(pl.col("la_lte_0_bbe") > 0)
+            .then((pl.col("hits_la_lte_0") / pl.col("la_lte_0_bbe")) * 100)
+            .otherwise(None)
+            .alias("Hits_per_LA_lte_0_pct"),
+            pl.when(pl.col("la_0_to_20_bbe") > 0)
+            .then((pl.col("hits_la_0_to_20") / pl.col("la_0_to_20_bbe")) * 100)
+            .otherwise(None)
+            .alias("Hits_per_LA_0_to_20_pct"),
+            pl.when(pl.col("la_gte_20_bbe") > 0)
+            .then((pl.col("hits_la_gte_20") / pl.col("la_gte_20_bbe")) * 100)
+            .otherwise(None)
+            .alias("Hits_per_LA_gte_20_pct"),
             pl.when(pl.col("bbe_total") > 0)
             .then((pl.col("hits_bbe") / pl.col("bbe_total")) * 100)
             .otherwise(None)
