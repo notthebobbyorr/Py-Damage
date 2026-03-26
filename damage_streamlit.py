@@ -284,7 +284,7 @@ st.markdown(
 )
 
 
-@st.cache_data(ttl=86400, max_entries=20)
+@st.cache_resource(ttl=86400)
 def _load_csv_cached(path_str: str, mtime: float) -> pd.DataFrame:
     path = Path(path_str)
     if not path.exists():
@@ -333,7 +333,7 @@ def load_csv(name: str) -> pd.DataFrame:
     return _load_csv_cached(str(path), path.stat().st_mtime)
 
 
-@st.cache_data(ttl=86400, max_entries=3)
+@st.cache_resource(ttl=86400)
 def load_damage_df() -> pd.DataFrame:
     # Prefer the most comprehensive file with newest data
     preferred_files = [
