@@ -11,8 +11,15 @@ _age_chunks/
 # Test files (optional - remove if you want to track)
 test_secrets.py
 
-# Large data files and local pipeline outputs
-data/
+# Raw play-by-play input data (large binary files)
+data/raw/
+
+# Intermediate pipeline chunk outputs (rebuilt on each run)
+data/output/_season_chunks/
+data/output/_age_chunks/
+
+# Pipeline operational logs
+data/logs/
 
 # Local Claude Code settings
 .claude/
