@@ -140,6 +140,7 @@ def pitch_shapes_outcomes():
                 "p_SwStr_pct",
                 "Swing_pct",
                 "p_Swing_pct",
+                "Damage_pct",
                 "p_Damage_pct",
                 "HR",
                 "LA_lte_0",
@@ -178,6 +179,7 @@ def pitch_shapes_outcomes():
                 "p_SwStr_pct": "pSwStr (%)",
                 "Swing_pct": "Swing (%)",
                 "p_Swing_pct": "pSwing (%)",
+                "Damage_pct": "Damage/BBE (%)",
                 "p_Damage_pct": "pDamage/BBE (%)",
                 "HR": "HR",
                 "LA_lte_0": "LA<=0%",
@@ -196,7 +198,7 @@ def pitch_shapes_outcomes():
             ].rename(columns=rename_map)
             render_table(
                 df,
-                reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA", "pDamage/BBE (%)", "HR"},
+                reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA", "Damage/BBE (%)", "pDamage/BBE (%)", "HR"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
                 abs_cols=ABS_GRADIENT_COLS_PITCH_TYPES,
@@ -321,6 +323,7 @@ def pitch_ar():
                 "SwStr_reg",
                 "p_SwStr_pct_reg",
                 "p_Swing_pct_reg",
+                "Damage_pct_reg",
                 "HR",
                 "LA_lte_0_reg",
                 "Z_Contact_reg",
@@ -353,6 +356,7 @@ def pitch_ar():
                 "SwStr_reg": "SwStr (%)",
                 "p_SwStr_pct_reg": "pSwStr (%)",
                 "p_Swing_pct_reg": "pSwing (%)",
+                "Damage_pct_reg": "Damage/BBE (%)",
                 "HR": "HR",
                 "LA_lte_0_reg": "LA<=0%",
                 "Z_Contact_reg": "Z-Contact (%)",
@@ -369,7 +373,7 @@ def pitch_ar():
             ].rename(columns=rename_map)
             render_table(
                 df,
-                reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA", "HR"},
+                reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA", "Damage/BBE (%)", "HR"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
                 abs_cols=ABS_GRADIENT_COLS_PITCH_TYPES,
@@ -681,6 +685,7 @@ def pitch_splits():
                     "vbreak",
                     "hbreak",
                     "SwStr",
+                    "Damage_pct",
                     "HR",
                     "Z_Contact",
                     "Ball_pct",
@@ -714,6 +719,7 @@ def pitch_splits():
                     "hbreak": "HB (in.)",
                     "CSW": "CSW (%)",
                     "SwStr": "SwStr (%)",
+                    "Damage_pct": "Damage/BBE (%)",
                     "HR": "HR",
                     "Z_Contact": "Z-Contact (%)",
                     "Chase": "Chase (%)",
@@ -730,7 +736,7 @@ def pitch_splits():
                 ].rename(columns=rename_map)
                 render_table(
                     df,
-                    reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA", "HR"},
+                    reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA", "Damage/BBE (%)", "HR"},
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
                     abs_cols=ABS_GRADIENT_COLS_PITCH_TYPES,
