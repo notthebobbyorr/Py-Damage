@@ -60,7 +60,7 @@ def pitch_shapes_outcomes():
                 "Minimum # Pitches",
                 min_value=0,
                 max_value=1000,
-                value=50,
+                value=5,
                 step=1,
                 key="pitch_shapes_min_pitches",
             )
