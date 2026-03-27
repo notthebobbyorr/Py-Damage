@@ -10,3 +10,9 @@ _age_chunks/
 
 # Test files (optional - remove if you want to track)
 test_secrets.py
+
+# Large data files and local pipeline outputs
+data/
+
+# Local Claude Code settings
+.claude/

@@ -19,9 +19,20 @@ import polars as pl
 import psycopg2
 
 try:
-    from catboost import CatBoostClassifier
+    from dotenv import load_dotenv
+except ImportError:  # optional dependency
+    load_dotenv = None
+
+try:
+    from catboost import CatBoostClassifier, CatBoostRegressor
 except ImportError:  # optional dependency
     CatBoostClassifier = None
+    CatBoostRegressor = None
+
+try:
+    from catboost_predictor import CatBoostBaseballPredictor
+except Exception:  # optional dependency
+    CatBoostBaseballPredictor = None
 
 try:
     from pygam import LinearGAM
@@ -33,12 +44,20 @@ try:
 except ImportError:  # optional dependency
     joblib_load = None
 
+try:
+    from sklearn.preprocessing import LabelEncoder
+except ImportError:  # optional dependency
+    LabelEncoder = None
+
 import pickle
 
 
 DATA_DIR = Path(__file__).resolve().parent
 OUT_DIR = DATA_DIR
 MODEL_DIR = DATA_DIR
+
+if load_dotenv is not None:
+    load_dotenv()
 
 
 @dataclass(frozen=True)
@@ -57,6 +76,7 @@ class ModelBundle:
     damage: object | None = None
     seager: object | None = None
     vaa_gam: object | None = None
+    stuff_predictor: object | None = None
 
 
 WHIFF_NUM_FEATURES = [
@@ -83,7 +103,11 @@ WHIFF_NUM_FEATURES = [
     "z",
 ]
 WHIFF_CAT_FEATURES = ["balls", "strikes", "throws", "stands"]
-WHIFF_BASE_NUM_FEATURES = [feat for feat in WHIFF_NUM_FEATURES if feat not in {"x", "z"}]
+WHIFF_BASE_NUM_FEATURES = [
+    feat for feat in WHIFF_NUM_FEATURES if feat not in {"x", "z"}
+]
+STUFF_SCALE_MEAN = 50.0
+STUFF_SCALE_STD = 10.0
 
 
 def _load_pickle(path: Path) -> object | None:
@@ -108,6 +132,7 @@ def load_models() -> ModelBundle:
     damage_path = MODEL_DIR / "py_damage_model.pkl"
     seager_path = MODEL_DIR / "pySEAGER_model.pkl"
     vaa_gam_path = MODEL_DIR / "vaa_gam_model.pkl"
+    stuff_path = MODEL_DIR / "catboost_baseball_model.cbm"
 
     if CatBoostClassifier is not None:
         if whiff_loc_path.exists():
@@ -151,6 +176,17 @@ def load_models() -> ModelBundle:
         else f"VAA GAM model failed or missing: {vaa_gam_path.name}"
     )
 
+    if stuff_path.exists():
+        if CatBoostBaseballPredictor is not None:
+            try:
+                bundle.stuff_predictor = CatBoostBaseballPredictor(stuff_path)
+            except Exception:
+                print(f"Stuff model failed to load: {stuff_path.name}")
+        elif CatBoostRegressor is None:
+            print("CatBoost is not installed; skipping stuff model.")
+    else:
+        print(f"Stuff model not found: {stuff_path.name}")
+
     return bundle
 
 
@@ -161,7 +197,9 @@ def _ensure_columns(df: pl.DataFrame, cols: Iterable[str]) -> pl.DataFrame:
     return df.with_columns([pl.lit(None).alias(c) for c in missing])
 
 
-def _predict_model(model: object, frame: pl.DataFrame, feature_cols: list[str]) -> np.ndarray | None:
+def _predict_model(
+    model: object, frame: pl.DataFrame, feature_cols: list[str]
+) -> np.ndarray | None:
     if model is None:
         return None
     frame = _ensure_columns(frame, feature_cols)
@@ -195,7 +233,9 @@ def load_db_config() -> DbConfig:
     )
 
 
-def read_pitch_data(cfg: DbConfig, min_season: int, max_season: int, level_ids: Iterable[int]) -> pl.DataFrame:
+def read_pitch_data(
+    cfg: DbConfig, min_season: int, max_season: int, level_ids: Iterable[int]
+) -> pl.DataFrame:
     level_clause = ",".join(str(int(x)) for x in level_ids)
     query = f"""
         SELECT
@@ -246,6 +286,7 @@ def read_pitch_data(cfg: DbConfig, min_season: int, max_season: int, level_ids: 
             coalesce(a.z_angle_release_adj, a.z_angle_release_corr) as z_angle_release,
             coalesce(a.extension_orig, 60.5 - a.y_release_adj, 60.5 - a.y_release_corr) as ext,
             coalesce(a.obs_spin_rate_orig, a.obs_spin_rate_corr) as rpm,
+            coalesce(a.inf_spin_rate_corr, a.inf_spin_rate_adj, a.inf_spin_rate_orig) as inf_rpm,
             coalesce(a.pfx_x_corr, a.pfx_x_adj) as pfx_x_short,
             coalesce(a.pfx_z_corr, a.pfx_z_adj) as pfx_z_short,
             coalesce(a.x55_corr, a.x55_adj) as x55,
@@ -316,7 +357,9 @@ def read_pitch_data(cfg: DbConfig, min_season: int, max_season: int, level_ids: 
         host=cfg.host,
         port=cfg.port,
     ) as conn:
-        print(f"Running pitch query for seasons {min_season}-{max_season} and levels {level_clause}...")
+        print(
+            f"Running pitch query for seasons {min_season}-{max_season} and levels {level_clause}..."
+        )
         df = pd.read_sql_query(query, conn)
         print(f"Fetched {len(df):,} pitch rows.")
     return pl.from_pandas(df)
@@ -359,12 +402,29 @@ def add_features(df: pl.DataFrame) -> pl.DataFrame:
     ).with_columns(
         [
             pl.when(pl.col("batter_hand") == "L")
-            .then(-1 * (pl.arctan2(pl.col("hc_x_adj"), pl.col("hc_y_adj")) * (180 / np.pi) * 0.75))
-            .otherwise(pl.arctan2(pl.col("hc_x_adj"), pl.col("hc_y_adj")) * (180 / np.pi) * 0.75)
+            .then(
+                -1
+                * (
+                    pl.arctan2(pl.col("hc_x_adj"), pl.col("hc_y_adj"))
+                    * (180 / np.pi)
+                    * 0.75
+                )
+            )
+            .otherwise(
+                pl.arctan2(pl.col("hc_x_adj"), pl.col("hc_y_adj"))
+                * (180 / np.pi)
+                * 0.75
+            )
             .alias("spray_angle_adj"),
-            (pl.col("batter_name_first") + pl.lit(" ") + pl.col("batter_name_last")).alias("hitter_name"),
-            (pl.col("pitcher_name_first") + pl.lit(" ") + pl.col("pitcher_name_last")).alias("pitcher_name"),
-            (pl.col("pitcher_name_first") + pl.lit(" ") + pl.col("pitcher_name_last")).alias("name"),
+            (
+                pl.col("batter_name_first") + pl.lit(" ") + pl.col("batter_name_last")
+            ).alias("hitter_name"),
+            (
+                pl.col("pitcher_name_first") + pl.lit(" ") + pl.col("pitcher_name_last")
+            ).alias("pitcher_name"),
+            (
+                pl.col("pitcher_name_first") + pl.lit(" ") + pl.col("pitcher_name_last")
+            ).alias("name"),
             pl.when(pl.col("batter_hand") == "L")
             .then(-1 * pl.col("x"))
             .otherwise(pl.col("x"))
@@ -381,34 +441,40 @@ def add_features(df: pl.DataFrame) -> pl.DataFrame:
             .then(pl.lit("FA"))
             .when(pl.col("pi_pitch_group").is_in(["SL", "CU"]))
             .then(pl.lit("BR"))
-            .when(pl.col("pi_pitch_group").is_in(["CH", "FS"]))
+            .when(pl.col("pi_pitch_group") == "CH")
             .then(pl.lit("OFF"))
-            .otherwise(pl.lit("OTHER"))
+            .otherwise(pl.lit("XX"))
             .alias("pitch_group"),
             pl.when(pl.col("batter_hand") == "L")
             .then(-1 * pl.col("pfx_x_short"))
             .otherwise(pl.col("pfx_x_short"))
             .alias("pfx_x_short_adj"),
             pl.when(pl.col("half_inning") == "bottom")
-            .then(pl.col("home_team"))
-            .otherwise(pl.col("away_team"))
+            .then(pl.coalesce("home_team", pl.col("home_mlbid").cast(pl.Utf8)))
+            .otherwise(pl.coalesce("away_team", pl.col("away_mlbid").cast(pl.Utf8)))
             .alias("hitting_code"),
             pl.when(pl.col("half_inning") == "bottom")
-            .then(pl.col("away_team"))
-            .otherwise(pl.col("home_team"))
+            .then(pl.coalesce("away_team", pl.col("away_mlbid").cast(pl.Utf8)))
+            .otherwise(pl.coalesce("home_team", pl.col("home_mlbid").cast(pl.Utf8)))
             .alias("pitching_code"),
             pl.col("balls_before").alias("balls"),
             pl.col("strikes_before").alias("strikes"),
             pl.col("pitcher_hand").alias("throws"),
             pl.col("batter_hand").alias("stands"),
-            (pl.col('outs_end') - pl.col('outs_start')).alias('outs_recorded')
+            (pl.col("outs_end") - pl.col("outs_start")).alias("outs_recorded"),
         ]
     )
 
     df = df.with_columns(
         [
-            pl.when(pl.col("swing_type") == "swing").then(1).otherwise(0).alias("swing"),
-            pl.when(pl.col("swing_type") == "swing").then(1).otherwise(0).alias("is_swing"),
+            pl.when(pl.col("swing_type") == "swing")
+            .then(1)
+            .otherwise(0)
+            .alias("swing"),
+            pl.when(pl.col("swing_type") == "swing")
+            .then(1)
+            .otherwise(0)
+            .alias("is_swing"),
             pl.when((pl.col("is_contact") == False) & (pl.col("swing_type") == "swing"))
             .then(1)
             .otherwise(0)
@@ -423,41 +489,22 @@ def add_features(df: pl.DataFrame) -> pl.DataFrame:
             .otherwise(0)
             .alias("k"),
             (1.8 * pl.col("pfx_z_short")).alias("vbreak"),
-            (1.8 * pl.col("pfx_x_short_adj")).alias("hbreak"),
+            (1.8 * pl.col("pfx_x_short")).alias("hbreak"),
         ]
     )
 
     df = df.with_columns(
         [
-            (pl.col("game_pk").cast(str) + "_" + pl.col("at_bat_index").cast(str)).alias("pa_id"),
+            (
+                pl.col("game_pk").cast(str) + "_" + pl.col("at_bat_index").cast(str)
+            ).alias("pa_id"),
+            (pl.col("balls").cast(str) + "-" + pl.col("strikes").cast(str)).alias(
+                "count"
+            ),
         ]
     )
 
-    k_const = 5.383e-03
-    z_const = 32.174
-    yR = 60.5 - pl.col("ext")
-    disc = (pl.col("vy0") ** 2) - (2 * pl.col("ay") * (50 - yR))
-    tR = pl.when((pl.col("ay") != 0) & (disc >= 0)).then(
-        (-pl.col("vy0") - disc.sqrt()) / pl.col("ay")
-    )
-    vxR = pl.col("vx0") + (pl.col("ax") * tR)
-    vyR = pl.col("vy0") + (pl.col("ay") * tR)
-    vzR = pl.col("vz0") + (pl.col("az") * tR)
-    disc_tf = (vyR ** 2) - (2 * pl.col("ay") * (yR - (17 / 12)))
-    tf = pl.when((pl.col("ay") != 0) & (disc_tf >= 0)).then((-vyR - disc_tf.sqrt()) / pl.col("ay"))
-    vxbar = (2 * vxR + (pl.col("ax") * tf)) / 2
-    vybar = (2 * vyR + (pl.col("ay") * tf)) / 2
-    vzbar = (2 * vzR + (pl.col("az") * tf)) / 2
-    vbar = (vxbar**2 + vybar**2 + vzbar**2).sqrt()
-    adrag = -(pl.col("ax") * vxbar + pl.col("ay") * vybar + (pl.col("az") + z_const) * vzbar) / vbar
-    amagx = pl.col("ax") + adrag * vxbar / vbar
-    amagy = pl.col("ay") + adrag * vybar / vbar
-    amagz = pl.col("az") + adrag * vzbar / vbar + z_const
-    amag = (amagx**2 + amagy**2 + amagz**2).sqrt()
-    cl = amag / (k_const * vbar**2)
-    s_val = 0.166 * (0.336 / (0.336 - cl)).log()
-    spin_t = 78.92 * s_val * vbar
-    spin_eff = (0.1 + (spin_t / pl.col("rpm"))).clip(0, 1)
+    spin_eff = (pl.col("inf_rpm") / pl.col("rpm")).clip(0, 1)
 
     df = df.with_columns(
         [
@@ -468,6 +515,7 @@ def add_features(df: pl.DataFrame) -> pl.DataFrame:
             spin_eff.alias("spin_efficiency"),
             pl.lit(None).cast(pl.Float64).alias("pred_whiff_loc"),
             pl.lit(None).cast(pl.Float64).alias("pred_whiff_base"),
+            pl.lit(None).cast(pl.Float64).alias("stuff_raw"),
         ]
     )
     return df
@@ -477,30 +525,29 @@ def apply_vaa_gam(df: pl.DataFrame, model: object | None) -> pl.DataFrame:
     if df.is_empty():
         return df
     if model is None:
-        return df.with_columns(pl.col("vaa").alias("loc_adj_vaa"))
+        return df.with_columns(pl.col("vaa").alias("location_vaa"))
     if hasattr(model, "feature_names_in_"):
         feature_cols = list(model.feature_names_in_)
     else:
-        feature_cols = ["x", "z", "vaa"]
+        feature_cols = ["z", "pitch_velo"]
     preds = _predict_model(model, df, feature_cols)
     if preds is None:
-        return df.with_columns(pl.col("vaa").alias("loc_adj_vaa"))
-    return df.with_columns((pl.col("vaa") - pl.Series("vaa_pred", preds)).alias("loc_adj_vaa"))
+        return df.with_columns(pl.col("vaa").alias("location_vaa"))
+    return df.with_columns(
+        (pl.col("vaa") - pl.Series("location_vaa", preds)).alias("loc_adj_vaa")
+    )
 
 
 def add_pitcher_context(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
-    averages = (
-        df.group_by(["pitcher_mlbid", "level_id", "season"])
-        .agg(
-            [
-                pl.mean("release_z").alias("avg_release_z"),
-                pl.mean("release_x").alias("avg_release_x"),
-                pl.mean("ext").alias("avg_ext"),
-                pl.mean("arm_angle").alias("arm_angle"),
-            ]
-        )
+    averages = df.group_by(["pitcher_mlbid", "level_id", "season"]).agg(
+        [
+            pl.mean("release_z").alias("avg_release_z"),
+            pl.mean("release_x").alias("avg_release_x"),
+            pl.mean("ext").alias("avg_ext"),
+            pl.mean("arm_angle").alias("arm_angle"),
+        ]
     )
     return df.join(averages, on=["pitcher_mlbid", "level_id", "season"], how="left")
 
@@ -510,31 +557,49 @@ def add_primary_pitch_context(df: pl.DataFrame) -> pl.DataFrame:
         return df
     df = _tag_pitch(df)
     counts = (
-        df.filter(pl.col("pitch_tag").is_in(["FA", "SI", "HC"]))
-        .group_by(["pitcher_mlbid", "level_id", "season", "pitch_tag"])
+        df.filter(pl.col("pitch_tag").is_in(["FA", "SI", "HC", "SP"]))
+        .group_by(["pitcher_mlbid", "level_id", "season", "stands", "pitch_tag"])
         .agg(pl.len().alias("pitch_count"))
-        .sort(["pitcher_mlbid", "level_id", "season", "pitch_count"], descending=[False, False, False, True])
+        .sort(
+            [
+                "pitcher_mlbid",
+                "level_id",
+                "season",
+                "stands",
+                "pitch_tag",
+                "pitch_count",
+            ],
+            descending=[False, False, False, False, False, True],
+        )
     )
-    primary = (
-        counts.group_by(["pitcher_mlbid", "level_id", "season"])
-        .agg(pl.first("pitch_tag").alias("primary_tag"))
+    primary = counts.group_by(["pitcher_mlbid", "level_id", "season", "stands"]).agg(
+        pl.first("pitch_tag").alias("primary_tag")
     )
-    df = df.join(primary, on=["pitcher_mlbid", "level_id", "season"], how="left")
+    df = df.join(
+        primary, on=["pitcher_mlbid", "level_id", "season", "stands"], how="left"
+    )
     primary_stats = (
         df.filter(pl.col("pitch_tag") == pl.col("primary_tag"))
-        .group_by(["pitcher_mlbid", "level_id", "season"])
+        .group_by(["pitcher_mlbid", "level_id", "season", "stands", "primary_tag"])
         .agg(
             [
                 pl.mean("pitch_velo").alias("primary_velo"),
+                pl.mean("vbreak").alias("primary_vbreak"),
+                pl.mean("hbreak").alias("primary_hbreak"),
+                pl.mean("vaa").alias("primary_vaa"),
                 pl.mean("loc_adj_vaa").alias("primary_loc_adj_vaa"),
-                pl.mean("release_z").alias("primary_z_release"),
-                pl.mean("release_x").alias("primary_x_release"),
+                pl.mean("z_angle_release").alias("primary_z_release"),
+                pl.mean("x_angle_release").alias("primary_x_release"),
                 pl.mean("rpm").alias("primary_rpm"),
                 pl.mean("axis").alias("primary_axis"),
             ]
         )
     )
-    return df.join(primary_stats, on=["pitcher_mlbid", "level_id", "season"], how="left")
+    return df.join(
+        primary_stats,
+        on=["pitcher_mlbid", "level_id", "season", "stands", "primary_tag"],
+        how="left",
+    )
 
 
 def predict_catboost_probs(
@@ -563,7 +628,12 @@ def apply_models(df: pl.DataFrame, models: ModelBundle) -> pl.DataFrame:
     df = add_pitcher_context(df)
     df = add_primary_pitch_context(df)
 
-    loc_preds = predict_catboost_probs(models.whiff_loc, df, WHIFF_NUM_FEATURES + WHIFF_CAT_FEATURES, WHIFF_CAT_FEATURES)
+    loc_preds = predict_catboost_probs(
+        models.whiff_loc,
+        df,
+        WHIFF_NUM_FEATURES + WHIFF_CAT_FEATURES,
+        WHIFF_CAT_FEATURES,
+    )
     if loc_preds is not None:
         df = df.with_columns(pl.Series(name="pred_whiff_loc", values=loc_preds))
         print(f"Applied whiff model (with locations): {len(loc_preds):,} predictions")
@@ -581,6 +651,17 @@ def apply_models(df: pl.DataFrame, models: ModelBundle) -> pl.DataFrame:
         print(f"Applied whiff model (base): {len(base_preds):,} predictions")
     else:
         print("Skipped whiff model (base).")
+
+    if models.vaa_gam is not None:
+        if LinearGAM is not None and isinstance(models.vaa_gam, LinearGAM):
+            vaa_features = ["z", "pitch_velo"]
+            print(f"VAA model features (LinearGAM): {vaa_features}")
+        else:
+            if hasattr(models.vaa_gam, "feature_names_in_"):
+                vaa_features = list(models.vaa_gam.feature_names_in_)
+            else:
+                vaa_features = ["z", "pitch_velo"]
+            print(f"VAA model features: {vaa_features}")
 
     if models.damage is not None:
         if LinearGAM is not None and isinstance(models.damage, LinearGAM):
@@ -630,51 +711,158 @@ def apply_models(df: pl.DataFrame, models: ModelBundle) -> pl.DataFrame:
         if LinearGAM is not None and isinstance(models.seager, LinearGAM):
             seager_features = ["x", "z", "balls", "strikes", "stands"]
             print(f"SEAGER model features (LinearGAM): {seager_features}")
-            df = df.with_columns(
-                [
-                    pl.when(pl.col("stands") == "L").then(0).when(pl.col("stands") == "R").then(1).otherwise(None).alias("stands"),
-                    pl.col("balls").cast(pl.Int64),
-                    pl.col("strikes").cast(pl.Int64),
-                ]
-            )
-            seager_preds = _predict_model(models.seager, df, seager_features)
-            if seager_preds is not None:
-                df = df.with_columns(pl.Series(name="decision_value_raw", values=seager_preds))
-                df = df.with_columns(
-                    pl.when(pl.col("swing") == 0)
-                    .then(-1 * pl.col("decision_value_raw"))
-                    .otherwise(pl.col("decision_value_raw"))
-                    .alias("decision_value")
-                )
-                print(f"Applied SEAGER model: {len(seager_preds):,} predictions")
-            else:
-                print("SEAGER model loaded but predictions failed.")
         else:
             if hasattr(models.seager, "feature_names_in_"):
                 seager_features = list(models.seager.feature_names_in_)
             else:
-                seager_features = ["balls", "strikes", "x", "z", "pitch_velo", "vaa", "haa", "stands", "throws"]
+                seager_features = [
+                    "balls",
+                    "strikes",
+                    "x",
+                    "z",
+                    "pitch_velo",
+                    "vaa",
+                    "haa",
+                    "stands",
+                    "throws",
+                ]
             print(f"SEAGER model features: {seager_features}")
+
+        # Create a separate dataframe for SEAGER prediction with encoded values
+        seager_df = df.select(seager_features).to_pandas()
+
+        # Use LabelEncoder for categorical columns
+        if LabelEncoder is not None:
             if "stands" in seager_features:
-                df = df.with_columns(
-                    pl.when(pl.col("stands") == "L").then(0).when(pl.col("stands") == "R").then(1).otherwise(None).alias("stands")
+                le_stands = LabelEncoder()
+                seager_df["stands"] = seager_df["stands"].fillna("R")
+                seager_df["stands"] = le_stands.fit_transform(seager_df["stands"])
+            if "throws" in seager_features:
+                le_throws = LabelEncoder()
+                seager_df["throws"] = seager_df["throws"].fillna("R")
+                seager_df["throws"] = le_throws.fit_transform(seager_df["throws"])
+        else:
+            # Fallback if sklearn not available
+            if "stands" in seager_features:
+                seager_df["stands"] = (
+                    seager_df["stands"].map({"L": 0, "R": 1}).fillna(1)
                 )
-            seager_preds = _predict_model(models.seager, df, seager_features)
-            if seager_preds is not None:
-                df = df.with_columns(pl.Series(name="decision_value_raw", values=seager_preds))
-                df = df.with_columns(
-                    pl.when(pl.col("swing") == 0)
-                    .then(-1 * pl.col("decision_value_raw"))
-                    .otherwise(pl.col("decision_value_raw"))
-                    .alias("decision_value")
+            if "throws" in seager_features:
+                seager_df["throws"] = (
+                    seager_df["throws"].map({"L": 0, "R": 1}).fillna(1)
                 )
-                print(f"Applied SEAGER model: {len(seager_preds):,} predictions")
+
+        # Cast numeric columns
+        if "balls" in seager_features:
+            seager_df["balls"] = seager_df["balls"].astype("Int64")
+        if "strikes" in seager_features:
+            seager_df["strikes"] = seager_df["strikes"].astype("Int64")
+
+        try:
+            if LinearGAM is not None and isinstance(models.seager, LinearGAM):
+                seager_preds = models.seager.predict(
+                    seager_df[seager_features].to_numpy()
+                )
+            elif hasattr(models.seager, "predict_proba"):
+                seager_preds = models.seager.predict_proba(seager_df)[:, 1]
             else:
-                print("SEAGER model loaded but predictions failed.")
+                seager_preds = models.seager.predict(seager_df)
+            seager_preds = np.asarray(seager_preds)
+        except Exception as e:
+            print(f"SEAGER model prediction failed: {e}")
+            seager_preds = None
+
+        if seager_preds is not None:
+            df = df.with_columns(
+                pl.Series(name="decision_value_raw", values=seager_preds)
+            )
+            df = df.with_columns(
+                pl.when(pl.col("swing") == 0)
+                .then(-1 * pl.col("decision_value_raw"))
+                .otherwise(pl.col("decision_value_raw"))
+                .alias("decision_value")
+            )
+            print(f"Applied SEAGER model: {len(seager_preds):,} predictions")
+        else:
+            print("SEAGER model loaded but predictions failed.")
     else:
         print("Skipped SEAGER model.")
 
+    stuff_preds = predict_stuff(models.stuff_predictor, df)
+    if stuff_preds is not None:
+        df = df.with_columns(pl.Series(name="stuff_raw", values=stuff_preds))
+        print(f"Applied stuff model: {len(stuff_preds):,} predictions")
+    else:
+        print("Skipped stuff model.")
+
     return df
+
+
+def predict_stuff(predictor: object | None, df: pl.DataFrame) -> np.ndarray | None:
+    if predictor is None:
+        return None
+    try:
+        # Debug: check which features the model expects vs what we have
+        if hasattr(predictor, "features"):
+            expected = set(predictor.features)
+            available = set(df.columns)
+            missing = expected - available
+            if missing:
+                print(f"Stuff model missing features: {missing}")
+            extra = available & expected
+            print(
+                f"Stuff model using {len(extra)} of {len(expected)} expected features"
+            )
+        preds = predictor.predict(df)
+    except Exception as e:
+        print(f"Stuff model prediction failed: {e}")
+        return None
+    return np.asarray(preds)
+
+
+def compute_stuff_stats(
+    pitch_df: pl.DataFrame,
+    group_cols: Iterable[str],
+    raw_col: str = "stuff_raw",
+) -> pl.DataFrame:
+    if pitch_df.is_empty() or raw_col not in pitch_df.columns:
+        return pl.DataFrame()
+    return (
+        pitch_df.filter(pl.col("level_id") == 1)
+        .group_by(list(group_cols))
+        .agg(
+            [
+                pl.col(raw_col).mean().alias("stuff_raw_mean"),
+                pl.col(raw_col).std().alias("stuff_raw_std"),
+            ]
+        )
+    )
+
+
+def add_stuff_grade(
+    df: pl.DataFrame,
+    stats_df: pl.DataFrame,
+    join_cols: Iterable[str],
+    raw_col: str = "stuff_raw",
+    grade_col: str = "stuff",
+    z_col: str = "stuff_z",
+) -> pl.DataFrame:
+    if df.is_empty() or raw_col not in df.columns or stats_df.is_empty():
+        return df
+    join_cols = list(join_cols)
+    stats_cols = join_cols + ["stuff_raw_mean", "stuff_raw_std"]
+    stats_df = stats_df.select([c for c in stats_cols if c in stats_df.columns])
+    df = df.join(stats_df, on=join_cols, how="left")
+    z_expr = (
+        pl.when(pl.col("stuff_raw_std").is_not_null() & (pl.col("stuff_raw_std") > 0))
+        .then((pl.col(raw_col) - pl.col("stuff_raw_mean")) / pl.col("stuff_raw_std"))
+        .otherwise(pl.lit(None))
+    )
+    grade_expr = (STUFF_SCALE_MEAN - (STUFF_SCALE_STD * z_expr)).clip(20, 80)
+    return df.with_columns([z_expr.alias(z_col), grade_expr.alias(grade_col)]).drop(
+        [c for c in ["stuff_raw_mean", "stuff_raw_std"] if c in df.columns]
+    )
+
 
 def _pos_label(pos: int | None) -> str:
     mapping = {
@@ -706,7 +894,7 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
     )
 
     hitters = (
-        df.group_by(["batter_mlbid", "hitter_name", "level_id", "hitting_code", "season"])
+        df.group_by(["batter_mlbid", "hitter_name", "level_id", "season"])
         .agg(
             [
                 pl.len().alias("pitches"),
@@ -717,7 +905,7 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                 (
                     100
                     * (
-                        (pl.col("launch_angle") > 20)
+                        (pl.col("launch_angle") >= 20)
                         & (pl.col("spray_angle_adj") < -15)
                         & (pl.col("is_in_play") == True)
                     ).sum()
@@ -730,13 +918,21 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                 ).alias("chase"),
                 (
                     100
-                    * ((pl.col("whiff") != 1) & (pl.col("swing") == 1) & (pl.col("is_inzone_pi") == True)).sum()
+                    * (
+                        (pl.col("whiff") != 1)
+                        & (pl.col("swing") == 1)
+                        & (pl.col("is_inzone_pi") == True)
+                    ).sum()
                     / ((pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1)).sum()
                 ).alias("z_con"),
                 (
                     100
-                    * ((pl.col("whiff") == 1) & (pl.col("pi_pitch_group") != "FA")).sum()
-                    / ((pl.col("swing") == 1) & (pl.col("pi_pitch_group") != "FA")).sum()
+                    * (
+                        (pl.col("whiff") == 1) & (pl.col("pi_pitch_group") != "FA")
+                    ).sum()
+                    / (
+                        (pl.col("swing") == 1) & (pl.col("pi_pitch_group") != "FA")
+                    ).sum()
                 ).alias("secondary_whiff_pct"),
                 (
                     100
@@ -768,15 +964,19 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                 (
                     100
                     * (
-                        pl.when(pl.col("swing") == 1).then(pl.col("pred_whiff_loc")).mean()
+                        pl.when(pl.col("swing") == 1)
+                        .then(pl.col("pred_whiff_loc"))
+                        .mean()
                         - (pl.col("whiff").sum() / (pl.col("swing") == 1).sum())
                     )
                 ).alias("contact_vs_avg"),
                 (
                     100
-                    * ((pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)).sum()
+                    * (
+                        (pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)
+                    ).sum()
                     / (pl.col("is_in_play") == True).sum()
-                ).alias("GB_pct"),
+                ).alias("LA_lte_0"),
                 (
                     100
                     * (
@@ -788,26 +988,59 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                 ).alias("LD_pct"),
                 (
                     100
-                    * ((pl.col("launch_angle") > 20) & (pl.col("is_in_play") == True)).sum()
+                    * (
+                        (pl.col("launch_angle") >= 20) & (pl.col("is_in_play") == True)
+                    ).sum()
                     / (pl.col("is_in_play") == True).sum()
-                ).alias("FB_pct"),
+                ).alias("LA_gte_20"),
                 pl.mean("bat_speed").alias("bat_speed"),
                 pl.mean("swing_length").alias("swing_length"),
                 pl.mean("attack_angle").alias("attack_angle"),
                 pl.mean("swing_path_tilt").alias("swing_path_tilt"),
+                # Collect unique team codes into a pipe-separated string (exclude numeric mlbid fallbacks)
+                pl.col("hitting_code")
+                .filter(
+                    pl.col("hitting_code").is_not_null()
+                    & ~pl.col("hitting_code").str.contains(r"^\d+$")
+                )
+                .unique()
+                .sort()
+                .implode()
+                .list.join(" | ")
+                .alias("team"),
             ]
         )
-        .with_columns((pl.col("selection_skill") - pl.col("hittable_pitches_taken")).alias("SEAGER"))
+        .with_columns(
+            (pl.col("selection_skill") - pl.col("hittable_pitches_taken")).alias(
+                "SEAGER"
+            )
+        )
     )
 
     pos_counts = (
-        df.group_by(["batter_mlbid", "hitter_name", "level_id", "hitting_code", "season", "position"])
+        df.group_by(
+            [
+                "batter_mlbid",
+                "hitter_name",
+                "level_id",
+                "season",
+                "position",
+            ]
+        )
         .agg(pl.n_unique("pa_id").alias("PA_pos"))
-        .pivot(values="PA_pos", index=["batter_mlbid", "hitter_name", "level_id", "hitting_code", "season"], columns="position")
+        .pivot(
+            values="PA_pos",
+            index=["batter_mlbid", "hitter_name", "level_id", "season"],
+            columns="position",
+        )
         .fill_null(0)
     )
 
-    hitters = hitters.join(pos_counts, on=["batter_mlbid", "hitter_name", "level_id", "hitting_code", "season"], how="left")
+    hitters = hitters.join(
+        pos_counts,
+        on=["batter_mlbid", "hitter_name", "level_id", "season"],
+        how="left",
+    )
 
     desired_pos = ["UT", "C", "X1B", "X2B", "X3B", "SS", "OF", "P", "NA"]
     for col in desired_pos:
@@ -821,85 +1054,95 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
 
-    pitchers = (
-        df.group_by(["pitcher_mlbid", "name", "season", "level_id", "pitching_code", "pitcher_hand"])
-        .agg(
-            [
-                pl.len().alias("pitches"),
-                pl.n_unique("pa_id").alias("TBF"),
-                (pl.n_unique("pa_id") / pl.n_unique("game_pk")).alias("TBF_per_G"),
-                (pl.sum("whiff") / pl.len()).mul(100).alias("SwStr"),
-                ((pl.col("is_ball") == True).sum() / pl.len()).mul(100).alias("Ball_pct"),
-                (
-                    100
-                    * ((pl.col("whiff") != 1) & (pl.col("swing") == 1) & (pl.col("is_inzone_pi") == True)).sum()
-                    / ((pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1)).sum()
-                ).alias("Z_Contact"),
-                (
-                    100
-                    * ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)).sum()
-                    / (pl.col("is_inzone_pi") == False).sum()
-                ).alias("Chase"),
-                (
-                    100
-                    * (
-                        ((pl.col("whiff") == 1)).sum()
-                        + ((pl.col("pitch_outcome") == "S") & (pl.col("swing") == 0)).sum()
-                    )
-                    / pl.len()
-                ).alias("CSW"),
-                (
-                    100 * pl.col("pred_whiff_base").mean()
-                ).alias("pSwStr"),
-                (
-                    100 * (pl.col("pitch_group") == "FA").sum() / pl.len()
-                ).alias("FA_pct"),
-                (
-                    pl.when(pl.col("pitch_group") == "BR")
-                    .then(pl.col("rpm"))
-                    .mean()
-                ).alias("BB_rpm"),
-                (
-                    pl.when(pl.col("pitch_group") == "FA")
-                    .then(pl.col("spin_efficiency"))
-                    .mean()
-                ).alias("FA_spin_eff"),
-                (
-                    100
-                    * ((pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)).sum()
-                    / (pl.col("is_in_play") == True).sum()
-                ).alias("GB_pct"),
-                (
-                    100
-                    * (
-                        (pl.col("launch_angle") >= 0)
-                        & (pl.col("launch_angle") <= 20)
-                        & (pl.col("is_in_play") == True)
-                    ).sum()
-                    / (pl.col("is_in_play") == True).sum()
-                ).alias("LD_pct"),
-                (
-                    100
-                    * ((pl.col("launch_angle") > 20) & (pl.col("is_in_play") == True)).sum()
-                    / (pl.col("is_in_play") == True).sum()
-                ).alias("FB_pct"),
-                pl.mean("pitch_velo").alias("fastball_velo"),
-                pl.max("pitch_velo").alias("max_velo"),
-                pl.mean("vaa").alias("fastball_vaa"),
-                pl.mean("release_z").alias("rel_z"),
-                pl.mean("release_x").alias("rel_x"),
-                pl.mean("ext").alias("ext"),
-                pl.mean("arm_angle").alias("arm_angle"),
-            ]
-        )
-        .with_columns(
-            [
-                pl.lit(None).cast(pl.Float64).alias("IP"),
-                pl.lit(None).cast(pl.Float64).alias("std.ZQ"),
-                pl.lit(None).cast(pl.Float64).alias("std.DMG"),
-                pl.lit(None).cast(pl.Float64).alias("std.NRV"),
-            ]
-        )
+    pitchers = df.group_by(
+        ["pitcher_mlbid", "name", "season", "level_id", "pitcher_hand"]
+    ).agg(
+        [
+            pl.len().alias("pitches"),
+            pl.n_unique("pa_id").alias("TBF"),
+            (pl.sum("outs_recorded") / 3).round(1).alias("IP"),
+            (pl.n_unique("pa_id") / pl.n_unique("game_pk")).alias("TBF_per_G"),
+            (pl.sum("whiff") / pl.len()).mul(100).alias("SwStr"),
+            ((pl.col("is_ball") == True).sum() / pl.len()).mul(100).alias("Ball_pct"),
+            (
+                100
+                * (
+                    (pl.col("whiff") != 1)
+                    & (pl.col("swing") == 1)
+                    & (pl.col("is_inzone_pi") == True)
+                ).sum()
+                / ((pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1)).sum()
+            ).alias("Z_Contact"),
+            (
+                100
+                * ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)).sum()
+                / (pl.col("is_inzone_pi") == False).sum()
+            ).alias("Chase"),
+            (
+                100
+                * (
+                    ((pl.col("whiff") == 1)).sum()
+                    + ((pl.col("pitch_outcome") == "S") & (pl.col("swing") == 0)).sum()
+                )
+                / pl.len()
+            ).alias("CSW"),
+            (100 * pl.col("pred_whiff_base").mean()).alias("pWhiff"),
+            (100 * (pl.col("pitch_group") == "FA").sum() / pl.len()).alias("FA_pct"),
+            (pl.when(pl.col("pitch_group") == "BR").then(pl.col("rpm")).mean()).alias(
+                "BB_rpm"
+            ),
+            (
+                pl.when(pl.col("pitch_group") == "FA")
+                .then(pl.col("spin_efficiency"))
+                .mean()
+            ).alias("FA_spin_eff"),
+            (
+                100
+                * ((pl.col("launch_angle") <= 0) & (pl.col("is_in_play") == True)).sum()
+                / (pl.col("is_in_play") == True).sum()
+            ).alias("LA_lte_0"),
+            (
+                100
+                * (
+                    (pl.col("launch_angle") >= 0)
+                    & (pl.col("launch_angle") <= 20)
+                    & (pl.col("is_in_play") == True)
+                ).sum()
+                / (pl.col("is_in_play") == True).sum()
+            ).alias("LD_pct"),
+            (
+                100
+                * (
+                    (pl.col("launch_angle") >= 20) & (pl.col("is_in_play") == True)
+                ).sum()
+                / (pl.col("is_in_play") == True).sum()
+            ).alias("LA_gte_20"),
+            pl.mean("primary_velo").alias("fastball_velo"),
+            pl.max("pitch_velo").alias("max_velo"),
+            pl.mean("primary_vaa").alias("fastball_vaa"),
+            pl.mean("stuff_raw").alias("stuff_raw"),
+            pl.mean("release_z").alias("rel_z"),
+            pl.mean("release_x").alias("rel_x"),
+            pl.mean("ext").alias("ext"),
+            pl.mean("arm_angle").alias("arm_angle"),
+            pl.col("primary_tag")
+            .filter(pl.col("primary_tag").is_not_null())
+            .unique()
+            .implode()
+            .list.join(", ")
+            .alias("primary_pitches"),
+            # Collect unique team codes into a pipe-separated string (exclude numeric mlbid fallbacks)
+            pl.col("pitching_code")
+            .filter(
+                pl.col("pitching_code").is_not_null()
+                & ~pl.col("pitching_code").str.contains(r"^\d+$")
+            )
+            .unique()
+            .sort()
+            .implode()
+            .list.join(" | ")
+            .alias("team"),
+        ]
     )
     return pitchers
 
@@ -908,6 +1151,8 @@ def _tag_pitch(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(
         pl.when(pl.col("pi_pitch_sub_type") == "SW")
         .then(pl.lit("SW"))
+        .when(pl.col("pi_pitch_sub_type") == "SP")
+        .then(pl.lit("SP"))
         .when(pl.col("pi_pitch_type") == "SI")
         .then(pl.lit("SI"))
         .when((pl.col("pi_pitch_group") == "FA") & (pl.col("pi_pitch_type") == "FC"))
@@ -931,50 +1176,84 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
     df = _tag_pitch(df)
-    pitch_types = (
-        df.group_by(["name", "level_id", "pitcher_mlbid", "pitcher_hand", "pitching_code", "season", "pitch_tag"])
-        .agg(
-            [
-                pl.len().alias("pitches"),
-                (pl.len() / pl.sum("pitch_of_ab")).alias("pct"),
-                pl.mean("pitch_velo").alias("velo"),
-                pl.max("pitch_velo").alias("max_velo"),
-                pl.mean("vaa").alias("vaa"),
-                pl.mean("haa").alias("haa"),
-                pl.mean("ivb").alias("ivb"),
-                pl.mean("hb_arm").alias("hb"),
-                (pl.sum("whiff") / pl.len()).mul(100).alias("SwStr"),
-                ((pl.col("is_ball") == True).sum() / pl.len()).mul(100).alias("Ball_pct"),
-                (
-                    100
-                    * ((pl.col("whiff") != 1) & (pl.col("swing") == 1) & (pl.col("is_inzone_pi") == True)).sum()
-                    / ((pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1)).sum()
-                ).alias("Z_Contact"),
-                (
-                    100
-                    * ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)).sum()
-                    / (pl.col("is_inzone_pi") == False).sum()
-                ).alias("Chase"),
-                (
-                    100
-                    * (
-                        ((pl.col("whiff") == 1)).sum()
-                        + ((pl.col("pitch_outcome") == "S") & (pl.col("swing") == 0)).sum()
-                    )
-                    / pl.len()
-                ).alias("CSW"),
-                (
-                    100 * pl.when(pl.col("swing") == 1).then(pl.col("pred_whiff_base")).mean()
-                ).alias("pred_whiff_pct"),
-            ]
-        )
-        .with_columns(
-            [
-                pl.lit(None).cast(pl.Float64).alias("std.ZQ"),
-                pl.lit(None).cast(pl.Float64).alias("std.DMG"),
-                pl.lit(None).cast(pl.Float64).alias("std.NRV"),
-            ]
-        )
+    pitch_types = df.group_by(
+        [
+            "name",
+            "level_id",
+            "pitcher_mlbid",
+            "pitcher_hand",
+            "season",
+            "pitch_tag",
+        ]
+    ).agg(
+        [
+            pl.len().alias("pitches"),
+            (100 * (pl.len() / pl.sum("pitch_of_ab"))).alias("pct"),
+            pl.mean("stuff_raw").alias("stuff_raw"),
+            pl.mean("pitch_velo").alias("velo"),
+            pl.max("pitch_velo").alias("max_velo"),
+            pl.mean("vaa").alias("vaa"),
+            pl.mean("haa").alias("haa"),
+            pl.mean("vbreak").alias("vbreak"),
+            pl.mean("hbreak").alias("hbreak"),
+            pl.mean("loc_adj_vaa").alias("loc_adj_vaa"),
+            pl.mean("rpm").alias("rpm"),
+            pl.mean("axis").alias("axis"),
+            pl.mean("spin_efficiency").alias("spin_efficiency"),
+            pl.col("primary_tag")
+            .filter(pl.col("primary_tag").is_not_null())
+            .unique()
+            .implode()
+            .list.join(", ")
+            .alias("primary_pitches"),
+            pl.mean("primary_loc_adj_vaa").alias("primary_loc_adj_vaa"),
+            pl.mean("primary_velo").alias("primary_velo"),
+            pl.mean("primary_rpm").alias("primary_rpm"),
+            pl.mean("primary_axis").alias("primary_axis"),
+            pl.mean("primary_hbreak").alias("primary_hbreak"),
+            pl.mean("primary_vbreak").alias("primary_vbreak"),
+            pl.mean("primary_z_release").alias("primary_z_release"),
+            pl.mean("primary_x_release").alias("primary_x_release"),
+            (pl.sum("whiff") / pl.len()).mul(100).alias("SwStr"),
+            ((pl.col("is_ball") == True).sum() / pl.len()).mul(100).alias("Ball_pct"),
+            (
+                100
+                * (
+                    (pl.col("whiff") != 1)
+                    & (pl.col("swing") == 1)
+                    & (pl.col("is_inzone_pi") == True)
+                ).sum()
+                / ((pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1)).sum()
+            ).alias("Z_Contact"),
+            (
+                100
+                * ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)).sum()
+                / (pl.col("is_inzone_pi") == False).sum()
+            ).alias("Chase"),
+            (
+                100
+                * (
+                    ((pl.col("whiff") == 1)).sum()
+                    + ((pl.col("pitch_outcome") == "S") & (pl.col("swing") == 0)).sum()
+                )
+                / pl.len()
+            ).alias("CSW"),
+            (
+                100
+                * pl.when(pl.col("swing") == 1).then(pl.col("pred_whiff_base")).mean()
+            ).alias("pred_whiff_pct"),
+            # Collect unique team codes into a pipe-separated string (exclude numeric mlbid fallbacks)
+            pl.col("pitching_code")
+            .filter(
+                pl.col("pitching_code").is_not_null()
+                & ~pl.col("pitching_code").str.contains(r"^\d+$")
+            )
+            .unique()
+            .sort()
+            .implode()
+            .list.join(" | ")
+            .alias("team"),
+        ]
     )
     return pitch_types
 
@@ -996,19 +1275,29 @@ def build_team_hitting(df: pl.DataFrame) -> pl.DataFrame:
                 ).alias("chase"),
                 (
                     100
-                    * ((pl.col("whiff") != 1) & (pl.col("swing") == 1) & (pl.col("is_inzone_pi") == True)).sum()
+                    * (
+                        (pl.col("whiff") != 1)
+                        & (pl.col("swing") == 1)
+                        & (pl.col("is_inzone_pi") == True)
+                    ).sum()
                     / ((pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1)).sum()
                 ).alias("z_con"),
                 (
                     100
-                    * ((pl.col("whiff") == 1) & (pl.col("pi_pitch_group") != "FA")).sum()
-                    / ((pl.col("swing") == 1) & (pl.col("pi_pitch_group") != "FA")).sum()
+                    * (
+                        (pl.col("whiff") == 1) & (pl.col("pi_pitch_group") != "FA")
+                    ).sum()
+                    / (
+                        (pl.col("swing") == 1) & (pl.col("pi_pitch_group") != "FA")
+                    ).sum()
                 ).alias("secondary_whiff_pct"),
                 (
                     100
-                    * ((pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)).sum()
+                    * (
+                        (pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)
+                    ).sum()
                     / (pl.col("is_in_play") == True).sum()
-                ).alias("GB_pct"),
+                ).alias("LA_lte_0"),
                 (
                     100
                     * (
@@ -1020,13 +1309,15 @@ def build_team_hitting(df: pl.DataFrame) -> pl.DataFrame:
                 ).alias("LD_pct"),
                 (
                     100
-                    * ((pl.col("launch_angle") > 20) & (pl.col("is_in_play") == True)).sum()
+                    * (
+                        (pl.col("launch_angle") >= 20) & (pl.col("is_in_play") == True)
+                    ).sum()
                     / (pl.col("is_in_play") == True).sum()
-                ).alias("FB_pct"),
+                ).alias("LA_gte_20"),
                 (
                     100
                     * (
-                        (pl.col("launch_angle") > 20)
+                        (pl.col("launch_angle") >= 20)
                         & (pl.col("spray_angle_adj") < -15)
                         & (pl.col("is_in_play") == True)
                     ).sum()
@@ -1057,13 +1348,19 @@ def build_team_hitting(df: pl.DataFrame) -> pl.DataFrame:
                 (
                     100
                     * (
-                        pl.when(pl.col("swing") == 1).then(pl.col("pred_whiff_loc")).mean()
+                        pl.when(pl.col("swing") == 1)
+                        .then(pl.col("pred_whiff_loc"))
+                        .mean()
                         - (pl.col("whiff").sum() / (pl.col("swing") == 1).sum())
                     )
                 ).alias("contact_vs_avg"),
             ]
         )
-        .with_columns((pl.col("selection_skill") - pl.col("hittable_pitches_taken")).alias("SEAGER"))
+        .with_columns(
+            (pl.col("selection_skill") - pl.col("hittable_pitches_taken")).alias(
+                "SEAGER"
+            )
+        )
     )
     return team
 
@@ -1071,85 +1368,276 @@ def build_team_hitting(df: pl.DataFrame) -> pl.DataFrame:
 def build_team_pitching(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
-    team = (
-        df.group_by(["pitching_code", "level_id", "season"])
-        .agg(
-            [
-                pl.n_unique("pa_id").alias("TBF"),
-                pl.sum("bbe").alias("bbe"),
-                pl.len().alias("pitches"),
-                (pl.sum("whiff") / pl.len()).mul(100).alias("SwStr"),
-                ((pl.col("is_ball") == True).sum() / pl.len()).mul(100).alias("Ball_pct"),
-                (
-                    100
-                    * ((pl.col("whiff") != 1) & (pl.col("swing") == 1) & (pl.col("is_inzone_pi") == True)).sum()
-                    / ((pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1)).sum()
-                ).alias("Z_Contact"),
-                (
-                    100
-                    * ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)).sum()
-                    / (pl.col("is_inzone_pi") == False).sum()
-                ).alias("Chase"),
-                (
-                    100
-                    * (
-                        ((pl.col("whiff") == 1)).sum()
-                        + ((pl.col("pitch_outcome") == "S") & (pl.col("swing") == 0)).sum()
-                    )
-                    / pl.len()
-                ).alias("CSW"),
-                (
-                    100 * pl.col("pred_whiff_base").mean()
-                ).alias("pSwStr"),
-                (
-                    100
-                    * ((pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)).sum()
-                    / (pl.col("is_in_play") == True).sum()
-                ).alias("GB_pct"),
-                (
-                    100
-                    * (
-                        (pl.col("launch_angle") >= 0)
-                        & (pl.col("launch_angle") <= 20)
-                        & (pl.col("is_in_play") == True)
-                    ).sum()
-                    / (pl.col("is_in_play") == True).sum()
-                ).alias("LD_pct"),
-                (
-                    100
-                    * ((pl.col("launch_angle") > 20) & (pl.col("is_in_play") == True)).sum()
-                    / (pl.col("is_in_play") == True).sum()
-                ).alias("FB_pct"),
-                pl.mean("pitch_velo").alias("fastball_velo"),
-                pl.mean("vaa").alias("fastball_vaa"),
-            ]
-        )
-        .with_columns(
-            [
-                pl.lit(None).cast(pl.Float64).alias("IP"),
-                pl.lit(None).cast(pl.Float64).alias("std.ZQ"),
-                pl.lit(None).cast(pl.Float64).alias("std.DMG"),
-                pl.lit(None).cast(pl.Float64).alias("std.NRV"),
-            ]
-        )
+    team = df.group_by(["pitching_code", "level_id", "season"]).agg(
+        [
+            pl.n_unique("pa_id").alias("TBF"),
+            (pl.sum("outs_recorded") / 3).round(1).alias("IP"),
+            pl.sum("bbe").alias("bbe"),
+            pl.len().alias("pitches"),
+            pl.mean("stuff_raw").alias("stuff_raw"),
+            (pl.sum("whiff") / pl.len()).mul(100).alias("SwStr"),
+            ((pl.col("is_ball") == True).sum() / pl.len()).mul(100).alias("Ball_pct"),
+            (
+                100
+                * (
+                    (pl.col("whiff") != 1)
+                    & (pl.col("swing") == 1)
+                    & (pl.col("is_inzone_pi") == True)
+                ).sum()
+                / ((pl.col("is_inzone_pi") == True) & (pl.col("swing") == 1)).sum()
+            ).alias("Z_Contact"),
+            (
+                100
+                * ((pl.col("swing") == 1) & (pl.col("is_inzone_pi") == False)).sum()
+                / (pl.col("is_inzone_pi") == False).sum()
+            ).alias("Chase"),
+            (
+                100
+                * (
+                    ((pl.col("whiff") == 1)).sum()
+                    + ((pl.col("pitch_outcome") == "S") & (pl.col("swing") == 0)).sum()
+                )
+                / pl.len()
+            ).alias("CSW"),
+            (100 * pl.col("pred_whiff_base").mean()).alias("pWhiff"),
+            (
+                100
+                * ((pl.col("launch_angle") < 0) & (pl.col("is_in_play") == True)).sum()
+                / (pl.col("is_in_play") == True).sum()
+            ).alias("LA_lte_0"),
+            (
+                100
+                * (
+                    (pl.col("launch_angle") >= 0)
+                    & (pl.col("launch_angle") <= 20)
+                    & (pl.col("is_in_play") == True)
+                ).sum()
+                / (pl.col("is_in_play") == True).sum()
+            ).alias("LD_pct"),
+            (
+                100
+                * (
+                    (pl.col("launch_angle") >= 20) & (pl.col("is_in_play") == True)
+                ).sum()
+                / (pl.col("is_in_play") == True).sum()
+            ).alias("LA_gte_20"),
+            pl.mean("primary_velo").alias("fastball_velo"),
+            pl.mean("primary_vaa").alias("fastball_vaa"),
+        ]
     )
     return team
 
 
-def add_percentiles(df: pl.DataFrame, group_cols: Iterable[str], value_cols: Iterable[str]) -> pl.DataFrame:
+def add_percentiles(
+    df: pl.DataFrame,
+    group_cols: Iterable[str],
+    value_cols: Iterable[str],
+    filter_col: str | None = None,
+    min_threshold: float | None = None,
+) -> pl.DataFrame:
+    """Add percentile columns for value_cols, grouped by group_cols.
+
+    If filter_col and min_threshold are provided, percentiles are computed only
+    among rows meeting the threshold, but results are returned for all rows.
+    """
     if df.is_empty():
         return df
     df_pd = df.to_pandas()
-    pct = df_pd.groupby(list(group_cols))[list(value_cols)].rank(pct=True) * 100
-    pct.columns = [f"{c}_pctile" for c in pct.columns]
-    pct = pct.reset_index(drop=True)
-    merged = pd.concat([df_pd.reset_index(drop=True), pct], axis=1)
-    return pl.from_pandas(merged)
+    group_list = list(group_cols)
+    value_list = list(value_cols)
+
+    # If threshold specified, compute percentiles only among qualified rows
+    if filter_col and min_threshold is not None and filter_col in df_pd.columns:
+        qualified = df_pd[df_pd[filter_col] >= min_threshold].copy()
+        if qualified.empty:
+            # No qualified rows, return df with null percentile columns
+            for col in value_list:
+                df_pd[f"{col}_pctile"] = None
+            return pl.from_pandas(df_pd)
+
+        # Compute percentiles among qualified rows
+        pct = qualified.groupby(group_list)[value_list].rank(pct=True) * 100
+        pct.columns = [f"{c}_pctile" for c in pct.columns]
+        pct.index = qualified.index
+
+        # Merge back to original dataframe (unqualified rows get NaN)
+        for col in pct.columns:
+            df_pd[col] = pct[col]
+    else:
+        pct = df_pd.groupby(group_list)[value_list].rank(pct=True) * 100
+        pct.columns = [f"{c}_pctile" for c in pct.columns]
+        pct = pct.reset_index(drop=True)
+        df_pd = pd.concat([df_pd.reset_index(drop=True), pct], axis=1)
+
+    return pl.from_pandas(df_pd)
 
 
 def write_csv(df: pl.DataFrame, name: str, out_dir: Path) -> None:
     path = out_dir / name
     df.to_pandas().to_csv(path, index=False)
+
+
+def compute_stuff_percentiles(
+    df: pl.DataFrame,
+    raw_col: str = "stuff_raw",
+    min_pitches: int = 50,
+) -> pl.DataFrame:
+    """Compute stuff grade percentile thresholds by season + pitch_tag.
+
+    Uses percentile-based scaling where:
+    - 1st percentile of stuff_raw (best) maps to grade 80
+    - 99th percentile of stuff_raw (worst) maps to grade 20
+
+    Percentiles are computed from pitcher-level averages (min pitches) to avoid
+    high-volume pitchers skewing the distribution.
+
+    For early-season data where a pitch type doesn't have enough qualified pitchers,
+    falls back to the average percentiles from other seasons for that pitch type.
+
+    Returns a DataFrame with columns: season, pitch_tag, stuff_p01, stuff_p99
+    """
+    if df.is_empty() or raw_col not in df.columns:
+        return pl.DataFrame()
+
+    # First, compute pitcher-level averages for each pitch type (MLB only, min pitches)
+    pitcher_avgs = (
+        df.filter(pl.col("level_id") == 1)
+        .group_by(["season", "pitcher_mlbid", "pitch_tag"])
+        .agg(
+            [
+                pl.col(raw_col).mean().alias("pitcher_stuff_avg"),
+                pl.len().alias("pitch_count"),
+            ]
+        )
+        .filter(pl.col("pitch_count") >= min_pitches)
+    )
+
+    # Compute percentiles from the pitcher-level averages by season
+    stats = pitcher_avgs.group_by(["season", "pitch_tag"]).agg(
+        [
+            pl.col("pitcher_stuff_avg").quantile(0.01).alias("stuff_p01"),
+            pl.col("pitcher_stuff_avg").quantile(0.99).alias("stuff_p99"),
+            pl.len().alias("n_pitchers"),
+        ]
+    )
+
+    # Compute fallback percentiles averaged across all seasons for each pitch type
+    fallback_stats = pitcher_avgs.group_by(["pitch_tag"]).agg(
+        [
+            pl.col("pitcher_stuff_avg").quantile(0.01).alias("fallback_p01"),
+            pl.col("pitcher_stuff_avg").quantile(0.99).alias("fallback_p99"),
+        ]
+    )
+
+    # Join both and use fallback when current season has insufficient data (< 10 pitchers)
+    stats = stats.join(fallback_stats, on=["pitch_tag"], how="left")
+    stats = stats.with_columns(
+        [
+            pl.when(pl.col("n_pitchers") >= 10)
+            .then(pl.col("stuff_p01"))
+            .otherwise(pl.col("fallback_p01"))
+            .alias("stuff_p01"),
+            pl.when(pl.col("n_pitchers") >= 10)
+            .then(pl.col("stuff_p99"))
+            .otherwise(pl.col("fallback_p99"))
+            .alias("stuff_p99"),
+        ]
+    ).drop(["fallback_p01", "fallback_p99", "n_pitchers"])
+
+    return stats
+
+
+def apply_stuff_grade(
+    df: pl.DataFrame,
+    percentiles: pl.DataFrame,
+    raw_col: str = "stuff_raw",
+    grade_col: str = "stuff",
+) -> pl.DataFrame:
+    """Apply stuff grades to aggregated data using precomputed percentiles.
+
+    Joins percentile thresholds and computes grades from the aggregated stuff_raw.
+    Linear interpolation: p01 -> 80, p99 -> 20, clipped to 20-80 range.
+
+    Note: stuff_raw is inverted (lower = better), so p01 is best and p99 is worst.
+    """
+    if df.is_empty() or raw_col not in df.columns or percentiles.is_empty():
+        return df
+
+    df = df.join(percentiles, on=["season", "pitch_tag"], how="left")
+    grade_expr = (
+        pl.when(
+            pl.col("stuff_p99").is_not_null()
+            & pl.col("stuff_p01").is_not_null()
+            & (pl.col("stuff_p99") != pl.col("stuff_p01"))
+        )
+        .then(
+            (
+                80.0
+                - 60.0
+                * (pl.col(raw_col) - pl.col("stuff_p01"))
+                / (pl.col("stuff_p99") - pl.col("stuff_p01"))
+            )
+            .clip(20, 80)
+            .round(0)
+            .cast(pl.Int64)
+        )
+        .otherwise(pl.lit(None))
+    )
+    return df.with_columns([grade_expr.alias(grade_col)]).drop(
+        ["stuff_p01", "stuff_p99"]
+    )
+
+
+# ARCHIVED: Raw pitch-level percentile method (may skew toward high-volume pitchers)
+# def add_pitch_level_stuff_grade_raw_percentiles(
+#     df: pl.DataFrame,
+#     raw_col: str = "stuff_raw",
+#     grade_col: str = "stuff",
+# ) -> pl.DataFrame:
+#     """Add stuff grades at pitch level, standardized by season + pitch_tag.
+#
+#     Uses percentile-based scaling where:
+#     - 20th percentile of stuff_raw (best) maps to grade 80
+#     - 80th percentile of stuff_raw (worst) maps to grade 20
+#
+#     Note: stuff_raw is inverted (lower = better), so p20 is best and p80 is worst.
+#     Grades are clipped to 20-80 range.
+#     """
+#     if df.is_empty() or raw_col not in df.columns:
+#         return df
+#     # Compute percentiles grouped by season + pitch_tag (MLB only)
+#     stats = (
+#         df.filter(pl.col("level_id") == 1)
+#         .group_by(["season", "pitch_tag"])
+#         .agg(
+#             [
+#                 pl.col(raw_col).quantile(0.20).alias("stuff_p20"),
+#                 pl.col(raw_col).quantile(0.80).alias("stuff_p80"),
+#             ]
+#         )
+#     )
+#     df = df.join(stats, on=["season", "pitch_tag"], how="left")
+#     # Linear interpolation: p20 -> 80, p80 -> 20
+#     # grade = 80 - 60 * (raw - p20) / (p80 - p20)
+#     grade_expr = (
+#         pl.when(
+#             pl.col("stuff_p80").is_not_null()
+#             & pl.col("stuff_p20").is_not_null()
+#             & (pl.col("stuff_p80") != pl.col("stuff_p20"))
+#         )
+#         .then(
+#             (
+#                 80.0
+#                 - 60.0
+#                 * (pl.col(raw_col) - pl.col("stuff_p20"))
+#                 / (pl.col("stuff_p80") - pl.col("stuff_p20"))
+#             ).clip(20, 80)
+#         )
+#         .otherwise(pl.lit(None))
+#     )
+#     return df.with_columns([grade_expr.alias(grade_col)]).drop(
+#         ["stuff_p20", "stuff_p80"]
+#     )
 
 
 def main(min_season: int, max_season: int, out_dir: Path, level_ids: list[int]) -> None:
@@ -1159,20 +1647,74 @@ def main(min_season: int, max_season: int, out_dir: Path, level_ids: list[int]) 
     pitch = add_baseout(cfg, pitch)
     pitch = add_features(pitch)
     pitch = apply_models(pitch, models)
+
+    # Compute stuff grade percentiles from pitcher-level averages (by season + pitch_tag)
+    stuff_percentiles = compute_stuff_percentiles(pitch, min_pitches=50)
+
     if os.getenv("POOBAH_SAMPLE_ROWS"):
         try:
             sample_rows = int(os.getenv("POOBAH_SAMPLE_ROWS", "0"))
         except ValueError:
             sample_rows = 0
-        if sample_rows > 0:
-            sample_path = out_dir / f"pitch_sample_{min_season}_{max_season}.csv"
-            pitch.head(sample_rows).to_pandas().to_csv(sample_path, index=False)
+        if sample_rows != 0:
+            sample_path = out_dir / f"pitch_data_{min_season}_{max_season}.parquet"
+            if sample_rows < 0:
+                # Save all rows
+                pitch.write_parquet(sample_path)
+                print(f"Saved all {len(pitch):,} pitch rows to {sample_path}")
+            else:
+                # Save sample
+                pitch.head(sample_rows).write_parquet(sample_path)
+                print(f"Saved {sample_rows:,} sample pitch rows to {sample_path}")
 
     hitters = build_hitters(pitch)
     pitchers = build_pitchers(pitch)
     pitch_types = build_pitch_types(pitch)
     team_hitting = build_team_hitting(pitch)
     team_pitching = build_team_pitching(pitch)
+
+    # Apply stuff grades to pitch_types (has pitch_tag for direct grading)
+    pitch_types = apply_stuff_grade(pitch_types, stuff_percentiles)
+
+    # For pitchers, compute weighted average stuff grade from pitch types
+    pitcher_stuff = (
+        pitch_types.group_by(["pitcher_mlbid", "season", "level_id"])
+        .agg((pl.col("stuff") * pl.col("pitches")).sum() / pl.col("pitches").sum())
+        .rename({"stuff": "stuff_grade"})
+    )
+    pitchers = (
+        pitchers.join(
+            pitcher_stuff, on=["pitcher_mlbid", "season", "level_id"], how="left"
+        )
+        .with_columns(pl.col("stuff_grade").alias("stuff"))
+        .drop("stuff_grade")
+    )
+
+    # For team_pitching, compute stuff grades from raw pitch data aggregated by team
+    # First aggregate stuff_raw by pitching_code + pitch_tag, then apply grades
+    team_pitch_types = (
+        _tag_pitch(pitch)
+        .group_by(["pitching_code", "season", "level_id", "pitch_tag"])
+        .agg(
+            [
+                pl.mean("stuff_raw").alias("stuff_raw"),
+                pl.len().alias("pitches"),
+            ]
+        )
+    )
+    team_pitch_types = apply_stuff_grade(team_pitch_types, stuff_percentiles)
+    team_stuff = (
+        team_pitch_types.group_by(["pitching_code", "season", "level_id"])
+        .agg((pl.col("stuff") * pl.col("pitches")).sum() / pl.col("pitches").sum())
+        .rename({"stuff": "stuff_grade"})
+    )
+    team_pitching = (
+        team_pitching.join(
+            team_stuff, on=["pitching_code", "season", "level_id"], how="left"
+        )
+        .with_columns(pl.col("stuff_grade").alias("stuff"))
+        .drop("stuff_grade")
+    )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     write_csv(hitters, f"damage_pos_{min_season}_{max_season}.csv", out_dir)
@@ -1197,6 +1739,8 @@ def main(min_season: int, max_season: int, out_dir: Path, level_ids: list[int]) 
             "secondary_whiff_pct",
             "contact_vs_avg",
         ],
+        filter_col="PA",
+        min_threshold=200,
     )
     write_csv(hitter_pct, "hitter_pctiles.csv", out_dir)
 
@@ -1204,9 +1748,7 @@ def main(min_season: int, max_season: int, out_dir: Path, level_ids: list[int]) 
         pitchers,
         group_cols=["season", "level_id"],
         value_cols=[
-            "std.ZQ",
-            "std.DMG",
-            "std.NRV",
+            "stuff",
             "fastball_velo",
             "max_velo",
             "fastball_vaa",
@@ -1219,6 +1761,8 @@ def main(min_season: int, max_season: int, out_dir: Path, level_ids: list[int]) 
             "rel_x",
             "ext",
         ],
+        filter_col="IP",
+        min_threshold=40,
     )
     write_csv(pitcher_pct, "pitcher_pctiles.csv", out_dir)
 
@@ -1227,21 +1771,21 @@ def main(min_season: int, max_season: int, out_dir: Path, level_ids: list[int]) 
         group_cols=["season", "level_id", "pitch_tag"],
         value_cols=[
             "pct",
-            "std.ZQ",
-            "std.DMG",
-            "std.NRV",
+            "stuff",
             "velo",
             "max_velo",
             "vaa",
             "haa",
-            "ivb",
-            "hb",
+            "vbreak",
+            "hbreak",
             "SwStr",
             "Ball_pct",
             "Z_Contact",
             "Chase",
             "CSW",
         ],
+        filter_col="pitches",
+        min_threshold=100,
     )
     write_csv(pitch_types_pct, "pitch_types_pctiles.csv", out_dir)
 
@@ -1260,8 +1804,18 @@ if __name__ == "__main__":
         default=Path(os.getenv("POOBAH_OUT_DIR", OUT_DIR)),
         help="Output directory for CSVs",
     )
-    parser.add_argument("--sample-rows", type=int, default=0, help="Write a pitch-level sample CSV")
+    parser.add_argument(
+        "--sample-rows",
+        type=int,
+        default=0,
+        help="Write pitch-level CSV: -1 for all rows, N>0 for sample of N rows, 0 to skip",
+    )
     args = parser.parse_args()
-    if args.sample_rows > 0:
+    if args.sample_rows != 0:
         os.environ["POOBAH_SAMPLE_ROWS"] = str(args.sample_rows)
-    main(min_season=args.min_season, max_season=args.max_season, out_dir=args.out_dir, level_ids=args.level_ids)
+    main(
+        min_season=args.min_season,
+        max_season=args.max_season,
+        out_dir=args.out_dir,
+        level_ids=args.level_ids,
+    )

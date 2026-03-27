@@ -25,7 +25,15 @@ ALIAS_DENOM = {
     "bbe": "bbe == 1",
 }
 
-PERCENT_MEAN_STATS = {"pWhiff", "pred_whiff_pct", "pred_whiff_loc_mean"}
+PERCENT_MEAN_STATS = {
+    "pWhiff",
+    "pred_whiff_pct",
+    "pred_whiff_loc_mean",
+    "p_SwStr_pct",
+    "p_SwStr_with_loc_pct",
+    "p_Damage_pct",
+    "p_Damage_with_loc_pct",
+}
 
 
 def load_config(path: Path) -> Dict[str, Any]:
@@ -400,7 +408,7 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("stability_config.yml"),
+        default=Path(__file__).resolve().parent / "config" / "stability_config.yml",
         help="Path to stability config (yaml or json).",
     )
     parser.add_argument(
@@ -412,7 +420,7 @@ def main() -> None:
     parser.add_argument(
         "--constants",
         type=Path,
-        default=Path("stability_constants.csv"),
+        default=Path(__file__).resolve().parent / "config" / "stability_constants.csv",
         help="Path to stability_constants.csv.",
     )
     parser.add_argument(
