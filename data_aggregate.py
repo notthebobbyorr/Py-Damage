@@ -22,7 +22,9 @@ try:
 except ImportError:  # optional dependency
     psutil = None
 
-DATA_DIR = Path(__file__).resolve().parent
+_REPO_DIR = Path(__file__).resolve().parent
+DATA_DIR = _REPO_DIR / "data" / "output"
+RAW_DIR = _REPO_DIR / "data" / "raw"
 OUT_DIR = DATA_DIR
 
 STUFF_SCALE_MEAN = 50.0
@@ -43,6 +45,29 @@ ALL_STAR_DATES = {
     2016: "2016-07-12",
     2015: "2015-07-14",
 }
+
+
+GAME_TYPE_GROUP_MAP = {
+    "S": "Spring Training",
+    "F": "Postseason",
+    "D": "Postseason",
+    "L": "Postseason",
+    "W": "Postseason",
+}
+
+
+def _add_game_type_group(df: pl.DataFrame) -> pl.DataFrame:
+    """Derive game_type_group from game_type. Missing/unknown game types → 'Regular Season'."""
+    if "game_type" not in df.columns:
+        return df.with_columns(pl.lit("Regular Season").alias("game_type_group"))
+    return df.with_columns(
+        pl.when(pl.col("game_type") == "S")
+        .then(pl.lit("Spring Training"))
+        .when(pl.col("game_type").is_in(["F", "D", "L", "W"]))
+        .then(pl.lit("Postseason"))
+        .otherwise(pl.lit("Regular Season"))
+        .alias("game_type_group")
+    )
 
 
 def _pos_label(pos: int | None) -> str:
@@ -375,7 +400,7 @@ def build_pitching_splits(
             pitchers_split = build_pitchers(subset)
             if not pitch_types_split.is_empty():
                 pitcher_stuff = (
-                    pitch_types_split.group_by(["pitcher_mlbid", "season", "level_id"])
+                    pitch_types_split.group_by(["pitcher_mlbid", "season", "level_id", "game_type_group"])
                     .agg(
                         (pl.col("stuff") * pl.col("pitches")).sum()
                         / pl.col("pitches").sum()
@@ -385,7 +410,7 @@ def build_pitching_splits(
                 pitchers_split = (
                     pitchers_split.join(
                         pitcher_stuff,
-                        on=["pitcher_mlbid", "season", "level_id"],
+                        on=["pitcher_mlbid", "season", "level_id", "game_type_group"],
                         how="left",
                     )
                     .with_columns(pl.col("stuff_grade").alias("stuff"))
@@ -426,7 +451,7 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
     )
 
     hitters = (
-        df.group_by(["batter_mlbid", "hitter_name", "level_id", "season"])
+        df.group_by(["batter_mlbid", "hitter_name", "level_id", "season", "game_type_group"])
         .agg(
             [
                 hitter_age_expr,
@@ -624,6 +649,7 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                 .implode()
                 .list.join(" | ")
                 .alias("team"),
+                (pl.col("pitch_outcome") == "HR").sum().alias("HR"),
             ]
         )
         .with_columns(
@@ -691,28 +717,28 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
     fastball_tags = ["FA", "SI", "HC", "SP"]
     fb_primary_tag = (
         df.filter(pl.col("pitch_tag").is_in(fastball_tags))
-        .group_by(["pitcher_mlbid", "level_id", "season", "pitch_tag"])
+        .group_by(["pitcher_mlbid", "level_id", "season", "game_type_group", "pitch_tag"])
         .agg(pl.len().alias("pitch_count"))
         .sort(
-            ["pitcher_mlbid", "level_id", "season", "pitch_count"],
-            descending=[False, False, False, True],
+            ["pitcher_mlbid", "level_id", "season", "game_type_group", "pitch_count"],
+            descending=[False, False, False, False, True],
         )
-        .group_by(["pitcher_mlbid", "level_id", "season"])
+        .group_by(["pitcher_mlbid", "level_id", "season", "game_type_group"])
         .agg(pl.first("pitch_tag").alias("primary_fb_tag"))
     )
     fb_vaa = (
         df.join(
             fb_primary_tag,
-            on=["pitcher_mlbid", "level_id", "season"],
+            on=["pitcher_mlbid", "level_id", "season", "game_type_group"],
             how="left",
         )
         .filter(pl.col("pitch_tag") == pl.col("primary_fb_tag"))
-        .group_by(["pitcher_mlbid", "level_id", "season"])
+        .group_by(["pitcher_mlbid", "level_id", "season", "game_type_group"])
         .agg(pl.mean("vaa").alias("fastball_vaa_override"))
     )
 
     pitchers = df.group_by(
-        ["pitcher_mlbid", "name", "season", "level_id", "pitcher_hand"]
+        ["pitcher_mlbid", "name", "season", "level_id", "pitcher_hand", "game_type_group"]
     ).agg(
         [
             pitcher_age_expr,
@@ -864,10 +890,11 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
             .implode()
             .list.join(" | ")
             .alias("team"),
+            (pl.col("pitch_outcome") == "HR").sum().alias("HR"),
         ]
     )
     pitchers = pitchers.join(
-        fb_vaa, on=["pitcher_mlbid", "level_id", "season"], how="left"
+        fb_vaa, on=["pitcher_mlbid", "level_id", "season", "game_type_group"], how="left"
     ).with_columns(
         pl.coalesce(["fastball_vaa_override", "fastball_vaa"]).alias("fastball_vaa")
     ).drop("fastball_vaa_override")
@@ -888,6 +915,7 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
                 "pitcher_mlbid",
                 "pitcher_hand",
                 "season",
+                "game_type_group",
             ]
         )
         .alias("total_pitches")
@@ -899,6 +927,7 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
             "pitcher_mlbid",
             "pitcher_hand",
             "season",
+            "game_type_group",
             "pitch_tag",
         ]
     ).agg(
@@ -1035,6 +1064,7 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
             .implode()
             .list.join(" | ")
             .alias("team"),
+            (pl.col("pitch_outcome") == "HR").sum().alias("HR"),
         ]
     )
     if "LA_lte_0" not in pitch_types.columns:
@@ -1053,7 +1083,7 @@ def build_league_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
         return df
     df = _tag_pitch(df)
     league_pitch_types = df.group_by(
-        ["season", "level_id", "pitcher_hand", "pitch_tag"]
+        ["season", "level_id", "game_type_group", "pitcher_hand", "pitch_tag"]
     ).agg(
         [
             pl.len().alias("pitches"),
@@ -1113,7 +1143,7 @@ def build_team_hitting(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("hitting_code").is_not_null()
             & ~pl.col("hitting_code").str.contains(r"^\d+$")
         )
-        .group_by(["hitting_code", "level_id", "season"])
+        .group_by(["hitting_code", "level_id", "season", "game_type_group"])
         .agg(
             [
                 pl.n_unique("pa_id").alias("PA"),
@@ -1225,7 +1255,7 @@ def build_league_hitting(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
     league = (
-        df.group_by(["level_id", "season"])
+        df.group_by(["level_id", "season", "game_type_group"])
         .agg(
             [
                 pl.n_unique("pa_id").alias("PA"),
@@ -1341,7 +1371,7 @@ def build_team_pitching(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("pitching_code").is_not_null()
             & ~pl.col("pitching_code").str.contains(r"^\d+$")
         )
-        .group_by(["pitching_code", "level_id", "season"])
+        .group_by(["pitching_code", "level_id", "season", "game_type_group"])
         .agg(
             [
                 pl.n_unique("pa_id").alias("TBF"),
@@ -1419,7 +1449,7 @@ def build_team_pitching(df: pl.DataFrame) -> pl.DataFrame:
 def build_league_pitching(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
-    league = df.group_by(["level_id", "season"]).agg(
+    league = df.group_by(["level_id", "season", "game_type_group"]).agg(
         [
             pl.n_unique("pa_id").alias("TBF"),
             (pl.sum("outs_recorded") / 3).round(1).alias("IP"),
@@ -1774,16 +1804,157 @@ def write_parquet(df: pl.DataFrame, name: str, out_dir: Path) -> None:
     print(f"Write time: {perf_counter() - start:0.2f}s")
 
 
+def _weighted_pct_merge(
+    df: pl.DataFrame,
+    *,
+    keys: list[str],
+    weight_col: str,
+    value_cols: list[str],
+) -> pl.DataFrame:
+    agg_exprs: list[pl.Expr] = [pl.col(weight_col).sum().alias(weight_col)]
+    for col in value_cols:
+        agg_exprs.append(
+            ((pl.col(col) * pl.col(weight_col)).sum() / pl.col(weight_col).sum()).alias(col)
+        )
+    return df.group_by(keys).agg(agg_exprs)
+
+
+def _apply_p_swstr_sources(
+    pitchers: pl.DataFrame,
+    pitch_types: pl.DataFrame,
+    *,
+    input_dir: Path,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    pitcher_source_path = input_dir / "pitcher_p_swstr.parquet"
+    pitch_type_source_path = input_dir / "pitch_types_p_swstr.parquet"
+
+    if pitcher_source_path.exists():
+        pitcher_source = pl.read_parquet(pitcher_source_path).rename({"pitcher_name": "name"})
+        pitcher_keys = ["pitcher_mlbid", "season"]
+        if "level_id" in pitcher_source.columns:
+            pitcher_keys.append("level_id")
+        pitcher_source = _weighted_pct_merge(
+            pitcher_source,
+            keys=pitcher_keys,
+            weight_col="n",
+            value_cols=["p_SwStr_pct", "p_SwStr_with_loc_pct"],
+        ).rename({"n": "p_SwStr_n"})
+        pitchers = pitchers.join(
+            pitcher_source,
+            on=pitcher_keys,
+            how="left",
+        )
+
+    if pitch_type_source_path.exists():
+        pitch_type_source = pl.read_parquet(pitch_type_source_path).rename({"pitcher_name": "name"})
+        pitch_type_keys = ["pitcher_mlbid", "season", "pitch_tag"]
+        if "level_id" in pitch_type_source.columns:
+            pitch_type_keys.append("level_id")
+        pitch_type_source = _weighted_pct_merge(
+            pitch_type_source,
+            keys=pitch_type_keys,
+            weight_col="n",
+            value_cols=["p_SwStr_pct", "p_SwStr_with_loc_pct"],
+        ).rename({"n": "p_SwStr_n"})
+        pitch_types = pitch_types.join(
+            pitch_type_source,
+            on=pitch_type_keys,
+            how="left",
+        )
+
+    if "p_SwStr_pct" not in pitchers.columns:
+        pitchers = pitchers.with_columns(
+            [
+                pl.lit(None, dtype=pl.Float64).alias("p_SwStr_pct"),
+                pl.lit(None, dtype=pl.Float64).alias("p_SwStr_with_loc_pct"),
+            ]
+        )
+    if "p_SwStr_pct" not in pitch_types.columns:
+        pitch_types = pitch_types.with_columns(
+            [
+                pl.lit(None, dtype=pl.Float64).alias("p_SwStr_pct"),
+                pl.lit(None, dtype=pl.Float64).alias("p_SwStr_with_loc_pct"),
+            ]
+        )
+
+    return pitchers, pitch_types
+
+
+def _apply_p_damage_sources(
+    pitchers: pl.DataFrame,
+    pitch_types: pl.DataFrame,
+    *,
+    input_dir: Path,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    pitcher_source_path = input_dir / "pitcher_p_damage.parquet"
+    pitch_type_source_path = input_dir / "pitch_types_p_damage.parquet"
+
+    if pitcher_source_path.exists():
+        pitcher_source = pl.read_parquet(pitcher_source_path).rename({"pitcher_name": "name"})
+        pitcher_keys = ["pitcher_mlbid", "season"]
+        if "level_id" in pitcher_source.columns:
+            pitcher_keys.append("level_id")
+        pitcher_source = _weighted_pct_merge(
+            pitcher_source,
+            keys=pitcher_keys,
+            weight_col="n",
+            value_cols=["p_Damage_pct", "p_Damage_with_loc_pct"],
+        ).rename({"n": "p_Damage_n"})
+        pitchers = pitchers.join(
+            pitcher_source,
+            on=pitcher_keys,
+            how="left",
+        )
+
+    if pitch_type_source_path.exists():
+        pitch_type_source = pl.read_parquet(pitch_type_source_path).rename({"pitcher_name": "name"})
+        pitch_type_keys = ["pitcher_mlbid", "season", "pitch_tag"]
+        if "level_id" in pitch_type_source.columns:
+            pitch_type_keys.append("level_id")
+        pitch_type_source = _weighted_pct_merge(
+            pitch_type_source,
+            keys=pitch_type_keys,
+            weight_col="n",
+            value_cols=["p_Damage_pct", "p_Damage_with_loc_pct"],
+        ).rename({"n": "p_Damage_n"})
+        pitch_types = pitch_types.join(
+            pitch_type_source,
+            on=pitch_type_keys,
+            how="left",
+        )
+
+    if "p_Damage_pct" not in pitchers.columns:
+        pitchers = pitchers.with_columns(
+            [
+                pl.lit(None, dtype=pl.Float64).alias("p_Damage_pct"),
+                pl.lit(None, dtype=pl.Float64).alias("p_Damage_with_loc_pct"),
+            ]
+        )
+    if "p_Damage_pct" not in pitch_types.columns:
+        pitch_types = pitch_types.with_columns(
+            [
+                pl.lit(None, dtype=pl.Float64).alias("p_Damage_pct"),
+                pl.lit(None, dtype=pl.Float64).alias("p_Damage_with_loc_pct"),
+            ]
+        )
+
+    return pitchers, pitch_types
+
+
 def _build_outputs(
     pitch: pl.DataFrame,
     min_season: int,
     max_season: int,
+    *,
+    input_dir: Path,
 ) -> dict[str, pl.DataFrame]:
     # Normalize names so accents don't split groupings across seasons
     pitch = _normalize_player_names(pitch)
     pitch = _normalize_age_columns(pitch)
     # Tag pitches for aggregation
     pitch = _tag_pitch(pitch)
+    # Derive game_type_group for all downstream groupings
+    pitch = _add_game_type_group(pitch)
 
     # Compute stuff grade percentiles from pitcher-level averages
     print(f"Computing stuff percentiles...{_mem_note()}")
@@ -1849,21 +2020,32 @@ def _build_outputs(
 
     # For pitchers, compute weighted average stuff grade from pitch types
     pitcher_stuff = (
-        pitch_types.group_by(["pitcher_mlbid", "season", "level_id"])
+        pitch_types.group_by(["pitcher_mlbid", "season", "level_id", "game_type_group"])
         .agg((pl.col("stuff") * pl.col("pitches")).sum() / pl.col("pitches").sum())
         .rename({"stuff": "stuff_grade"})
     )
     pitchers = (
         pitchers.join(
-            pitcher_stuff, on=["pitcher_mlbid", "season", "level_id"], how="left"
+            pitcher_stuff, on=["pitcher_mlbid", "season", "level_id", "game_type_group"], how="left"
         )
         .with_columns(pl.col("stuff_grade").alias("stuff"))
         .drop("stuff_grade")
     )
 
+    pitchers, pitch_types = _apply_p_swstr_sources(
+        pitchers,
+        pitch_types,
+        input_dir=input_dir,
+    )
+    pitchers, pitch_types = _apply_p_damage_sources(
+        pitchers,
+        pitch_types,
+        input_dir=input_dir,
+    )
+
     # For team_pitching, compute stuff grades from raw pitch data
     team_pitch_types = pitch.group_by(
-        ["pitching_code", "season", "level_id", "pitch_tag"]
+        ["pitching_code", "season", "level_id", "game_type_group", "pitch_tag"]
     ).agg(
         [
             pl.mean("stuff_raw").alias("stuff_raw"),
@@ -1872,19 +2054,19 @@ def _build_outputs(
     )
     team_pitch_types = apply_stuff_grade(team_pitch_types, stuff_percentiles)
     team_stuff = (
-        team_pitch_types.group_by(["pitching_code", "season", "level_id"])
+        team_pitch_types.group_by(["pitching_code", "season", "level_id", "game_type_group"])
         .agg((pl.col("stuff") * pl.col("pitches")).sum() / pl.col("pitches").sum())
         .rename({"stuff": "stuff_grade"})
     )
     team_pitching = (
         team_pitching.join(
-            team_stuff, on=["pitching_code", "season", "level_id"], how="left"
+            team_stuff, on=["pitching_code", "season", "level_id", "game_type_group"], how="left"
         )
         .with_columns(pl.col("stuff_grade").alias("stuff"))
         .drop("stuff_grade")
     )
 
-    league_pitch_types_stuff = pitch.group_by(["season", "level_id", "pitch_tag"]).agg(
+    league_pitch_types_stuff = pitch.group_by(["season", "level_id", "game_type_group", "pitch_tag"]).agg(
         [
             pl.mean("stuff_raw").alias("stuff_raw"),
             pl.len().alias("pitches"),
@@ -1894,12 +2076,12 @@ def _build_outputs(
         league_pitch_types_stuff, stuff_percentiles
     )
     league_stuff = (
-        league_pitch_types_stuff.group_by(["season", "level_id"])
+        league_pitch_types_stuff.group_by(["season", "level_id", "game_type_group"])
         .agg((pl.col("stuff") * pl.col("pitches")).sum() / pl.col("pitches").sum())
         .rename({"stuff": "stuff_grade"})
     )
     league_pitching = (
-        league_pitching.join(league_stuff, on=["season", "level_id"], how="left")
+        league_pitching.join(league_stuff, on=["season", "level_id", "game_type_group"], how="left")
         .with_columns(pl.col("stuff_grade").alias("stuff"))
         .drop("stuff_grade")
     )
@@ -1908,7 +2090,7 @@ def _build_outputs(
     print(f"Computing hitter percentiles...{_mem_note()}")
     hitter_pct = add_percentiles(
         hitters,
-        group_cols=["season", "level_id"],
+        group_cols=["season", "level_id", "game_type_group"],
         value_cols=[
             "SEAGER",
             "selection_skill",
@@ -1930,7 +2112,7 @@ def _build_outputs(
     print(f"Computing pitcher percentiles...{_mem_note()}")
     pitcher_pct = add_percentiles(
         pitchers,
-        group_cols=["season", "level_id"],
+        group_cols=["season", "level_id", "game_type_group"],
         value_cols=[
             "stuff",
             "fastball_velo",
@@ -1972,7 +2154,7 @@ def _build_outputs(
     print(f"Computing pitch type percentiles...{_mem_note()}")
     pitch_types_pct = add_percentiles(
         pitch_types,
-        group_cols=["season", "level_id", "pitch_tag"],
+        group_cols=["season", "level_id", "game_type_group", "pitch_tag"],
         value_cols=pitch_types_value_cols,
         filter_col="pitches",
         min_threshold=100,
@@ -2050,7 +2232,12 @@ def main(
             pitch = pl.concat([pitch_level1, pitch_no_level1], how="diagonal_relaxed")
         print(f"Loaded {len(pitch):,} pitch rows.")
 
-        outputs = _build_outputs(pitch, min_season, max_season)
+        outputs = _build_outputs(
+            pitch,
+            min_season,
+            max_season,
+            input_dir=input_dir,
+        )
         print(f"Writing parquet files to {out_dir}...{_mem_note()}")
         for name, df in outputs.items():
             write_parquet(df, name, out_dir)
@@ -2088,7 +2275,12 @@ def main(
         print(f"Processing season {season}...{_mem_note()}")
         pitch = scan.filter(pl.col("season") == season).collect()
         print(f"Loaded {len(pitch):,} pitch rows for {season}.")
-        outputs = _build_outputs(pitch, season, season)
+        outputs = _build_outputs(
+            pitch,
+            season,
+            season,
+            input_dir=input_dir,
+        )
         for name, df in outputs.items():
             final_name = (
                 final_damage_name
@@ -2142,8 +2334,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=None,
-        help="Input directory for default parquet files (defaults to --out-dir)",
+        default=RAW_DIR,
+        help="Input directory for default parquet files (defaults to data/raw)",
     )
     parser.add_argument(
         "--chunk-by-season",

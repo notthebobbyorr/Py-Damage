@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+
+_REPO_DIR = Path(__file__).resolve().parent
 from typing import Any, Dict, List, Optional
 
 import polars as pl
@@ -13,7 +15,19 @@ except ImportError:  # pragma: no cover
     yaml = None
 
 
-PERCENT_MEAN_STATS = {"pWhiff", "pred_whiff_pct", "pred_whiff_loc_mean"}
+PERCENT_MEAN_STATS = {
+    "pWhiff",
+    "pred_whiff_pct",
+    "pred_whiff_loc_mean",
+    "p_SwStr_pct",
+    "p_SwStr_with_loc_pct",
+    "Swing_pct",
+    "p_Swing_pct",
+    "p_Swing_with_loc_pct",
+    "Damage_pct",
+    "p_Damage_pct",
+    "p_Damage_with_loc_pct",
+}
 
 
 def load_config(path: Path) -> Dict[str, Any]:
@@ -67,8 +81,11 @@ def add_league_contact_baseline(df: pl.DataFrame, src: pl.DataFrame) -> pl.DataF
     }
     if not required.issubset(set(src.columns)):
         return df
+    group_keys = ["season", "level_id"]
+    if "game_type_group" in src.columns:
+        group_keys.append("game_type_group")
     league = (
-        src.group_by(["season", "level_id"])
+        src.group_by(group_keys)
         .agg(
             [
                 (
@@ -87,10 +104,11 @@ def add_league_contact_baseline(df: pl.DataFrame, src: pl.DataFrame) -> pl.DataF
                 "lg_contact_baseline"
             )
         )
-        .select(["season", "level_id", "lg_contact_baseline"])
+        .select(group_keys + ["lg_contact_baseline"])
     )
+    join_keys = [c for c in group_keys if c in df.columns]
     if "season" in df.columns and "level_id" in df.columns:
-        return df.join(league, on=["season", "level_id"], how="left")
+        return df.join(league, on=join_keys, how="left")
     return df
 
 
@@ -128,6 +146,18 @@ def apply_rate_from_agg(
     return out.drop(["num", "den", "mu", "K", "reg_prop"])
 
 
+def _resolve_mean_n_col(df: pl.DataFrame, stat: str) -> Optional[str]:
+    candidates = [f"{stat}_n"]
+    if stat.endswith("_pct"):
+        candidates.append(f"{stat[:-4]}_n")
+    if stat.endswith("_with_loc_pct"):
+        candidates.append(stat.replace("_with_loc_pct", "_n"))
+    for candidate in candidates:
+        if candidate in df.columns:
+            return candidate
+    return None
+
+
 def apply_mean_from_agg(
     df: pl.DataFrame,
     constants: pl.DataFrame,
@@ -135,11 +165,15 @@ def apply_mean_from_agg(
     stat: str,
     key_cols: List[str],
 ) -> Optional[pl.DataFrame]:
-    n_col = f"{stat}_n"
-    if stat not in df.columns or n_col not in df.columns:
+    n_col = _resolve_mean_n_col(df, stat)
+    if stat not in df.columns or n_col is None:
         return None
     keep_keys = [c for c in key_cols if c in df.columns]
     out = df.select(keep_keys + [pl.col(stat).alias("raw"), pl.col(n_col).alias("n")])
+    out = out.with_columns([
+        pl.col("raw").cast(pl.Float64, strict=False),
+        pl.col("n").cast(pl.Float64, strict=False),
+    ])
     out = out.filter(pl.col("n") > 0)
     out = _join_constants(out, constants, dataset, stat)
 
@@ -179,7 +213,7 @@ def apply_mean_from_agg(
                 pl.col("n").alias(f"{stat}_n"),
             ]
         )
-    return out.drop(["raw", "n", "mu", "K"], strict=False)
+    return out.drop(["raw", "n", "mu", "K", "reg_prop"], strict=False)
 
 
 def merge_frames(
@@ -193,7 +227,7 @@ def merge_frames(
             raise ValueError(
                 f"Frame missing join keys {missing}. This would create row explosions."
             )
-        merged = merged.join(frame, on=join_keys, how="left")
+        merged = merged.join(frame, on=join_keys, how="left", nulls_equal=True)
     return merged
 
 
@@ -204,37 +238,37 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("stability_config.yml"),
+        default=_REPO_DIR / "config" / "stability_config.yml",
         help="Path to stability config (yaml or json).",
     )
     parser.add_argument(
         "--constants",
         type=Path,
-        default=Path("stability_constants.csv"),
+        default=_REPO_DIR / "config" / "stability_constants.csv",
         help="Path to stability_constants.csv.",
     )
     parser.add_argument(
         "--hitters",
         type=Path,
-        default=Path("damage_pos_2015_2025.parquet"),
+        default=_REPO_DIR / "data" / "output" / "damage_pos_2015_2025.parquet",
         help="Aggregated hitters CSV or parquet.",
     )
     parser.add_argument(
         "--pitchers",
         type=Path,
-        default=Path("pitcher_stuff_new.parquet"),
+        default=_REPO_DIR / "data" / "output" / "pitcher_stuff_new.parquet",
         help="Aggregated pitchers CSV or parquet.",
     )
     parser.add_argument(
         "--pitch-types",
         type=Path,
-        default=Path("new_pitch_types.parquet"),
+        default=_REPO_DIR / "data" / "output" / "new_pitch_types.parquet",
         help="Aggregated pitch types CSV or parquet.",
     )
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("."),
+        default=_REPO_DIR / "data" / "output",
         help="Output directory for regressed CSVs.",
     )
     parser.add_argument(
@@ -252,11 +286,11 @@ def main() -> None:
     outputs = {
         "hitters": (
             args.hitters,
-            ["batter_mlbid", "hitter_name", "season", "level_id"],
+            ["batter_mlbid", "hitter_name", "season", "level_id", "game_type_group"],
         ),
         "pitchers": (
             args.pitchers,
-            ["pitcher_mlbid", "name", "season", "level_id", "pitcher_hand"],
+            ["pitcher_mlbid", "name", "season", "level_id", "pitcher_hand", "game_type_group"],
         ),
         "pitch_types": (
             args.pitch_types,
@@ -266,6 +300,7 @@ def main() -> None:
                 "pitcher_hand",
                 "season",
                 "level_id",
+                "game_type_group",
                 "pitch_tag",
             ],
         ),
@@ -299,8 +334,9 @@ def main() -> None:
             if frame is not None:
                 frames.append(frame)
 
-        base = df.select([c for c in keys if c in df.columns]).unique()
-        merged = merge_frames(base, frames, keys)
+        effective_keys = [c for c in keys if c in df.columns]
+        base = df.select(effective_keys).unique()
+        merged = merge_frames(base, frames, effective_keys)
 
         if dataset == "hitters":
             merged = add_league_contact_baseline(merged, df)

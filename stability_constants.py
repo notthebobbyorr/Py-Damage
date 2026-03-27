@@ -426,7 +426,7 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("stability_config.yml"),
+        default=Path(__file__).resolve().parent / "config" / "stability_config.yml",
         help="Path to stability config (yaml or json).",
     )
     parser.add_argument(
@@ -438,7 +438,7 @@ def main() -> None:
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("stability_constants.csv"),
+        default=Path(__file__).resolve().parent / "config" / "stability_constants.csv",
         help="Output CSV for constants.",
     )
     parser.add_argument(

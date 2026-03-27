@@ -40,7 +40,7 @@ class CatBoostBaseballPredictor:
     - Feature importance analysis
     """
 
-    def __init__(self, model_path="catboost_baseball_model.cbm"):
+    def __init__(self, model_path=Path(__file__).resolve().parent / "models" / "catboost_baseball_model.cbm"):
         """
         Load a saved CatBoost model and its metadata.
 
@@ -350,7 +350,7 @@ def example_usage():
     """Example of how to use the predictor."""
 
     # Load predictor
-    predictor = CatBoostBaseballPredictor("catboost_baseball_model.cbm")
+    predictor = CatBoostBaseballPredictor(Path(__file__).resolve().parent / "models" / "catboost_baseball_model.cbm")
 
     # Example: Load new data
     # new_data = pd.read_parquet('new_scraped_data.parquet')

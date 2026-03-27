@@ -58,12 +58,26 @@ except ImportError:  # optional dependency
 import pickle
 
 
-DATA_DIR = Path(__file__).resolve().parent
+DATA_DIR = Path(__file__).resolve().parent / "data" / "raw"
 OUT_DIR = DATA_DIR
-MODEL_DIR = DATA_DIR
+MODEL_DIR = Path(__file__).resolve().parent / "models"
 
 if load_dotenv is not None:
     load_dotenv()
+
+# Mapping from MLB numeric team ID (as string) to 3-letter abbreviation.
+# Used as a fallback when home_team / away_team are null in the savant join.
+# Keys are strings because home_mlbid is cast to Utf8 before replace() is applied.
+_MLB_TEAM_ABBREV: dict[str, str] = {
+    "108": "LAA", "109": "ARI", "110": "BAL", "111": "BOS",
+    "112": "CHC", "113": "CIN", "114": "CLE", "115": "COL",
+    "116": "DET", "117": "HOU", "118": "KC",  "119": "LAD",
+    "120": "WSH", "121": "NYM", "133": "ATH", "134": "PIT",
+    "135": "SD",  "136": "SEA", "137": "SF",  "138": "STL",
+    "139": "TB",  "140": "TEX", "141": "TOR", "142": "MIN",
+    "143": "PHI", "144": "ATL", "145": "CWS", "146": "MIA",
+    "147": "NYY", "158": "MIL",
+}
 
 
 @dataclass(frozen=True)
@@ -250,6 +264,10 @@ def load_db_config() -> DbConfig:
     )
 
 
+VALID_GAME_TYPES = {"R", "S", "F", "D", "L", "W"}
+DEFAULT_GAME_TYPES = ["R"]
+
+
 def read_pitch_data(
     cfg: DbConfig,
     min_season: int,
@@ -257,6 +275,9 @@ def read_pitch_data(
     level_ids: Iterable[int],
     exclude_level_ids: Iterable[int] | None = None,
     use_connectorx: bool = False,
+    game_types: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> pl.DataFrame:
     exclude_level_ids = exclude_level_ids or []
     if exclude_level_ids:
@@ -264,6 +285,13 @@ def read_pitch_data(
     if not level_ids:
         raise ValueError("No level_ids remain after applying exclusions.")
     level_clause = ",".join(str(int(x)) for x in level_ids)
+    game_types = game_types or DEFAULT_GAME_TYPES
+    game_type_clause = ",".join(f"'{g}'" for g in game_types)
+    date_filter = ""
+    if start_date:
+        date_filter += f"\n            AND a.game_date >= '{start_date}'"
+    if end_date:
+        date_filter += f"\n            AND a.game_date <= '{end_date}'"
     query = f"""
         SELECT
             a.season,
@@ -377,7 +405,7 @@ def read_pitch_data(
             AND (a.at_bat_index + 1) = sc.at_bat_number
         WHERE a.season >= {min_season} AND a.season <= {max_season}
             AND a.level_id IN ({level_clause})
-            AND a.game_type = 'R'
+            AND a.game_type IN ({game_type_clause}){date_filter}
     """
     print(
         f"Running pitch query for seasons {min_season}-{max_season} and levels {level_clause}..."
@@ -404,13 +432,20 @@ def read_pitch_data(
     return pl.from_pandas(df)
 
 
-def fetch_level_ids(cfg: DbConfig, min_season: int, max_season: int) -> list[int]:
+def fetch_level_ids(
+    cfg: DbConfig,
+    min_season: int,
+    max_season: int,
+    game_types: list[str] | None = None,
+) -> list[int]:
+    game_types = game_types or DEFAULT_GAME_TYPES
+    game_type_clause = ",".join(f"'{g}'" for g in game_types)
     query = f"""
         SELECT DISTINCT a.level_id
         FROM pitchinfo.pitches_public a
         WHERE a.season >= {min_season}
             AND a.season <= {max_season}
-            AND a.game_type = 'R'
+            AND a.game_type IN ({game_type_clause})
         ORDER BY a.level_id
     """
     with psycopg2.connect(
@@ -536,12 +571,28 @@ def add_features(df: pl.DataFrame) -> pl.DataFrame:
             .otherwise(pl.col("pfx_x_short"))
             .alias("pfx_x_short_adj"),
             pl.when(pl.col("half_inning") == "bottom")
-            .then(pl.coalesce("home_team", pl.col("home_mlbid").cast(pl.Utf8)))
-            .otherwise(pl.coalesce("away_team", pl.col("away_mlbid").cast(pl.Utf8)))
+            .then(pl.coalesce(
+                "home_team",
+                pl.col("home_mlbid").cast(pl.Utf8).replace(_MLB_TEAM_ABBREV),
+                pl.col("home_mlbid").cast(pl.Utf8),
+            ))
+            .otherwise(pl.coalesce(
+                "away_team",
+                pl.col("away_mlbid").cast(pl.Utf8).replace(_MLB_TEAM_ABBREV),
+                pl.col("away_mlbid").cast(pl.Utf8),
+            ))
             .alias("hitting_code"),
             pl.when(pl.col("half_inning") == "bottom")
-            .then(pl.coalesce("away_team", pl.col("away_mlbid").cast(pl.Utf8)))
-            .otherwise(pl.coalesce("home_team", pl.col("home_mlbid").cast(pl.Utf8)))
+            .then(pl.coalesce(
+                "away_team",
+                pl.col("away_mlbid").cast(pl.Utf8).replace(_MLB_TEAM_ABBREV),
+                pl.col("away_mlbid").cast(pl.Utf8),
+            ))
+            .otherwise(pl.coalesce(
+                "home_team",
+                pl.col("home_mlbid").cast(pl.Utf8).replace(_MLB_TEAM_ABBREV),
+                pl.col("home_mlbid").cast(pl.Utf8),
+            ))
             .alias("pitching_code"),
             pl.col("balls_before").alias("balls"),
             pl.col("strikes_before").alias("strikes"),
@@ -911,6 +962,9 @@ def main(
     save_parquet: bool = True,
     profile: bool = False,
     use_connectorx: bool = False,
+    game_types: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> None:
     """Pull pitch data, apply models, and save to parquet for aggregation."""
     timings: dict[str, float] = {}
@@ -925,6 +979,7 @@ def main(
             cfg,
             min_season,
             max_season,
+            game_types,
         )
     if exclude_level_ids:
         level_ids = [lid for lid in level_ids if int(lid) not in set(exclude_level_ids)]
@@ -941,6 +996,9 @@ def main(
         level_ids,
         exclude_level_ids,
         use_connectorx,
+        game_types,
+        start_date,
+        end_date,
     )
     pitch = _time_step("add_baseout", timings, profile, add_baseout, cfg, pitch)
     pitch = _time_step("add_features", timings, profile, add_features, pitch)
@@ -1010,6 +1068,28 @@ if __name__ == "__main__":
         action="store_true",
         help="Use connectorx for faster database reads if installed",
     )
+    parser.add_argument(
+        "--game-types",
+        type=str,
+        nargs="+",
+        default=None,
+        help=(
+            "Game types to include. Defaults to ['R'] (regular season only). "
+            "Valid values: R=regular, S=spring training, F/D/L/W=postseason."
+        ),
+    )
+    parser.add_argument(
+        "--start-date",
+        type=str,
+        default=None,
+        help="Earliest game_date to include (YYYY-MM-DD). Optional date range filter.",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=str,
+        default=None,
+        help="Latest game_date to include (YYYY-MM-DD). Optional date range filter.",
+    )
     args = parser.parse_args()
     main(
         min_season=args.min_season,
@@ -1021,4 +1101,7 @@ if __name__ == "__main__":
         save_parquet=not args.no_save,
         profile=args.profile,
         use_connectorx=args.use_connectorx,
+        game_types=args.game_types,
+        start_date=args.start_date,
+        end_date=args.end_date,
     )
