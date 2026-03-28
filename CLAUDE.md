@@ -41,6 +41,7 @@ You are a data analyst/data scientist working on maintaining and updating a stre
 - Destroy any code or files without approval
 - Overwrite any logs, code, or files without approval
 - Deviate from approved plan on substantial implementation tasks
+- Change cache decorators from st.cache_resource method
 - Push git updates without approval
   
 ---
