@@ -57,15 +57,14 @@ def load_csv(name: str) -> pd.DataFrame:
     return _load_csv_cached(str(path), path.stat().st_mtime)
 
 
-@st.cache_resource(ttl=86400, max_entries=3)
 def load_damage_df() -> pd.DataFrame:
     # Pick the most recent full multi-season file (damage_pos_2015_YYYY.parquet)
     candidates = sorted(DATA_DIR.glob("damage_pos_2015_[0-9][0-9][0-9][0-9].parquet"))
     if candidates:
-        df = pd.read_parquet(candidates[-1])
-        return _optimize_dataframe_memory(df)
+        path = candidates[-1]
+        return _load_csv_cached(str(path), path.stat().st_mtime)
     candidates = sorted(DATA_DIR.glob("damage_pos_2015_[0-9][0-9][0-9][0-9].csv"))
     if candidates:
-        df = pd.read_csv(candidates[-1])
-        return _optimize_dataframe_memory(df)
+        path = candidates[-1]
+        return _load_csv_cached(str(path), path.stat().st_mtime)
     return pd.DataFrame()

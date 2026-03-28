@@ -34,6 +34,7 @@ RAW_DIR = HERE / "data" / "raw"
 LOGS_DIR = HERE / "data" / "logs"
 CHUNK_DIR = DATA_DIR / "_season_chunks"
 LAST_PULL_DATE_FILE = LOGS_DIR / "last_pull_date.txt"
+REQUIREMENTS_FILE = HERE / "requirements.txt"
 
 DEFAULT_GAME_TYPES = ["R", "S", "F", "D", "L", "W"]
 
@@ -72,13 +73,38 @@ def write_last_pull_date(d: date) -> None:
     print(f"Updated last_pull_date.txt -> {d.isoformat()}")
 
 
-def run(cmd: list[str], dry_run: bool = False) -> None:
+def run(cmd: list[str], dry_run: bool = False, cwd: Path | None = None) -> None:
     print(f"\n{'[DRY RUN] ' if dry_run else ''}Running: {' '.join(str(c) for c in cmd)}")
     if dry_run:
         return
-    result = subprocess.run(cmd, check=True)
+    result = subprocess.run(cmd, check=True, cwd=cwd)
     if result.returncode != 0:
         raise RuntimeError(f"Command failed with exit code {result.returncode}")
+
+
+def _stamp_requirements(end_date: date) -> None:
+    """Update the last-refresh comment in requirements.txt.
+
+    Streamlit Cloud triggers a full process restart (clearing all st.cache_resource
+    entries) when requirements.txt changes. Stamping it daily ensures fresh data
+    is loaded after each push rather than a hot-reload that preserves the cache.
+    """
+    content = REQUIREMENTS_FILE.read_text(encoding="utf-8")
+    lines = [l for l in content.splitlines() if not l.startswith("# last-refresh:")]
+    lines.append(f"# last-refresh: {end_date.isoformat()}")
+    REQUIREMENTS_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Stamped requirements.txt -> last-refresh: {end_date.isoformat()}")
+
+
+def git_push(end_date: date, dry_run: bool = False) -> None:
+    """Stage output parquet files, commit, and push to GitHub."""
+    commit_msg = "daily data update"
+    print(f"\n{'[DRY RUN] ' if dry_run else ''}Git push: staging data/output/, committing, and pushing.")
+    if not dry_run:
+        _stamp_requirements(end_date)
+    run(["git", "add", str(DATA_DIR), str(REQUIREMENTS_FILE)], dry_run=dry_run, cwd=HERE)
+    run(["git", "commit", "-m", commit_msg], dry_run=dry_run, cwd=HERE)
+    run(["git", "push"], dry_run=dry_run, cwd=HERE)
 
 
 def accumulate_pitch_data(incremental_path: Path, accumulator_path: Path) -> None:
@@ -141,6 +167,7 @@ def main(
     min_season: int,
     game_types: list[str],
     dry_run: bool,
+    no_push: bool = False,
 ) -> None:
     last_pull_date = read_last_pull_date()
     start_date = last_pull_date + timedelta(days=1)
@@ -264,6 +291,10 @@ def main(
     else:
         print(f"\n[DRY RUN] Pipeline complete. Would update last_pull_date to {end_date}.")
 
+    # ── Step 9: Push to GitHub ─────────────────────────────────────────────
+    if not no_push:
+        git_push(end_date, dry_run=dry_run)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the daily data refresh pipeline.")
@@ -291,10 +322,16 @@ if __name__ == "__main__":
         action="store_true",
         help="Print all commands without executing them.",
     )
+    parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help="Skip the automatic git push to GitHub at the end of the pipeline.",
+    )
     args = parser.parse_args()
     main(
         season=args.season,
         min_season=args.min_season,
         game_types=args.game_types,
         dry_run=args.dry_run,
+        no_push=args.no_push,
     )
