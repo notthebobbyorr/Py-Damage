@@ -186,7 +186,7 @@ def main(
     incremental_path = RAW_DIR / f"pitch_data_{season}_incremental.parquet"
     run(
         [
-            sys.executable, str(HERE / "data_pull.py"),
+            sys.executable, str(HERE / "pipeline" / "data_pull.py"),
             "--min-season", str(season),
             "--max-season", str(season),
             "--start-date", start_date.isoformat(),
