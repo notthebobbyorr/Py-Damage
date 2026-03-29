@@ -400,7 +400,8 @@ def build_pitching_splits(
             pitchers_split = build_pitchers(subset)
             if not pitch_types_split.is_empty():
                 pitcher_stuff = (
-                    pitch_types_split.group_by(["pitcher_mlbid", "season", "level_id", "game_type_group"])
+                    pitch_types_split.filter(pl.col("stuff").is_not_null())
+                    .group_by(["pitcher_mlbid", "season", "level_id", "game_type_group"])
                     .agg(
                         (pl.col("stuff") * pl.col("pitches")).sum()
                         / pl.col("pitches").sum()
@@ -2020,7 +2021,8 @@ def _build_outputs(
 
     # For pitchers, compute weighted average stuff grade from pitch types
     pitcher_stuff = (
-        pitch_types.group_by(["pitcher_mlbid", "season", "level_id", "game_type_group"])
+        pitch_types.filter(pl.col("stuff").is_not_null())
+        .group_by(["pitcher_mlbid", "season", "level_id", "game_type_group"])
         .agg((pl.col("stuff") * pl.col("pitches")).sum() / pl.col("pitches").sum())
         .rename({"stuff": "stuff_grade"})
     )
@@ -2054,7 +2056,8 @@ def _build_outputs(
     )
     team_pitch_types = apply_stuff_grade(team_pitch_types, stuff_percentiles)
     team_stuff = (
-        team_pitch_types.group_by(["pitching_code", "season", "level_id", "game_type_group"])
+        team_pitch_types.filter(pl.col("stuff").is_not_null())
+        .group_by(["pitching_code", "season", "level_id", "game_type_group"])
         .agg((pl.col("stuff") * pl.col("pitches")).sum() / pl.col("pitches").sum())
         .rename({"stuff": "stuff_grade"})
     )
@@ -2076,7 +2079,8 @@ def _build_outputs(
         league_pitch_types_stuff, stuff_percentiles
     )
     league_stuff = (
-        league_pitch_types_stuff.group_by(["season", "level_id", "game_type_group"])
+        league_pitch_types_stuff.filter(pl.col("stuff").is_not_null())
+        .group_by(["season", "level_id", "game_type_group"])
         .agg((pl.col("stuff") * pl.col("pitches")).sum() / pl.col("pitches").sum())
         .rename({"stuff": "stuff_grade"})
     )
