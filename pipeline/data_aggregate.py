@@ -1957,6 +1957,23 @@ def _build_outputs(
     # Derive game_type_group for all downstream groupings
     pitch = _add_game_type_group(pitch)
 
+    # Warn if stuff_raw is missing for a material share of pitches — indicates
+    # the stuff model was not run on some rows (e.g. incremental data pulled
+    # without applying models). Stuff grades will be null for those pitchers.
+    if "stuff_raw" in pitch.columns:
+        total = len(pitch)
+        null_count = pitch["stuff_raw"].is_null().sum()
+        if total > 0:
+            null_pct = null_count / total * 100
+            if null_pct > 1.0:
+                print(
+                    f"WARNING: {null_count:,} of {total:,} pitches ({null_pct:.1f}%) "
+                    f"have null stuff_raw — stuff model may not have been run on all rows. "
+                    f"Affected pitchers will have null Pitch Grades."
+                )
+    else:
+        print("WARNING: stuff_raw column missing — Pitch Grades will not be computed.")
+
     # Compute stuff grade percentiles from pitcher-level averages
     print(f"Computing stuff percentiles...{_mem_note()}")
     stuff_percentiles = compute_stuff_percentiles(pitch, min_pitches=50)
