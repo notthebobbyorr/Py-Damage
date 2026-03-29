@@ -35,5 +35,11 @@ model_dev/
 # One-off utility scripts
 scripts/
 
-# Paywall guide
+# .md files for internal use
 PAYWALL_SETUP_GUIDE.md
+LEAGUE_EQUIVALENCIES.md
+PIPELINE.md
+CHANGELOG.md
+
+# repo layout
+repo_structure.txt

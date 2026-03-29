@@ -205,7 +205,7 @@ def main(
     # ── Step 3: Re-aggregate current season chunk ──────────────────────────
     run(
         [
-            sys.executable, str(HERE / "data_aggregate.py"),
+            sys.executable, str(HERE / "pipeline" / "data_aggregate.py"),
             "--parquet-path", str(accumulator_path),
             "--min-season", str(season),
             "--max-season", str(season),
@@ -219,7 +219,7 @@ def main(
     # ── Step 4a: Build p(damage) source tables ─────────────────────────────
     run(
         [
-            sys.executable, str(HERE / "build_p_damage_sources.py"),
+            sys.executable, str(HERE / "pipeline" / "build_p_damage_sources.py"),
             "--parquet-path", str(accumulator_path),
         ],
         dry_run=dry_run,
@@ -228,7 +228,7 @@ def main(
     # ── Step 4b: Build p(swstr) source tables ──────────────────────────────
     run(
         [
-            sys.executable, str(HERE / "build_p_swstr_sources.py"),
+            sys.executable, str(HERE / "pipeline" / "build_p_swstr_sources.py"),
             "--parquet-path", str(accumulator_path),
         ],
         dry_run=dry_run,
@@ -237,7 +237,7 @@ def main(
     # ── Step 4c: Build hitter p(swstr/swing) source tables ─────────────────
     run(
         [
-            sys.executable, str(HERE / "build_p_swstr_hitter_sources.py"),
+            sys.executable, str(HERE / "pipeline" / "build_p_swstr_hitter_sources.py"),
             "--parquet-path", str(accumulator_path),
         ],
         dry_run=dry_run,
@@ -246,7 +246,7 @@ def main(
     # ── Step 4d: Build hitter p(damage) source tables ──────────────────────
     run(
         [
-            sys.executable, str(HERE / "build_p_damage_hitter_sources.py"),
+            sys.executable, str(HERE / "pipeline" / "build_p_damage_hitter_sources.py"),
             "--parquet-path", str(accumulator_path),
         ],
         dry_run=dry_run,
@@ -258,19 +258,19 @@ def main(
 
     # ── Step 6a: Merge p(damage) into aggregated files ─────────────────────
     run(
-        [sys.executable, str(HERE / "merge_p_damage_into_sources.py")],
+        [sys.executable, str(HERE / "pipeline" / "merge_p_damage_into_sources.py")],
         dry_run=dry_run,
     )
 
     # ── Step 6b: Merge p(swstr) into aggregated files ──────────────────────
     run(
-        [sys.executable, str(HERE / "merge_p_swstr_into_sources.py")],
+        [sys.executable, str(HERE / "pipeline" / "merge_p_swstr_into_sources.py")],
         dry_run=dry_run,
     )
 
     # ── Step 6c: Merge hitter model outputs into damage_pos ────────────────
     run(
-        [sys.executable, str(HERE / "merge_model_outputs_into_damage_pos.py")],
+        [sys.executable, str(HERE / "pipeline" / "merge_model_outputs_into_damage_pos.py")],
         dry_run=dry_run,
     )
 
@@ -278,7 +278,7 @@ def main(
     hitters_path = DATA_DIR / f"damage_pos_{min_season}_{season}.parquet"
     run(
         [
-            sys.executable, str(HERE / "apply_regression_from_agg.py"),
+            sys.executable, str(HERE / "pipeline" / "apply_regression_from_agg.py"),
             "--hitters", str(hitters_path),
         ],
         dry_run=dry_run,

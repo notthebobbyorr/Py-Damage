@@ -2,6 +2,26 @@
 
 ---
 
+## 2026-03-28 — Repo script reorganization
+
+### Structure
+**`pipeline/`** *(new folder, tracked)*
+- Moved 10 active pipeline scripts here: `data_pull.py`, `data_aggregate.py`, `build_p_damage_sources.py`, `build_p_swstr_sources.py`, `build_p_swstr_hitter_sources.py`, `build_p_damage_hitter_sources.py`, `merge_p_damage_into_sources.py`, `merge_p_swstr_into_sources.py`, `merge_model_outputs_into_damage_pos.py`, `apply_regression_from_agg.py`.
+
+**`model_dev/`** *(new folder, gitignored)*
+- Moved 4 non-pipeline model scripts here: `apply_regression.py`, `backfill_model_outputs.py`, `catboost_predictor.py`, `stability_constants.py`.
+
+**`scripts/`** *(new folder, gitignored)*
+- Moved `convert_csv_to_parquet.py` here.
+
+**`run_daily_refresh.py`**
+- Updated all 10 subprocess path references from `HERE / "script.py"` to `HERE / "pipeline" / "script.py"`.
+
+**`.gitignore`**
+- Added `model_dev/` and `scripts/` entries.
+
+---
+
 ## 2026-03-27 — Column display cleanup + HR count added to all pages
 
 ### App pages
