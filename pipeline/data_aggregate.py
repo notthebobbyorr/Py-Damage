@@ -1066,6 +1066,14 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
             .list.join(" | ")
             .alias("team"),
             (pl.col("pitch_outcome") == "HR").sum().alias("HR"),
+            pl.mean("release_z").alias("rel_z"),
+            pl.col("release_z").is_not_null().sum().alias("rel_z_n"),
+            pl.mean("release_x").alias("rel_x"),
+            pl.col("release_x").is_not_null().sum().alias("rel_x_n"),
+            pl.mean("ext").alias("ext"),
+            pl.col("ext").is_not_null().sum().alias("ext_n"),
+            pl.mean("arm_angle").alias("arm_angle"),
+            pl.col("arm_angle").is_not_null().sum().alias("arm_angle_n"),
         ]
     )
     if "LA_lte_0" not in pitch_types.columns:
