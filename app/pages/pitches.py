@@ -22,6 +22,7 @@ from app.filters import (
     season_options,
     team_options,
 )
+from app.utils import maybe_add_level_col
 from app.viz import render_table
 
 
@@ -192,6 +193,7 @@ def pitch_shapes_outcomes():
                 "ext": "Extension (ft.)",
             }
             df = df.rename(columns=rename_map)
+            df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Pitch Grade", ascending=False)
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
@@ -367,6 +369,7 @@ def pitch_ar():
                 "ext_reg": "Extension (ft.)",
             }
             df = df.rename(columns=rename_map)
+            df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Pitch Grade", ascending=False)
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
@@ -518,6 +521,7 @@ def pitch_percentiles():
                 "HR": "HR",
             }
             df = df.rename(columns=rename_map)
+            df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Pitch Grade Pctile", ascending=False)
             render_table(
                 df,
@@ -730,6 +734,7 @@ def pitch_splits():
                     "ext": "Extension (ft.)",
                 }
                 df = df.rename(columns=rename_map)
+                df = maybe_add_level_col(df, level)
                 df = df.sort_values(by="Pitch Grade", ascending=False)
                 stats_df = base_stats[
                     [col for col in columns if col in base_stats.columns]

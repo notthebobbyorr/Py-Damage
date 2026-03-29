@@ -371,8 +371,9 @@ def render_table(
     hide_cols = hide_cols or set()
     # Hide Player ID by default from display while keeping it for downloads.
     hide_cols = set(hide_cols) | {"Player ID"}
-    # Hide Team column whenever the displayed table contains any non-MLB rows.
-    if _contains_non_mlb_rows(df):
+    # Hide Team column whenever the displayed table contains any non-MLB rows,
+    # unless a Level column is already present to provide context alongside it.
+    if _contains_non_mlb_rows(df) and "Level" not in df.columns:
         hide_cols = set(hide_cols) | {"Team"}
     display_cols = [
         col for col in df.columns if not col.startswith("__") and col not in hide_cols

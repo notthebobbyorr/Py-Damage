@@ -30,7 +30,7 @@ from app.filters import (
     season_options,
     team_options,
 )
-from app.utils import _pitcher_display_map, _similarity_choice_labels
+from app.utils import _pitcher_display_map, _similarity_choice_labels, maybe_add_level_col
 from app.viz import render_table
 
 
@@ -189,6 +189,7 @@ def pitcher_individual_stats():
                 "ext": "Extension (ft.)",
             }
             df = df.rename(columns=rename_map)
+            df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Pitch Grade", ascending=False)
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
@@ -331,6 +332,7 @@ def pitcher_percentiles():
                 "ext_pctile": "Extension (ft.)",
             }
             df = df.rename(columns=rename_map)
+            df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Pitch Grade Pctile", ascending=False)
             render_table(
                 df,
@@ -969,6 +971,7 @@ def pitcher_ar():
                 "ext_reg": "Extension (ft.)",
             }
             df = df.rename(columns=rename_map)
+            df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Pitch Grade", ascending=False)
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
@@ -1160,6 +1163,7 @@ def pitcher_splits():
                     "ext": "Extension (ft.)",
                 }
                 df = df.rename(columns=rename_map)
+                df = maybe_add_level_col(df, level)
                 df = df.sort_values(by="Pitch Grade", ascending=False)
                 stats_df = base_stats[
                     [col for col in columns if col in base_stats.columns]

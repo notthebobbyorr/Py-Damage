@@ -34,7 +34,7 @@ from app.filters import (
     season_options,
     team_options,
 )
-from app.utils import _hitter_display_map, _similarity_choice_labels
+from app.utils import _hitter_display_map, _similarity_choice_labels, maybe_add_level_col
 from app.viz import render_table
 
 
@@ -163,6 +163,7 @@ def hitter_individual_stats():
                 "p_Swing_with_loc_pct": "pSwing (%)",
             }
             df = df.rename(columns=rename_map)
+            df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Damage/BBE (%)", ascending=False)
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
@@ -294,6 +295,7 @@ def hitter_percentiles():
                 "contact_vs_avg_pctile": "Contact Over Expected",
             }
             df = df.rename(columns=rename_map)
+            df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Damage Rate", ascending=False)
             render_table(
                 df,
@@ -862,6 +864,7 @@ def hitter_ar():
                 "p_Swing_with_loc_pct_reg": "pSwing (%)",
             }
             df = df.rename(columns=rename_map)
+            df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Damage/BBE (%)", ascending=False)
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
@@ -1029,6 +1032,7 @@ def hitter_splits():
                     "contact_vs_avg": "Contact Over Expected (%)",
                 }
                 df = df.rename(columns=rename_map)
+                df = maybe_add_level_col(df, level)
                 df = df.sort_values(by="Damage/BBE (%)", ascending=False)
                 stats_df = base_stats[
                     [col for col in columns if col in base_stats.columns]

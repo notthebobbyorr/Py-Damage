@@ -761,3 +761,25 @@ def _build_pitcher_mlb_equivalencies(
     ]
     all_mlb_eq_metrics = list(dict.fromkeys(all_mlb_eq_metrics))
     return out, coeff_df, all_mlb_eq_metrics
+
+
+def maybe_add_level_col(df: pd.DataFrame, level: str) -> pd.DataFrame:
+    """Insert a readable 'Level' column after 'Team' when all levels are shown.
+
+    Only inserts when level == 'All' and __level is present. Positions the
+    column immediately after 'Team' when Team exists, otherwise after 'Name'.
+    """
+    if level != "All" or "__level" not in df.columns:
+        return df
+    level_series = df["__level"].map(
+        lambda v: LEVEL_LABELS.get(int(v), str(int(v)))
+    )
+    df = df.copy()
+    if "Team" in df.columns:
+        idx = df.columns.get_loc("Team") + 1
+    elif "Name" in df.columns:
+        idx = df.columns.get_loc("Name") + 1
+    else:
+        idx = 0
+    df.insert(idx, "Level", level_series)
+    return df
