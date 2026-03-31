@@ -24,7 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 import polars as pl
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent
 RAW_DIR = HERE / "data" / "raw"
 OUTPUT_DIR = HERE / "data" / "output"
 

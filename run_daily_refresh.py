@@ -100,6 +100,7 @@ def git_push(end_date: date, dry_run: bool = False) -> None:
     """Stage output parquet files, commit, and push to GitHub."""
     commit_msg = "daily data update"
     print(f"\n{'[DRY RUN] ' if dry_run else ''}Git push: staging data/output/, committing, and pushing.")
+    run(["git", "checkout", "main"], dry_run=dry_run, cwd=HERE)
     if not dry_run:
         _stamp_requirements(end_date)
     run(["git", "add", str(DATA_DIR), str(REQUIREMENTS_FILE)], dry_run=dry_run, cwd=HERE)
@@ -113,10 +114,22 @@ def accumulate_pitch_data(incremental_path: Path, accumulator_path: Path) -> Non
     incremental = pl.read_parquet(incremental_path)
     print(f"  Incremental rows: {len(incremental):,}")
 
+    existing_rows = 0
     if accumulator_path.exists():
-        existing = pl.read_parquet(accumulator_path)
-        print(f"  Existing rows: {len(existing):,}")
-        combined = pl.concat([existing, incremental], how="diagonal_relaxed")
+        try:
+            existing = pl.read_parquet(accumulator_path)
+            existing_rows = len(existing)
+            print(f"  Existing rows: {existing_rows:,}")
+            combined = pl.concat([existing, incremental], how="diagonal_relaxed")
+        except Exception as exc:
+            corrupt_path = accumulator_path.with_suffix(".parquet.corrupt")
+            accumulator_path.rename(corrupt_path)
+            print(
+                f"  WARNING: accumulator file is corrupt ({exc}).\n"
+                f"  Moved corrupt file to {corrupt_path.name}.\n"
+                f"  Falling back to incremental-only — re-run a full backfill to restore historical data."
+            )
+            combined = incremental
     else:
         print("  No existing accumulator found — using incremental as initial file.")
         combined = incremental
@@ -129,9 +142,19 @@ def accumulate_pitch_data(incremental_path: Path, accumulator_path: Path) -> Non
         if dropped:
             print(f"  Removed {dropped:,} duplicate rows on {dedup_keys}.")
 
+    new_rows = len(combined)
+    if new_rows < existing_rows:
+        raise RuntimeError(
+            f"Accumulator sanity check failed: new row count ({new_rows:,}) is less than "
+            f"existing row count ({existing_rows:,}). Aborting to prevent data loss."
+        )
+
+    # Write atomically: write to a temp file then rename to avoid partial writes
     accumulator_path.parent.mkdir(parents=True, exist_ok=True)
-    combined.write_parquet(accumulator_path)
-    print(f"  Accumulator now has {len(combined):,} rows.")
+    tmp_path = accumulator_path.with_suffix(".parquet.tmp")
+    combined.write_parquet(tmp_path)
+    tmp_path.replace(accumulator_path)
+    print(f"  Accumulator now has {new_rows:,} rows.")
 
 
 def stitch_season_chunks(min_season: int, current_season: int) -> None:
@@ -168,10 +191,14 @@ def main(
     game_types: list[str],
     dry_run: bool,
     no_push: bool = False,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> None:
     last_pull_date = read_last_pull_date()
-    start_date = last_pull_date + timedelta(days=1)
-    end_date = date.today() - timedelta(days=1)
+    if start_date is None:
+        start_date = last_pull_date + timedelta(days=1)
+    if end_date is None:
+        end_date = date.today() - timedelta(days=1)
 
     print(f"Last pull date : {last_pull_date}")
     print(f"Pull range     : {start_date} -> {end_date}")
@@ -327,6 +354,18 @@ if __name__ == "__main__":
         action="store_true",
         help="Skip the automatic git push to GitHub at the end of the pipeline.",
     )
+    parser.add_argument(
+        "--start-date",
+        type=date.fromisoformat,
+        default=None,
+        help="Override pull start date (YYYY-MM-DD). Default: last_pull_date + 1 day.",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=date.fromisoformat,
+        default=None,
+        help="Override pull end date (YYYY-MM-DD). Default: today - 1 day.",
+    )
     args = parser.parse_args()
     main(
         season=args.season,
@@ -334,4 +373,6 @@ if __name__ == "__main__":
         game_types=args.game_types,
         dry_run=args.dry_run,
         no_push=args.no_push,
+        start_date=args.start_date,
+        end_date=args.end_date,
     )

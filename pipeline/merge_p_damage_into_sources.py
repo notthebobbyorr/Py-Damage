@@ -74,9 +74,9 @@ def _merge_pitch_types(pitch_types: pl.DataFrame, source_dir: Path) -> pl.DataFr
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Merge p(damage) source tables into aggregate source files.")
-    parser.add_argument("--source-dir", type=Path, default=Path(__file__).resolve().parent / "data" / "raw")
-    parser.add_argument("--pitchers", type=Path, default=Path(__file__).resolve().parent / "data" / "output" / "pitcher_stuff_new.parquet")
-    parser.add_argument("--pitch-types", type=Path, default=Path(__file__).resolve().parent / "data" / "output" / "new_pitch_types.parquet")
+    parser.add_argument("--source-dir", type=Path, default=Path(__file__).resolve().parent.parent / "data" / "raw")
+    parser.add_argument("--pitchers", type=Path, default=Path(__file__).resolve().parent.parent / "data" / "output" / "pitcher_stuff_new.parquet")
+    parser.add_argument("--pitch-types", type=Path, default=Path(__file__).resolve().parent.parent / "data" / "output" / "new_pitch_types.parquet")
     args = parser.parse_args()
 
     pitchers = pl.read_parquet(args.pitchers)

@@ -34,7 +34,7 @@ from build_p_swstr_sources import (
     _upsert_parquet,
 )
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent
 MODELS_DIR = HERE / "models"
 RAW_DIR = HERE / "data" / "raw"
 

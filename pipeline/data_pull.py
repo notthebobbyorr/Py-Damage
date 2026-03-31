@@ -58,9 +58,9 @@ except ImportError:  # optional dependency
 import pickle
 
 
-DATA_DIR = Path(__file__).resolve().parent / "data" / "raw"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 OUT_DIR = DATA_DIR
-MODEL_DIR = Path(__file__).resolve().parent / "models"
+MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
 
 if load_dotenv is not None:
     load_dotenv()

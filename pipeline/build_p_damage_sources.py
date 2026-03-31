@@ -38,10 +38,10 @@ def _upsert_parquet(new_df: pd.DataFrame, out_path: Path, key_col: str = "season
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build level-aware p(damage|bbe) source tables from pitch-level data.")
     parser.add_argument("--parquet-path", type=Path, required=True, help="Path to input pitch-level parquet file.")
-    parser.add_argument("--loc-model", type=Path, default=Path(__file__).resolve().parent / "models" / "is_damage_catboost_model_with_locations.cbm")
-    parser.add_argument("--base-model", type=Path, default=Path(__file__).resolve().parent / "models" / "is_damage_catboost_model.cbm")
-    parser.add_argument("--pitcher-output", type=Path, default=Path(__file__).resolve().parent / "data" / "raw" / "pitcher_p_damage.parquet")
-    parser.add_argument("--pitch-type-output", type=Path, default=Path(__file__).resolve().parent / "data" / "raw" / "pitch_types_p_damage.parquet")
+    parser.add_argument("--loc-model", type=Path, default=Path(__file__).resolve().parent.parent / "models" / "is_damage_catboost_model_with_locations.cbm")
+    parser.add_argument("--base-model", type=Path, default=Path(__file__).resolve().parent.parent / "models" / "is_damage_catboost_model.cbm")
+    parser.add_argument("--pitcher-output", type=Path, default=Path(__file__).resolve().parent.parent / "data" / "raw" / "pitcher_p_damage.parquet")
+    parser.add_argument("--pitch-type-output", type=Path, default=Path(__file__).resolve().parent.parent / "data" / "raw" / "pitch_types_p_damage.parquet")
     parser.add_argument("--batch-size", type=int, default=250000)
     return parser.parse_args()
 

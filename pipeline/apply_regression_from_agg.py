@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-_REPO_DIR = Path(__file__).resolve().parent
+_REPO_DIR = Path(__file__).resolve().parent.parent
 from typing import Any, Dict, List, Optional
 
 import polars as pl
@@ -219,15 +219,25 @@ def apply_mean_from_agg(
 def merge_frames(
     base: pl.DataFrame, frames: List[pl.DataFrame], keys: List[str]
 ) -> pl.DataFrame:
-    merged = base
     for frame in frames:
-        join_keys = [k for k in keys if k in frame.columns]
         missing = [k for k in keys if k not in frame.columns]
         if missing:
             raise ValueError(
                 f"Frame missing join keys {missing}. This would create row explosions."
             )
-        merged = merged.join(frame, on=join_keys, how="left", nulls_equal=True)
+    # Process joins in batches to avoid deep lazy-plan stack overflows on
+    # large DataFrames (polars ACCESS_VIOLATION with 30+ chained joins).
+    merged = base
+    batch_size = 8
+    for i in range(0, len(frames), batch_size):
+        batch = frames[i : i + batch_size]
+        lazy = merged.lazy()
+        for frame in batch:
+            join_keys = [k for k in keys if k in frame.columns]
+            # Deduplicate on join keys to prevent many-to-many row explosion
+            frame_deduped = frame.unique(subset=join_keys, keep="last")
+            lazy = lazy.join(frame_deduped.lazy(), on=join_keys, how="left")
+        merged = lazy.collect()
     return merged
 
 
