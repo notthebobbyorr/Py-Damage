@@ -26,7 +26,6 @@ data/logs/
 CLAUDE.md
 
 # Local refresh scripts
-run_daily_refresh.py
 run_daily_refresh.ps1
 
 # Model development scripts (local only, not used by deployed app)
