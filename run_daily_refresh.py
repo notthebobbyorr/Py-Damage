@@ -100,7 +100,6 @@ def git_push(end_date: date, dry_run: bool = False) -> None:
     """Stage output parquet files, commit, and push to GitHub."""
     commit_msg = "daily data update"
     print(f"\n{'[DRY RUN] ' if dry_run else ''}Git push: staging data/output/, committing, and pushing.")
-    run(["git", "checkout", "main"], dry_run=dry_run, cwd=HERE)
     if not dry_run:
         _stamp_requirements(end_date)
     run(["git", "add", str(DATA_DIR), str(REQUIREMENTS_FILE)], dry_run=dry_run, cwd=HERE)
@@ -194,6 +193,9 @@ def main(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> None:
+    # Ensure we are on main before doing anything — prevents committing to a feature branch
+    run(["git", "checkout", "main"], dry_run=dry_run, cwd=HERE)
+
     last_pull_date = read_last_pull_date()
     if start_date is None:
         start_date = last_pull_date + timedelta(days=1)
