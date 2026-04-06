@@ -236,6 +236,44 @@ def _predict_model(
         return None
 
 
+_CONNECT_TIMEOUT = 30        # seconds to establish TCP connection
+_STMT_TIMEOUT_MS = 300_000   # max ms a single query may run (5 min)
+_MAX_RETRIES = 3
+_RETRY_WAIT = 30             # seconds between retry attempts
+
+
+def _psycopg2_connect(cfg):
+    """Open a psycopg2 connection with connect + statement timeouts."""
+    return psycopg2.connect(
+        dbname=cfg.dbname,
+        user=cfg.user,
+        password=cfg.password,
+        host=cfg.host,
+        port=cfg.port,
+        connect_timeout=_CONNECT_TIMEOUT,
+        options=f"-c statement_timeout={_STMT_TIMEOUT_MS}",
+    )
+
+
+def _run_query_with_retry(cfg, query: str, label: str = "query") -> pd.DataFrame:
+    """Execute a SQL query via psycopg2, retrying up to _MAX_RETRIES times."""
+    import time
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            with _psycopg2_connect(cfg) as conn:
+                return pd.read_sql_query(query, conn)
+        except Exception as exc:
+            if attempt == _MAX_RETRIES:
+                raise RuntimeError(
+                    f"{label} failed after {_MAX_RETRIES} attempts: {exc}"
+                ) from exc
+            print(
+                f"  {label} attempt {attempt}/{_MAX_RETRIES} failed ({exc}). "
+                f"Retrying in {_RETRY_WAIT}s..."
+            )
+            time.sleep(_RETRY_WAIT)
+
+
 def _get_env(name: str, default: str | None = None) -> str:
     val = os.getenv(name, default)
     if val is None:
@@ -420,15 +458,8 @@ def read_pitch_data(
         print(f"Fetched {len(df):,} pitch rows via connectorx.")
         return pl.from_pandas(df)
 
-    with psycopg2.connect(
-        dbname=cfg.dbname,
-        user=cfg.user,
-        password=cfg.password,
-        host=cfg.host,
-        port=cfg.port,
-    ) as conn:
-        df = pd.read_sql_query(query, conn)
-        print(f"Fetched {len(df):,} pitch rows.")
+    df = _run_query_with_retry(cfg, query, label="pitch query")
+    print(f"Fetched {len(df):,} pitch rows.")
     return pl.from_pandas(df)
 
 
@@ -448,14 +479,7 @@ def fetch_level_ids(
             AND a.game_type IN ({game_type_clause})
         ORDER BY a.level_id
     """
-    with psycopg2.connect(
-        dbname=cfg.dbname,
-        user=cfg.user,
-        password=cfg.password,
-        host=cfg.host,
-        port=cfg.port,
-    ) as conn:
-        level_df = pd.read_sql_query(query, conn)
+    level_df = _run_query_with_retry(cfg, query, label="level query")
     levels = level_df["level_id"].dropna().astype(int).tolist()
     print(f"Found {len(levels)} level_id values: {levels}")
     return levels
@@ -470,14 +494,7 @@ def add_baseout(cfg: DbConfig, pitch_df: pl.DataFrame) -> pl.DataFrame:
     ids = ",".join(str(int(x)) for x in game_pks if x is not None)
     print(f"Fetching baseout rows for {len(game_pks):,} games...")
     query = f"SELECT * FROM mlbapi.baseout WHERE game_pk IN ({ids})"
-    with psycopg2.connect(
-        dbname=cfg.dbname,
-        user=cfg.user,
-        password=cfg.password,
-        host=cfg.host,
-        port=cfg.port,
-    ) as conn:
-        baseout = pd.read_sql_query(query, conn)
+    baseout = _run_query_with_retry(cfg, query, label="baseout query")
     print(f"Fetched {len(baseout):,} baseout rows.")
     baseout_pl = pl.from_pandas(baseout)
     return pitch_df.join(
