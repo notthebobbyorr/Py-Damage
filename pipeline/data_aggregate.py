@@ -1968,21 +1968,35 @@ def _apply_p_damage_sources(
     return pitchers, pitch_types
 
 
-def _fetch_mlb_sb_stats(seasons: list[int], sport_id: int) -> pl.DataFrame:
+def _fetch_mlb_sb_stats(
+    seasons: list[int],
+    sport_id: int,
+    group: str = "hitting",
+) -> pl.DataFrame:
     """
     Fetch season SB and CS per player from the MLB Stats API for a given sportId.
 
     Uses a single paginated request per season via playerPool=All. Aggregates
     across teams for mid-season trades. Returns an empty DataFrame on any
     network or parse failure so the caller can degrade gracefully.
+
+    Args:
+        seasons:  List of seasons to fetch.
+        sport_id: MLB Stats API sportId (1=MLB, 11=AAA, etc.).
+        group:    API stat group — "hitting" (runner SB/CS) or "pitching"
+                  (stolen bases against). Controls both the API parameter and
+                  the output player-id column name (runner_mlbid vs pitcher_mlbid).
     """
+    player_col = "runner_mlbid" if group == "hitting" else "pitcher_mlbid"
+    caller = "build_baserunning" if group == "hitting" else "build_pitcher_baserunning"
+
     try:
         import requests as _requests
         import time as _time
     except ImportError:
-        print("build_baserunning: requests not available, SB/CS will be null.")
+        print(f"{caller}: requests not available, SB/CS will be null.")
         return pl.DataFrame(schema={
-            "runner_mlbid": pl.Float64, "season": pl.Int32,
+            player_col: pl.Float64, "season": pl.Int32,
             "SB": pl.Int32, "CS": pl.Int32,
         })
 
@@ -1995,7 +2009,7 @@ def _fetch_mlb_sb_stats(seasons: list[int], sport_id: int) -> pl.DataFrame:
                 resp = _requests.get(
                     "https://statsapi.mlb.com/api/v1/stats",
                     params={
-                        "stats": "season", "group": "hitting",
+                        "stats": "season", "group": group,
                         "season": season, "sportId": sport_id, "gameType": "R",
                         "playerPool": "All", "limit": limit, "offset": offset,
                     },
@@ -2003,7 +2017,7 @@ def _fetch_mlb_sb_stats(seasons: list[int], sport_id: int) -> pl.DataFrame:
                 )
                 splits = resp.json().get("stats", [{}])[0].get("splits", [])
             except Exception as exc:
-                print(f"build_baserunning: API error (sportId={sport_id}, season={season}): {exc}")
+                print(f"{caller}: API error (sportId={sport_id}, season={season}): {exc}")
                 break
             if not splits:
                 break
@@ -2016,7 +2030,7 @@ def _fetch_mlb_sb_stats(seasons: list[int], sport_id: int) -> pl.DataFrame:
                     records[key]["CS"] += int(stat.get("caughtStealing", 0))
                 else:
                     records[key] = {
-                        "runner_mlbid": pid,
+                        player_col: pid,
                         "season": season,
                         "SB": int(stat.get("stolenBases", 0)),
                         "CS": int(stat.get("caughtStealing", 0)),
@@ -2028,7 +2042,7 @@ def _fetch_mlb_sb_stats(seasons: list[int], sport_id: int) -> pl.DataFrame:
 
     if not records:
         return pl.DataFrame(schema={
-            "runner_mlbid": pl.Float64, "season": pl.Int32,
+            player_col: pl.Float64, "season": pl.Int32,
             "SB": pl.Int32, "CS": pl.Int32,
         })
     return pl.DataFrame(list(records.values()))
@@ -2145,6 +2159,113 @@ def build_baserunning(df: pl.DataFrame) -> pl.DataFrame:
     return result.join(names, on="runner_mlbid", how="left")
 
 
+def build_pitcher_baserunning(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Compute per-pitcher baserunning-against stats: SBO, SB, CS, takeoff_rate.
+
+    SBO: plate appearances where a runner occupied a stealable base while the
+         pitcher was on the mound. Derived from the same base-state columns as
+         build_baserunning() but grouped by pitcher_mlbid.
+
+    SB / CS: fetched from the MLB Stats API with group=pitching (stolen bases
+         allowed). Will be null for minor league rows or non-regular-season
+         game type groups.
+
+    takeoff_rate: (SB + CS) / SBO — measures baserunner aggression against
+         this pitcher. Higher = worse (opponents run more).
+    """
+    required = {
+        "firstbase_pre", "secondbase_pre", "thirdbase_pre",
+        "outs_pre", "pitcher_mlbid", "game_pk", "at_bat_index", "event_index",
+        "season", "level_id", "game_type_group",
+    }
+    missing = required - set(df.columns)
+    if missing:
+        print(f"build_pitcher_baserunning: missing columns {sorted(missing)}, returning empty.")
+        return pl.DataFrame()
+
+    group_cols = ["season", "level_id", "game_type_group"]
+
+    # One row per PA: take pitch with the highest event_index per (game_pk, at_bat_index)
+    pa = (
+        df.filter(
+            pl.col("event_index") == pl.col("event_index").max().over(["game_pk", "at_bat_index"])
+        )
+        .unique(subset=["game_pk", "at_bat_index"])
+        .filter(pl.col("outs_pre").is_not_null())
+    )
+
+    # ── SBO ──────────────────────────────────────────────────────────────────
+    # Cast pitcher_mlbid to Float64 to align with API-fetched player IDs (f64).
+    pa = pa.with_columns(pl.col("pitcher_mlbid").cast(pl.Float64))
+    sbo_parts = [
+        pa.filter(
+            pl.col("firstbase_pre").is_not_null() & pl.col("secondbase_pre").is_null()
+        ),
+        pa.filter(
+            pl.col("secondbase_pre").is_not_null() & pl.col("thirdbase_pre").is_null()
+        ),
+        pa.filter(
+            pl.col("thirdbase_pre").is_not_null()
+        ),
+    ]
+    sbo = (
+        pl.concat([p.select(["pitcher_mlbid"] + group_cols) for p in sbo_parts])
+        .group_by(["pitcher_mlbid"] + group_cols)
+        .agg(pl.len().alias("SBO"))
+    )
+
+    # ── SB / CS from MLB Stats API (pitching side) ────────────────────────────
+    seasons = sorted(df["season"].unique().to_list())
+    level_ids = sorted(df["level_id"].unique().to_list())
+    print(
+        f"build_pitcher_baserunning: fetching SB/CS-against from MLB Stats API "
+        f"for seasons {seasons}, levels {level_ids}..."
+    )
+    api_parts = []
+    for level_id in level_ids:
+        part = _fetch_mlb_sb_stats(seasons, sport_id=level_id, group="pitching")
+        if not part.is_empty():
+            part = part.with_columns([
+                pl.lit(level_id).cast(pl.Int32).alias("level_id"),
+                pl.lit("Regular Season").alias("game_type_group"),
+            ])
+            api_parts.append(part)
+
+    api_stats = pl.concat(api_parts) if api_parts else pl.DataFrame()
+
+    if not api_stats.is_empty():
+        api_stats = (
+            api_stats.group_by(["pitcher_mlbid", "season", "level_id", "game_type_group"])
+            .agg([pl.col("SB").sum(), pl.col("CS").sum()])
+        )
+
+    # ── Combine and compute takeoff_rate ─────────────────────────────────────
+    join_keys = ["pitcher_mlbid", "season", "level_id", "game_type_group"]
+    result = sbo.join(api_stats, on=join_keys, how="left") if not api_stats.is_empty() else (
+        sbo.with_columns([
+            pl.lit(None).cast(pl.Int32).alias("SB"),
+            pl.lit(None).cast(pl.Int32).alias("CS"),
+        ])
+    )
+    result = result.with_columns([
+        (pl.col("SB") + pl.col("CS")).alias("takeoff_rate_num"),
+        pl.col("SBO").alias("takeoff_rate_den"),
+        ((pl.col("SB") + pl.col("CS")) / pl.col("SBO")).alias("takeoff_rate"),
+    ])
+
+    # ── Pitcher names ─────────────────────────────────────────────────────────
+    names = (
+        df.select(["pitcher_mlbid", "name"])
+        .unique(subset=["pitcher_mlbid"])
+        .with_columns(
+            pl.col("pitcher_mlbid").cast(pl.Float64),
+        )
+    )
+
+    return result.join(names, on="pitcher_mlbid", how="left")
+
+
 def _build_outputs(
     pitch: pl.DataFrame,
     min_season: int,
@@ -2208,6 +2329,9 @@ def _build_outputs(
 
     print(f"Building baserunning...{_mem_note()}")
     baserunning = build_baserunning(pitch)
+
+    print(f"Building pitcher baserunning...{_mem_note()}")
+    pitcher_baserunning = build_pitcher_baserunning(pitch)
 
     print("Building league pitch types...")
     league_pitch_types_shapes = build_league_pitch_types(pitch)
@@ -2404,6 +2528,7 @@ def _build_outputs(
         "new_lg_stuff.parquet": league_pitching,
         "park_data.parquet": park_data,
         "baserunning.parquet": baserunning,
+        "pitcher_baserunning.parquet": pitcher_baserunning,
     }
 
 

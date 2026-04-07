@@ -358,3 +358,11 @@ stats:
       # denominator (takeoff_rate_den) = SBO
       # Pre-aggregated from baserunning.parquet; constants pooled by level_id.
       # Stabilizes at ~SBO >= 80 (MLB), K ~19.7 at level_id=1.
+
+  pitcher_baserunning:
+    - name: takeoff_rate
+      kind: rate
+      # numerator (takeoff_rate_num) = SB + CS allowed
+      # denominator (takeoff_rate_den) = SBO allowed
+      # Pre-aggregated from pitcher_baserunning.parquet; constants pooled by level_id.
+      # Measures baserunner aggression against the pitcher (higher = worse).

@@ -150,6 +150,9 @@ def pitcher_individual_stats():
                 "rel_z",
                 "rel_x",
                 "ext",
+                "SBO",
+                "SB",
+                "takeoff_rate",
                 "__season",
                 "__level",
             ]
@@ -187,6 +190,9 @@ def pitcher_individual_stats():
                 "rel_z": "Vertical Release (ft.)",
                 "rel_x": "Horizontal Release (ft.)",
                 "ext": "Extension (ft.)",
+                "SBO": "SBO",
+                "SB": "SB",
+                "takeoff_rate": "Takeoff% Against",
             }
             df = df.rename(columns=rename_map)
             df = maybe_add_level_col(df, level)
@@ -196,7 +202,7 @@ def pitcher_individual_stats():
             ].rename(columns=rename_map)
             render_table(
                 df,
-                reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "Damage/BBE (%)", "pDamage/BBE (%)", "HR"},
+                reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "Damage/BBE (%)", "pDamage/BBE (%)", "HR", "Takeoff% Against"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
                 abs_cols=ABS_GRADIENT_COLS_PITCHERS,
@@ -939,6 +945,9 @@ def pitcher_ar():
                 "rel_z_reg",
                 "rel_x_reg",
                 "ext_reg",
+                "SBO",
+                "SB",
+                "takeoff_rate_reg",
                 "__season",
                 "__level",
             ]
@@ -969,6 +978,9 @@ def pitcher_ar():
                 "rel_z_reg": "Vertical Release (ft.)",
                 "rel_x_reg": "Horizontal Release (ft.)",
                 "ext_reg": "Extension (ft.)",
+                "SBO": "SBO",
+                "SB": "SB",
+                "takeoff_rate_reg": "Takeoff% Against",
             }
             df = df.rename(columns=rename_map)
             df = maybe_add_level_col(df, level)
@@ -978,7 +990,7 @@ def pitcher_ar():
             ].rename(columns=rename_map)
             render_table(
                 df,
-                reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "Damage/BBE (%)", "pDamage/BBE (%)", "HR"},
+                reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "Damage/BBE (%)", "pDamage/BBE (%)", "HR", "Takeoff% Against"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
                 abs_cols=ABS_GRADIENT_COLS_PITCHERS,

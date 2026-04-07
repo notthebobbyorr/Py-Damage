@@ -183,6 +183,7 @@ def _pitcher_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
         "rel_x_reg": "Horizontal Release (ft.)",
         "ext_reg": "Extension (ft.)",
         "arm_angle_reg": "Arm Angle",
+        "takeoff_rate_reg": "Takeoff% Against",
         "similarity_score": "Similarity (0-100)",
     }
     if not include_mlb_eq:

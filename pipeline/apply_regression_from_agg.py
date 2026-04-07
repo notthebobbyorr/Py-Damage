@@ -282,6 +282,12 @@ def main() -> None:
         help="Aggregated baserunning parquet.",
     )
     parser.add_argument(
+        "--pitcher-baserunning",
+        type=Path,
+        default=_REPO_DIR / "data" / "output" / "pitcher_baserunning.parquet",
+        help="Aggregated pitcher_baserunning parquet.",
+    )
+    parser.add_argument(
         "--out-dir",
         type=Path,
         default=_REPO_DIR / "data" / "output",
@@ -323,6 +329,10 @@ def main() -> None:
         "baserunning": (
             args.baserunning,
             ["runner_mlbid", "runner_name", "season", "level_id", "game_type_group", "SB"],
+        ),
+        "pitcher_baserunning": (
+            args.pitcher_baserunning,
+            ["pitcher_mlbid", "name", "season", "level_id", "game_type_group", "SB"],
         ),
     }
 

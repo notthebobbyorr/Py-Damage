@@ -27,6 +27,7 @@ pitch_types = load_csv("new_pitch_types.csv")
 pitch_types_pct = load_csv("pitch_types_pctiles.csv")
 hitters_regressed = load_csv("hitters_regressed.csv")
 pitchers_regressed = load_csv("pitchers_regressed.csv")
+pitcher_baserunning_reg = load_csv("pitcher_baserunning_regressed.parquet")
 pitch_types_regressed = load_csv("pitch_types_regressed.csv")
 hitter_splits_df = load_csv("hitter_splits.csv")
 pitcher_splits_df = load_csv("pitcher_splits.csv")
@@ -136,6 +137,31 @@ if not baserunning_reg.empty and not damage_df.empty and "game_type_group" in da
         if _int_col in damage_df.columns:
             damage_df[_int_col] = pd.to_numeric(damage_df[_int_col], errors="coerce").astype("Int64")
     del _br, _left, _merge_keys, _col, _int_col
+
+# ---------------------------------------------------------------------------
+# Merge pitcher baserunning columns onto pitcher_df
+# Provides SBO, takeoff_rate (raw), and takeoff_rate_reg for pitcher pages.
+# ---------------------------------------------------------------------------
+if not pitcher_baserunning_reg.empty and not pitcher_df.empty and "game_type_group" in pitcher_df.columns:
+    _pbr = pitcher_baserunning_reg.copy()
+    _pbr_want = ["pitcher_mlbid", "season", "level_id", "game_type_group",
+                 "SB", "takeoff_rate_n", "takeoff_rate_raw", "takeoff_rate_reg"]
+    _pbr = (
+        _pbr[[c for c in _pbr_want if c in _pbr.columns]]
+        .rename(columns={"takeoff_rate_n": "SBO", "takeoff_rate_raw": "takeoff_rate"})
+        .drop_duplicates(subset=["pitcher_mlbid", "season", "level_id", "game_type_group"])
+    )
+    del _pbr_want
+    _pleft = pitcher_df.copy()
+    _p_merge_keys = ["pitcher_mlbid", "season", "level_id", "game_type_group"]
+    for _pcol in ["pitcher_mlbid", "season", "level_id"]:
+        _pleft[_pcol] = pd.to_numeric(_pleft[_pcol], errors="coerce").astype("Int64")
+        _pbr[_pcol] = pd.to_numeric(_pbr[_pcol], errors="coerce").astype("Int64")
+    pitcher_df = _pleft.merge(_pbr, on=_p_merge_keys, how="left")
+    for _p_int_col in ["SBO", "SB"]:
+        if _p_int_col in pitcher_df.columns:
+            pitcher_df[_p_int_col] = pd.to_numeric(pitcher_df[_p_int_col], errors="coerce").astype("Int64")
+    del _pbr, _pleft, _p_merge_keys, _pcol, _p_int_col
 
 # ---------------------------------------------------------------------------
 # Merge regressed columns

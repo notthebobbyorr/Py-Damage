@@ -147,6 +147,7 @@ PITCHER_COMPS_EXTRA_FEATURE_COLS = [
     "LD_pct_reg",
     "LA_gte_20_reg",
     "arm_angle_reg",
+    "takeoff_rate_reg",
 ]
 PITCHER_MLB_PASS_THROUGH_COLS = {
     "stuff",
@@ -162,6 +163,7 @@ PITCHER_MLB_HIGHER_IS_WORSE_METRICS = {
     "Z_Contact_reg",
     "LD_pct_reg",
     "LA_gte_20_reg",
+    "takeoff_rate_reg",
 }
 PITCHER_MLB_DIRECTION_MAP = {
     "SwStr_reg": "down",
@@ -181,4 +183,5 @@ PITCHER_REVERSE_DISPLAY_COLS = {
     "0<LA<20 (%)",
     "LA>=20 (%)",
     "Arm Angle",
+    "Takeoff% Against",
 }

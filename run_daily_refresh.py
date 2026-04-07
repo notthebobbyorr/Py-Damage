@@ -55,6 +55,7 @@ STITCHED_TABLES = [
     "new_lg_stuff",
     "park_data",
     "baserunning",
+    "pitcher_baserunning",
 ]
 
 
@@ -311,6 +312,7 @@ def main(
             sys.executable, str(HERE / "pipeline" / "apply_regression_from_agg.py"),
             "--hitters", str(hitters_path),
             "--baserunning", str(DATA_DIR / "baserunning.parquet"),
+            "--pitcher-baserunning", str(DATA_DIR / "pitcher_baserunning.parquet"),
         ],
         dry_run=dry_run,
     )
