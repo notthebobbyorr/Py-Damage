@@ -85,6 +85,7 @@ HITTER_COMPS_EXTRA_FEATURE_COLS = [
     "attack_angle_reg",
     "swing_path_tilt_reg",
     "max_EV_reg",
+    "takeoff_rate_reg",
 ]
 HITTER_HIGHER_IS_WORSE_METRICS = {
     "hittable_pitches_taken_reg",

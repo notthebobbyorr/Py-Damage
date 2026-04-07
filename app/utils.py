@@ -144,6 +144,7 @@ def _hitter_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
         "attack_angle_reg": "Attack Angle",
         "swing_path_tilt_reg": "VBA",
         "max_EV_reg": "Max EV",
+        "takeoff_rate_reg": "Takeoff%",
     }
     if not include_mlb_eq:
         return display_map

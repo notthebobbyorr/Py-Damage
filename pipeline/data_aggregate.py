@@ -1144,9 +1144,26 @@ def build_league_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
     return league_pitch_types
 
 
+_TEAM_CODE_ALIASES: dict[str, str] = {
+    "AZ": "ARI",
+}
+
+
+def _normalize_team_codes(df: pl.DataFrame, col: str) -> pl.DataFrame:
+    """Remap historical team code aliases to canonical codes."""
+    if col not in df.columns:
+        return df
+    old_codes = list(_TEAM_CODE_ALIASES.keys())
+    new_codes = list(_TEAM_CODE_ALIASES.values())
+    return df.with_columns(
+        pl.col(col).replace(old_codes, new_codes).alias(col)
+    )
+
+
 def build_team_hitting(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
+    df = _normalize_team_codes(df, "hitting_code")
     team = (
         df.filter(
             pl.col("hitting_code").is_not_null()
@@ -1375,6 +1392,7 @@ def build_league_hitting(df: pl.DataFrame) -> pl.DataFrame:
 def build_team_pitching(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
+    df = _normalize_team_codes(df, "pitching_code")
     team = (
         df.filter(
             pl.col("pitching_code").is_not_null()
@@ -1950,6 +1968,183 @@ def _apply_p_damage_sources(
     return pitchers, pitch_types
 
 
+def _fetch_mlb_sb_stats(seasons: list[int], sport_id: int) -> pl.DataFrame:
+    """
+    Fetch season SB and CS per player from the MLB Stats API for a given sportId.
+
+    Uses a single paginated request per season via playerPool=All. Aggregates
+    across teams for mid-season trades. Returns an empty DataFrame on any
+    network or parse failure so the caller can degrade gracefully.
+    """
+    try:
+        import requests as _requests
+        import time as _time
+    except ImportError:
+        print("build_baserunning: requests not available, SB/CS will be null.")
+        return pl.DataFrame(schema={
+            "runner_mlbid": pl.Float64, "season": pl.Int32,
+            "SB": pl.Int32, "CS": pl.Int32,
+        })
+
+    records: dict[tuple, dict] = {}
+    for season in seasons:
+        offset = 0
+        limit = 500
+        while True:
+            try:
+                resp = _requests.get(
+                    "https://statsapi.mlb.com/api/v1/stats",
+                    params={
+                        "stats": "season", "group": "hitting",
+                        "season": season, "sportId": sport_id, "gameType": "R",
+                        "playerPool": "All", "limit": limit, "offset": offset,
+                    },
+                    timeout=15,
+                )
+                splits = resp.json().get("stats", [{}])[0].get("splits", [])
+            except Exception as exc:
+                print(f"build_baserunning: API error (sportId={sport_id}, season={season}): {exc}")
+                break
+            if not splits:
+                break
+            for s in splits:
+                pid = float(s["player"]["id"])
+                stat = s.get("stat", {})
+                key = (pid, season)
+                if key in records:
+                    records[key]["SB"] += int(stat.get("stolenBases", 0))
+                    records[key]["CS"] += int(stat.get("caughtStealing", 0))
+                else:
+                    records[key] = {
+                        "runner_mlbid": pid,
+                        "season": season,
+                        "SB": int(stat.get("stolenBases", 0)),
+                        "CS": int(stat.get("caughtStealing", 0)),
+                    }
+            if len(splits) < limit:
+                break
+            offset += limit
+            _time.sleep(0.1)
+
+    if not records:
+        return pl.DataFrame(schema={
+            "runner_mlbid": pl.Float64, "season": pl.Int32,
+            "SB": pl.Int32, "CS": pl.Int32,
+        })
+    return pl.DataFrame(list(records.values()))
+
+
+def build_baserunning(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Compute per-runner baserunning stats: SBO, SB, CS, takeoff_rate.
+
+    SBO: plate appearances where runner occupied a stealable base (1st with 2nd
+         empty, 2nd with 3rd empty, or 3rd base). Derived from mlbapi.baseout
+         base state columns in the pitch data.
+
+    SB / CS: fetched from the MLB Stats API (MLB regular season only). Will be
+         null for minor league rows or non-regular-season game type groups.
+
+    takeoff_rate: (SB + CS) / SBO — measures baserunner aggression.
+    """
+    required = {
+        "firstbase_pre", "secondbase_pre", "thirdbase_pre",
+        "outs_pre", "batter_mlbid", "game_pk", "at_bat_index", "event_index",
+        "season", "level_id", "game_type_group",
+    }
+    missing = required - set(df.columns)
+    if missing:
+        print(f"build_baserunning: missing columns {sorted(missing)}, returning empty.")
+        return pl.DataFrame()
+
+    group_cols = ["season", "level_id", "game_type_group"]
+
+    # One row per PA: baseout data lands on the pitch with the highest event_index.
+    # Use .over() to select that row reliably — group_by().last() does not respect
+    # a prior sort() in Polars.
+    pa = (
+        df.filter(
+            pl.col("event_index") == pl.col("event_index").max().over(["game_pk", "at_bat_index"])
+        )
+        .unique(subset=["game_pk", "at_bat_index"])
+        .filter(pl.col("outs_pre").is_not_null())
+    )
+
+    # ── SBO ──────────────────────────────────────────────────────────────────
+    sbo_parts = [
+        pa.filter(
+            pl.col("firstbase_pre").is_not_null() & pl.col("secondbase_pre").is_null()
+        ).rename({"firstbase_pre": "runner_mlbid"}),
+        pa.filter(
+            pl.col("secondbase_pre").is_not_null() & pl.col("thirdbase_pre").is_null()
+        ).rename({"secondbase_pre": "runner_mlbid"}),
+        pa.filter(
+            pl.col("thirdbase_pre").is_not_null()
+        ).rename({"thirdbase_pre": "runner_mlbid"}),
+    ]
+    sbo = (
+        pl.concat([p.select(["runner_mlbid"] + group_cols) for p in sbo_parts])
+        .group_by(["runner_mlbid"] + group_cols)
+        .agg(pl.len().alias("SBO"))
+    )
+
+    # ── SB / CS from MLB Stats API ────────────────────────────────────────────
+    # Fetch per (season, level_id), treating level_id as the API's sportId.
+    # Join on all four group keys so each level's SB/CS stays isolated.
+    # Non-regular-season rows receive nulls via the game_type_group constant.
+    seasons = sorted(df["season"].unique().to_list())
+    level_ids = sorted(df["level_id"].unique().to_list())
+    print(
+        f"build_baserunning: fetching SB/CS from MLB Stats API "
+        f"for seasons {seasons}, levels {level_ids}..."
+    )
+    api_parts = []
+    for level_id in level_ids:
+        part = _fetch_mlb_sb_stats(seasons, sport_id=level_id)
+        if not part.is_empty():
+            part = part.with_columns([
+                pl.lit(level_id).cast(pl.Int32).alias("level_id"),
+                pl.lit("Regular Season").alias("game_type_group"),
+            ])
+            api_parts.append(part)
+
+    api_stats = pl.concat(api_parts) if api_parts else pl.DataFrame()
+
+    if not api_stats.is_empty():
+        # Deduplicate in case a player appears under multiple teams at the same level
+        api_stats = (
+            api_stats.group_by(["runner_mlbid", "season", "level_id", "game_type_group"])
+            .agg([pl.col("SB").sum(), pl.col("CS").sum()])
+        )
+
+    # ── Combine and compute takeoff_rate ─────────────────────────────────────
+    join_keys = ["runner_mlbid", "season", "level_id", "game_type_group"]
+    result = sbo.join(api_stats, on=join_keys, how="left") if not api_stats.is_empty() else (
+        sbo.with_columns([
+            pl.lit(None).cast(pl.Int32).alias("SB"),
+            pl.lit(None).cast(pl.Int32).alias("CS"),
+        ])
+    )
+    result = result.with_columns([
+        (pl.col("SB") + pl.col("CS")).alias("takeoff_rate_num"),
+        pl.col("SBO").alias("takeoff_rate_den"),
+        ((pl.col("SB") + pl.col("CS")) / pl.col("SBO")).alias("takeoff_rate"),
+    ])
+
+    # ── Player names from batter lookup ──────────────────────────────────────
+    names = (
+        df.select(["batter_mlbid", "batter_name_first", "batter_name_last"])
+        .unique(subset=["batter_mlbid"])
+        .with_columns([
+            (pl.col("batter_name_first") + " " + pl.col("batter_name_last")).alias("runner_name"),
+            pl.col("batter_mlbid").cast(pl.Float64).alias("runner_mlbid"),
+        ])
+        .select(["runner_mlbid", "runner_name"])
+    )
+
+    return result.join(names, on="runner_mlbid", how="left")
+
+
 def _build_outputs(
     pitch: pl.DataFrame,
     min_season: int,
@@ -2010,6 +2205,9 @@ def _build_outputs(
 
     print(f"Building park data...{_mem_note()}")
     park_data = build_park_data(pitch)
+
+    print(f"Building baserunning...{_mem_note()}")
+    baserunning = build_baserunning(pitch)
 
     print("Building league pitch types...")
     league_pitch_types_shapes = build_league_pitch_types(pitch)
@@ -2205,6 +2403,7 @@ def _build_outputs(
         "new_hitting_lg_avg.parquet": league_hitting,
         "new_lg_stuff.parquet": league_pitching,
         "park_data.parquet": park_data,
+        "baserunning.parquet": baserunning,
     }
 
 

@@ -144,6 +144,7 @@ def hitter_individual_stats():
                 "chase", "z_con", "secondary_whiff_pct", "whiffs_vs_95",
                 "contact_vs_avg",
                 "Swing_pct", "p_Swing_with_loc_pct",
+                "SBO", "SB", "takeoff_rate",
                 "__season", "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
@@ -161,6 +162,9 @@ def hitter_individual_stats():
                 "contact_vs_avg": "Contact Over Expected (%)",
                 "Swing_pct": "Swing (%)",
                 "p_Swing_with_loc_pct": "pSwing (%)",
+                "SBO": "SBO",
+                "SB": "SB",
+                "takeoff_rate": "Takeoff%",
             }
             df = df.rename(columns=rename_map)
             df = maybe_add_level_col(df, level)
@@ -844,6 +848,7 @@ def hitter_ar():
                 "hittable_pitches_taken_reg", "chase_reg", "z_con_reg",
                 "secondary_whiff_pct_reg", "whiffs_vs_95_reg", "contact_vs_avg_reg",
                 "Swing_pct_reg", "p_Swing_with_loc_pct_reg",
+                "SBO", "SB", "takeoff_rate_reg",
                 "__season", "__level",
             ]
             df = df.assign(__season=df["season"], __level=df["level_id"])
@@ -862,6 +867,9 @@ def hitter_ar():
                 "contact_vs_avg_reg": "Contact Over Expected (%)",
                 "Swing_pct_reg": "Swing (%)",
                 "p_Swing_with_loc_pct_reg": "pSwing (%)",
+                "SBO": "SBO",
+                "SB": "SB",
+                "takeoff_rate_reg": "Takeoff%",
             }
             df = df.rename(columns=rename_map)
             df = maybe_add_level_col(df, level)

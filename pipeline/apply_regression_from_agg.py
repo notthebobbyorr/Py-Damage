@@ -63,7 +63,7 @@ def _join_constants(
     join_keys = [
         c
         for c in ["level_id", "pitch_tag", "season"]
-        if c in const.columns and c in df.columns
+        if c in const.columns and c in df.columns and const[c].is_not_null().any()
     ]
     if join_keys:
         return df.join(const.select(join_keys + ["mu", "K"]), on=join_keys, how="left")
@@ -276,6 +276,12 @@ def main() -> None:
         help="Aggregated pitch types CSV or parquet.",
     )
     parser.add_argument(
+        "--baserunning",
+        type=Path,
+        default=_REPO_DIR / "data" / "output" / "baserunning.parquet",
+        help="Aggregated baserunning parquet.",
+    )
+    parser.add_argument(
         "--out-dir",
         type=Path,
         default=_REPO_DIR / "data" / "output",
@@ -313,6 +319,10 @@ def main() -> None:
                 "game_type_group",
                 "pitch_tag",
             ],
+        ),
+        "baserunning": (
+            args.baserunning,
+            ["runner_mlbid", "runner_name", "season", "level_id", "game_type_group", "SB"],
         ),
     }
 
