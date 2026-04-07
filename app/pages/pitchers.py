@@ -202,7 +202,7 @@ def pitcher_individual_stats():
             ].rename(columns=rename_map)
             render_table(
                 df,
-                reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "Damage/BBE (%)", "pDamage/BBE (%)", "HR", "Takeoff% Against"},
+                reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "Damage/BBE (%)", "pDamage/BBE (%)", "HR", "SBO", "SB", "Takeoff% Against"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
                 abs_cols=ABS_GRADIENT_COLS_PITCHERS,
@@ -990,7 +990,7 @@ def pitcher_ar():
             ].rename(columns=rename_map)
             render_table(
                 df,
-                reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "Damage/BBE (%)", "pDamage/BBE (%)", "HR", "Takeoff% Against"},
+                reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "Damage/BBE (%)", "pDamage/BBE (%)", "HR", "SBO", "SB", "Takeoff% Against"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
                 abs_cols=ABS_GRADIENT_COLS_PITCHERS,
