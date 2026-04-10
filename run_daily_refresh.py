@@ -305,6 +305,16 @@ def main(
         dry_run=dry_run,
     )
 
+    # ── Step 6d: Blend stability constants for current season ──────────────
+    run(
+        [
+            sys.executable, str(HERE / "pipeline" / "blend_constants.py"),
+            "--parquet-path", str(RAW_DIR / f"pitch_data_{season}.parquet"),
+            "--season", str(season),
+        ],
+        dry_run=dry_run,
+    )
+
     # ── Step 7: Apply regression ───────────────────────────────────────────
     hitters_path = DATA_DIR / f"damage_pos_{min_season}_{season}.parquet"
     run(

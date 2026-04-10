@@ -169,17 +169,17 @@ if not pitcher_baserunning_reg.empty and not pitcher_df.empty and "game_type_gro
 hitters_reg_df = _merge_regressed(
     damage_df,
     hitters_regressed,
-    ["batter_mlbid", "hitter_name", "season", "level_id"],
+    ["batter_mlbid", "hitter_name", "season", "level_id", "game_type_group"],
 )
 pitchers_reg_df = _merge_regressed(
     pitcher_df,
     pitchers_regressed,
-    ["pitcher_mlbid", "name", "season", "level_id", "pitcher_hand"],
+    ["pitcher_mlbid", "name", "season", "level_id", "pitcher_hand", "game_type_group"],
 )
 pitch_types_reg_df = _merge_regressed(
     pitch_types,
     pitch_types_regressed,
-    ["pitcher_mlbid", "name", "pitcher_hand", "season", "level_id", "pitch_tag"],
+    ["pitcher_mlbid", "name", "pitcher_hand", "season", "level_id", "pitch_tag", "game_type_group"],
 )
 
 # ---------------------------------------------------------------------------
