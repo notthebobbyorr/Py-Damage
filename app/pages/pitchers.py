@@ -130,6 +130,7 @@ def pitcher_individual_stats():
                 "GS",
                 "HR",
                 "stuff",
+                "grade_v13",
                 "fastball_velo",
                 "max_velo",
                 "fastball_vaa",
@@ -157,11 +158,13 @@ def pitcher_individual_stats():
                 "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
-            # Round BB_rpm and stuff to integers
+            # Round BB_rpm, stuff, and grade_v13 to integers
             if "BB_rpm" in df.columns:
                 df["BB_rpm"] = df["BB_rpm"].round(0)
             if "stuff" in df.columns:
                 df["stuff"] = df["stuff"].round(0)
+            if "grade_v13" in df.columns:
+                df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
             rename_map = {
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
@@ -170,6 +173,7 @@ def pitcher_individual_stats():
                 "GS": "GS",
                 "HR": "HR",
                 "stuff": "Pitch Grade",
+                "grade_v13": "Execution Grade",
                 "fastball_velo": "FA mph",
                 "max_velo": "Max FA mph",
                 "fastball_vaa": "FA VAA",
@@ -927,6 +931,7 @@ def pitcher_ar():
                 "GS",
                 "HR",
                 "stuff",
+                "grade_v13",
                 "fastball_velo_reg",
                 "max_velo_reg",
                 "fastball_vaa_reg",
@@ -952,6 +957,8 @@ def pitcher_ar():
                 "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
+            if "grade_v13" in df.columns:
+                df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
             rename_map = {
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
@@ -960,6 +967,7 @@ def pitcher_ar():
                 "GS": "GS",
                 "HR": "HR",
                 "stuff": "Pitch Grade",
+                "grade_v13": "Execution Grade",
                 "fastball_velo_reg": "FA mph",
                 "max_velo_reg": "Max FA mph",
                 "fastball_vaa_reg": "FA VAA",

@@ -29,6 +29,8 @@ hitters_regressed = load_csv("hitters_regressed.csv")
 pitchers_regressed = load_csv("pitchers_regressed.csv")
 pitcher_baserunning_reg = load_csv("pitcher_baserunning_regressed.parquet")
 pitch_types_regressed = load_csv("pitch_types_regressed.csv")
+execution_pitcher = load_csv("location_v13_pitcher_season.parquet")
+execution_pitch = load_csv("location_v13_pitcher_pitch.parquet")
 hitter_splits_df = load_csv("hitter_splits.csv")
 pitcher_splits_df = load_csv("pitcher_splits.csv")
 pitch_type_splits_df = load_csv("pitch_types_splits.csv")
@@ -162,6 +164,98 @@ if not pitcher_baserunning_reg.empty and not pitcher_df.empty and "game_type_gro
         if _p_int_col in pitcher_df.columns:
             pitcher_df[_p_int_col] = pd.to_numeric(pitcher_df[_p_int_col], errors="coerce").astype("Int64")
     del _pbr, _pleft, _p_merge_keys, _pcol, _p_int_col
+
+# ---------------------------------------------------------------------------
+# Merge execution grade (Location V13) onto pitcher_df and pitch_types
+# ---------------------------------------------------------------------------
+_GAME_TYPE_TO_GROUP = {
+    "R": "Regular Season",
+    "S": "Spring Training",
+    "F": "Postseason", "D": "Postseason", "L": "Postseason", "W": "Postseason",
+}
+
+def _prep_execution(df: pd.DataFrame, id_cols: list[str]) -> pd.DataFrame:
+    """Aggregate grade_v13 to game_type_group level (weighted by n_pitches) and cast keys."""
+    if df.empty or "grade_v13" not in df.columns:
+        return pd.DataFrame()
+    out = df.copy()
+    if "level_id" in out.columns:
+        out["level_id"] = out["level_id"].fillna(1)
+    if "game_type" in out.columns:
+        out["game_type"] = out["game_type"].fillna("R")
+        out["game_type_group"] = out["game_type"].map(_GAME_TYPE_TO_GROUP).fillna("Regular Season")
+    elif "game_type_group" not in out.columns:
+        out["game_type_group"] = "Regular Season"
+    out["_wgrade"] = out["grade_v13"] * out["n_pitches"]
+    grp_cols = [c for c in id_cols if c in out.columns]
+    agg = (
+        out.groupby(grp_cols)
+        .agg(_wgrade_sum=("_wgrade", "sum"), _n=("n_pitches", "sum"))
+        .reset_index()
+    )
+    agg["grade_v13"] = (agg["_wgrade_sum"] / agg["_n"]).round(1)
+    out = agg.drop(columns=["_wgrade_sum", "_n"])
+    for _c in ["pitcher_mlbid", "season", "level_id"]:
+        if _c in out.columns:
+            out[_c] = pd.to_numeric(out[_c], errors="coerce").astype("Int64")
+    return out
+
+_exec_ps_keys = ["pitcher_mlbid", "season", "level_id", "game_type_group"]
+_exec_pt_keys = ["pitcher_mlbid", "season", "level_id", "pitch_tag", "game_type_group"]
+
+_exec_ps = _prep_execution(execution_pitcher, _exec_ps_keys)
+_exec_pt = _prep_execution(execution_pitch, _exec_pt_keys)
+
+if not _exec_ps.empty and not pitcher_df.empty and "game_type_group" in pitcher_df.columns:
+    _pdf = pitcher_df.copy()
+    for _c in ["pitcher_mlbid", "season", "level_id"]:
+        if _c in _pdf.columns:
+            _pdf[_c] = pd.to_numeric(_pdf[_c], errors="coerce").astype("Int64")
+    pitcher_df = _pdf.merge(_exec_ps[_exec_ps_keys + ["grade_v13"]], on=_exec_ps_keys, how="left")
+    del _pdf
+
+if not _exec_pt.empty and not pitch_types.empty and "game_type_group" in pitch_types.columns:
+    _ptdf = pitch_types.copy()
+    for _c in ["pitcher_mlbid", "season", "level_id"]:
+        if _c in _ptdf.columns:
+            _ptdf[_c] = pd.to_numeric(_ptdf[_c], errors="coerce").astype("Int64")
+    pitch_types = _ptdf.merge(_exec_pt[_exec_pt_keys + ["grade_v13"]], on=_exec_pt_keys, how="left")
+    del _ptdf
+
+del _exec_ps, _exec_pt, _exec_ps_keys, _exec_pt_keys
+
+# ---------------------------------------------------------------------------
+# Build team-level execution grade and merge onto team_stuff
+# ---------------------------------------------------------------------------
+if (
+    "grade_v13" in pitcher_df.columns
+    and not pitcher_df.empty
+    and not team_stuff.empty
+    and "game_type_group" in pitcher_df.columns
+):
+    _team_keys = ["pitching_code", "season", "level_id", "game_type_group"]
+    _p = pitcher_df[
+        [c for c in _team_keys + ["grade_v13", "TBF"] if c in pitcher_df.columns]
+    ].dropna(subset=["grade_v13"])
+
+    if not _p.empty and "TBF" in _p.columns:
+        _p["_wgrade"] = _p["grade_v13"] * _p["TBF"]
+        _team_exec = (
+            _p.groupby(_team_keys)
+            .agg(_wgrade_sum=("_wgrade", "sum"), _n=("TBF", "sum"))
+            .reset_index()
+        )
+        _team_exec["grade_v13"] = (_team_exec["_wgrade_sum"] / _team_exec["_n"]).round(1)
+        _team_exec = _team_exec.drop(columns=["_wgrade_sum", "_n"])
+        for _c in ["season", "level_id"]:
+            _team_exec[_c] = pd.to_numeric(_team_exec[_c], errors="coerce").astype("Int64")
+        _ts = team_stuff.copy()
+        for _c in ["season", "level_id"]:
+            if _c in _ts.columns:
+                _ts[_c] = pd.to_numeric(_ts[_c], errors="coerce").astype("Int64")
+        team_stuff = _ts.merge(_team_exec[_team_keys + ["grade_v13"]], on=_team_keys, how="left")
+        del _ts
+    del _p, _team_keys
 
 # ---------------------------------------------------------------------------
 # Merge regressed columns

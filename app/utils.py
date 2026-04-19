@@ -161,6 +161,7 @@ def _pitcher_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
         "pitching_code": "Team",
         "season": "Season",
         "stuff": "Pitch Grade",
+        "grade_v13": "Execution Grade",
         "stuff_raw_reg": "Pitch Grade (Raw Model)",
         "fastball_velo_reg": "FA mph",
         "max_velo_reg": "Max FA mph",

@@ -179,6 +179,7 @@ def team_pitching():
                 "season",
                 "IP",
                 "stuff",
+                "grade_v13",
                 "fastball_velo",
                 "fastball_vaa",
                 "FA_pct",
@@ -192,10 +193,13 @@ def team_pitching():
                 "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
+            if "grade_v13" in df.columns:
+                df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
             rename_map = {
                 "pitching_code": "Team",
                 "season": "Season",
                 "stuff": "Pitch Grade",
+                "grade_v13": "Execution Grade",
                 "fastball_velo": "FA mph",
                 "fastball_vaa": "FA VAA",
                 "FA_pct": "FA Usage (%)",
