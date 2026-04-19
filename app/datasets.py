@@ -183,12 +183,13 @@ def _prep_execution(df: pd.DataFrame, id_cols: list[str]) -> pd.DataFrame:
         out["game_type_group"] = out["game_type"].map(_GAME_TYPE_TO_GROUP).fillna(out["game_type"])
     out["_wgrade"] = out["grade_v13"] * out["n_pitches"]
     grp_cols = [c for c in id_cols if c in out.columns]
-    out = (
-        out.groupby(grp_cols, as_index=False)
-        .agg(grade_v13=("_wgrade", "sum"), _n=("n_pitches", "sum"))
+    agg = (
+        out.groupby(grp_cols)
+        .agg(_wgrade_sum=("_wgrade", "sum"), _n=("n_pitches", "sum"))
+        .reset_index()
     )
-    out["grade_v13"] = (out["grade_v13"] / out["_n"]).round(1)
-    out = out.drop(columns=["_n"])
+    agg["grade_v13"] = (agg["_wgrade_sum"] / agg["_n"]).round(1)
+    out = agg.drop(columns=["_wgrade_sum", "_n"])
     for _c in ["pitcher_mlbid", "season", "level_id"]:
         if _c in out.columns:
             out[_c] = pd.to_numeric(out[_c], errors="coerce").astype("Int64")
@@ -217,6 +218,39 @@ if not _exec_pt.empty and not pitch_types.empty and "game_type_group" in pitch_t
     del _ptdf
 
 del _exec_ps, _exec_pt, _exec_ps_keys, _exec_pt_keys
+
+# ---------------------------------------------------------------------------
+# Build team-level execution grade and merge onto team_stuff
+# ---------------------------------------------------------------------------
+if (
+    "grade_v13" in pitcher_df.columns
+    and not pitcher_df.empty
+    and not team_stuff.empty
+    and "game_type_group" in pitcher_df.columns
+):
+    _team_keys = ["pitching_code", "season", "level_id", "game_type_group"]
+    _p = pitcher_df[
+        [c for c in _team_keys + ["grade_v13", "TBF"] if c in pitcher_df.columns]
+    ].dropna(subset=["grade_v13"])
+
+    if not _p.empty and "TBF" in _p.columns:
+        _p["_wgrade"] = _p["grade_v13"] * _p["TBF"]
+        _team_exec = (
+            _p.groupby(_team_keys)
+            .agg(_wgrade_sum=("_wgrade", "sum"), _n=("TBF", "sum"))
+            .reset_index()
+        )
+        _team_exec["grade_v13"] = (_team_exec["_wgrade_sum"] / _team_exec["_n"]).round(1)
+        _team_exec = _team_exec.drop(columns=["_wgrade_sum", "_n"])
+        for _c in ["season", "level_id"]:
+            _team_exec[_c] = pd.to_numeric(_team_exec[_c], errors="coerce").astype("Int64")
+        _ts = team_stuff.copy()
+        for _c in ["season", "level_id"]:
+            if _c in _ts.columns:
+                _ts[_c] = pd.to_numeric(_ts[_c], errors="coerce").astype("Int64")
+        team_stuff = _ts.merge(_team_exec[_team_keys + ["grade_v13"]], on=_team_keys, how="left")
+        del _ts
+    del _p, _team_keys
 
 # ---------------------------------------------------------------------------
 # Merge regressed columns

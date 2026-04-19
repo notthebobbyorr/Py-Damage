@@ -162,7 +162,7 @@ def pitch_shapes_outcomes():
             if "stuff" in df.columns:
                 df["stuff"] = df["stuff"].round(0)
             if "grade_v13" in df.columns:
-                df["grade_v13"] = df["grade_v13"].round(0)
+                df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
             rename_map = {
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
@@ -172,7 +172,7 @@ def pitch_shapes_outcomes():
                 "pitches": "#",
                 "pct": "Usage (%)",
                 "stuff": "Pitch Grade",
-                "grade_v13": "Execution",
+                "grade_v13": "Execution Grade",
                 "velo": "Velo",
                 "max_velo": "Max Velo",
                 "vaa": "VAA",
@@ -345,7 +345,7 @@ def pitch_ar():
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
             if "grade_v13" in df.columns:
-                df["grade_v13"] = df["grade_v13"].round(0)
+                df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
             rename_map = {
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
@@ -355,7 +355,7 @@ def pitch_ar():
                 "pitches": "#",
                 "pct": "Usage (%)",
                 "stuff": "Pitch Grade",
-                "grade_v13": "Execution",
+                "grade_v13": "Execution Grade",
                 "velo_reg": "Velo",
                 "max_velo_reg": "Max Velo",
                 "vaa_reg": "VAA",

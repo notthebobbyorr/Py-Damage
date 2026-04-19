@@ -164,7 +164,7 @@ def pitcher_individual_stats():
             if "stuff" in df.columns:
                 df["stuff"] = df["stuff"].round(0)
             if "grade_v13" in df.columns:
-                df["grade_v13"] = df["grade_v13"].round(0)
+                df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
             rename_map = {
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
@@ -173,7 +173,7 @@ def pitcher_individual_stats():
                 "GS": "GS",
                 "HR": "HR",
                 "stuff": "Pitch Grade",
-                "grade_v13": "Execution",
+                "grade_v13": "Execution Grade",
                 "fastball_velo": "FA mph",
                 "max_velo": "Max FA mph",
                 "fastball_vaa": "FA VAA",
@@ -958,7 +958,7 @@ def pitcher_ar():
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
             if "grade_v13" in df.columns:
-                df["grade_v13"] = df["grade_v13"].round(0)
+                df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
             rename_map = {
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
@@ -967,7 +967,7 @@ def pitcher_ar():
                 "GS": "GS",
                 "HR": "HR",
                 "stuff": "Pitch Grade",
-                "grade_v13": "Execution",
+                "grade_v13": "Execution Grade",
                 "fastball_velo_reg": "FA mph",
                 "max_velo_reg": "Max FA mph",
                 "fastball_vaa_reg": "FA VAA",
