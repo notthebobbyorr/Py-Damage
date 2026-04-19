@@ -179,8 +179,13 @@ def _prep_execution(df: pd.DataFrame, id_cols: list[str]) -> pd.DataFrame:
     if df.empty or "grade_v13" not in df.columns:
         return pd.DataFrame()
     out = df.copy()
+    if "level_id" in out.columns:
+        out["level_id"] = out["level_id"].fillna(1)
     if "game_type" in out.columns:
-        out["game_type_group"] = out["game_type"].map(_GAME_TYPE_TO_GROUP).fillna(out["game_type"])
+        out["game_type"] = out["game_type"].fillna("R")
+        out["game_type_group"] = out["game_type"].map(_GAME_TYPE_TO_GROUP).fillna("Regular Season")
+    elif "game_type_group" not in out.columns:
+        out["game_type_group"] = "Regular Season"
     out["_wgrade"] = out["grade_v13"] * out["n_pitches"]
     grp_cols = [c for c in id_cols if c in out.columns]
     agg = (
