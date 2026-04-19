@@ -131,6 +131,7 @@ def pitch_shapes_outcomes():
                 "pitches",
                 "pct",
                 "stuff",
+                "grade_v13",
                 "velo",
                 "max_velo",
                 "vaa",
@@ -157,9 +158,11 @@ def pitch_shapes_outcomes():
                 "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
-            # Round stuff to integer
+            # Round stuff and grade_v13 to integer
             if "stuff" in df.columns:
                 df["stuff"] = df["stuff"].round(0)
+            if "grade_v13" in df.columns:
+                df["grade_v13"] = df["grade_v13"].round(0)
             rename_map = {
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
@@ -169,6 +172,7 @@ def pitch_shapes_outcomes():
                 "pitches": "#",
                 "pct": "Usage (%)",
                 "stuff": "Pitch Grade",
+                "grade_v13": "Execution",
                 "velo": "Velo",
                 "max_velo": "Max Velo",
                 "vaa": "VAA",
@@ -316,6 +320,7 @@ def pitch_ar():
                 "pitches",
                 "pct",
                 "stuff",
+                "grade_v13",
                 "velo_reg",
                 "max_velo_reg",
                 "vaa_reg",
@@ -339,6 +344,8 @@ def pitch_ar():
                 "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
+            if "grade_v13" in df.columns:
+                df["grade_v13"] = df["grade_v13"].round(0)
             rename_map = {
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
@@ -348,6 +355,7 @@ def pitch_ar():
                 "pitches": "#",
                 "pct": "Usage (%)",
                 "stuff": "Pitch Grade",
+                "grade_v13": "Execution",
                 "velo_reg": "Velo",
                 "max_velo_reg": "Max Velo",
                 "vaa_reg": "VAA",

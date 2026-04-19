@@ -56,6 +56,8 @@ STITCHED_TABLES = [
     "park_data",
     "baserunning",
     "pitcher_baserunning",
+    "location_v13_pitcher_season",
+    "location_v13_pitcher_pitch",
 ]
 
 
@@ -232,6 +234,18 @@ def main(
     accumulator_path = RAW_DIR / f"pitch_data_{season}.parquet"
     if not dry_run:
         accumulate_pitch_data(incremental_path, accumulator_path)
+
+    # ── Step 2b: Score pitch execution (Location V13) ─────────────────────
+    run(
+        [
+            sys.executable, str(HERE / "pipeline" / "location_v13_apply.py"),
+            "--data-path", str(accumulator_path),
+            "--seasons", str(season),
+            "--chunk-by-season",
+            "--chunk-dir", str(CHUNK_DIR),
+        ],
+        dry_run=dry_run,
+    )
 
     # ── Step 3: Re-aggregate current season chunk ──────────────────────────
     run(
