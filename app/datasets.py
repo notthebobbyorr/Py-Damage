@@ -321,10 +321,21 @@ def _normalize_gamelog_dates(df: pd.DataFrame) -> pd.DataFrame:
 
 hitter_gamelogs = _cast_gamelog_ints(hitter_gamelogs)
 hitter_gamelogs = _normalize_gamelog_dates(hitter_gamelogs)
+for _col in ["hitting_code", "opp_team"]:
+    if _col in hitter_gamelogs.columns:
+        hitter_gamelogs[_col] = _recode_team(hitter_gamelogs[_col], "AZ", "ARI")
+
 pitcher_gamelogs = _cast_gamelog_ints(pitcher_gamelogs)
 pitcher_gamelogs = _normalize_gamelog_dates(pitcher_gamelogs)
+for _col in ["pitching_code", "opp_team"]:
+    if _col in pitcher_gamelogs.columns:
+        pitcher_gamelogs[_col] = _recode_team(pitcher_gamelogs[_col], "AZ", "ARI")
+
 pitch_type_gamelogs = _cast_gamelog_ints(pitch_type_gamelogs)
 pitch_type_gamelogs = _normalize_gamelog_dates(pitch_type_gamelogs)
+for _col in ["pitching_code", "opp_team"]:
+    if _col in pitch_type_gamelogs.columns:
+        pitch_type_gamelogs[_col] = _recode_team(pitch_type_gamelogs[_col], "AZ", "ARI")
 
 # Team gamelogs — aggregate counting stats per (team, game, date)
 _T_H_KEYS = ["hitting_code", "game_pk", "game_date", "opp_team", "season", "level_id", "game_type_group"]
