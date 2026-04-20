@@ -26,6 +26,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+import pandas as pd
 import polars as pl
 
 HERE = Path(__file__).resolve().parent
@@ -37,6 +38,18 @@ LAST_PULL_DATE_FILE = LOGS_DIR / "last_pull_date.txt"
 REQUIREMENTS_FILE = HERE / "requirements.txt"
 
 DEFAULT_GAME_TYPES = ["R", "S", "F", "D", "L", "W"]
+
+# Tables written with pandas dtype optimisation so the app loads them efficiently.
+# Polars-written parquets expand ~20x in memory when pandas reads them as object
+# columns; pre-optimising keeps peak app memory within Streamlit Cloud's 1 GB limit.
+PANDAS_OPTIMIZED_TABLES = {
+    "hitter_gamelogs",
+    "pitcher_gamelogs",
+    "pitch_type_gamelogs",
+    "pitch_types_splits",
+    "hitter_splits",
+    "pitcher_splits",
+}
 
 # Output table stem names (without .parquet) that are stitched from season chunks
 STITCHED_TABLES = [
@@ -181,6 +194,23 @@ def accumulate_pitch_data(incremental_path: Path, accumulator_path: Path) -> Non
     print(f"  Accumulator now has {new_rows:,} rows.")
 
 
+def _write_optimized_parquet(df: pd.DataFrame, path: Path) -> None:
+    """Write a pandas DataFrame as parquet with optimized dtypes.
+
+    Converts object columns to category and downcasts numerics before writing
+    so that pandas reads them back at their compact size — avoiding the ~20x
+    memory expansion that occurs when polars-written parquets are loaded by pandas.
+    """
+    for col in df.select_dtypes(include=["object"]).columns:
+        if df[col].nunique() / max(len(df[col]), 1) < 0.5:
+            df[col] = df[col].astype("category")
+    for col in df.select_dtypes(include=["float64"]).columns:
+        df[col] = pd.to_numeric(df[col], downcast="float")
+    for col in df.select_dtypes(include=["int64"]).columns:
+        df[col] = pd.to_numeric(df[col], downcast="integer")
+    df.to_parquet(path, index=False)
+
+
 def stitch_season_chunks(min_season: int, current_season: int) -> None:
     """Combine per-season chunks into final output files in DATA_DIR."""
     print(f"\nStitching season chunks ({min_season}-{current_season}) -> {DATA_DIR}")
@@ -201,11 +231,19 @@ def stitch_season_chunks(min_season: int, current_season: int) -> None:
         if not chunks:
             print(f"  No chunks found for {stem}, skipping.")
             continue
-        combined = pl.concat(
-            [pl.scan_parquet(p) for p in chunks], how="diagonal_relaxed"
-        )
         out_path = DATA_DIR / f"{stem}.parquet"
-        combined.sink_parquet(out_path)
+        if stem in PANDAS_OPTIMIZED_TABLES:
+            # Write with pandas dtype optimisation to prevent ~20x memory expansion
+            # when the app loads these files on Streamlit Cloud.
+            df = pl.concat(
+                [pl.scan_parquet(p) for p in chunks], how="diagonal_relaxed"
+            ).collect().to_pandas()
+            _write_optimized_parquet(df, out_path)
+        else:
+            combined = pl.concat(
+                [pl.scan_parquet(p) for p in chunks], how="diagonal_relaxed"
+            )
+            combined.sink_parquet(out_path)
         print(f"  Wrote {out_path.name} from {len(chunks)} chunks")
 
 
