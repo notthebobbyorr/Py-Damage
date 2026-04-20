@@ -104,14 +104,32 @@ def _stamp_requirements(end_date: date) -> None:
 
 
 def git_push(end_date: date, dry_run: bool = False) -> None:
-    """Stage output parquet files, commit, and push to GitHub."""
+    """Stage output parquet files, commit, and push to GitHub.
+
+    If the tip of main is already a 'daily data update' commit, amend it
+    in-place rather than adding a new commit. This keeps exactly one data
+    commit on top of the code history, so the clone size stays constant.
+    """
     commit_msg = "daily data update"
     print(f"\n{'[DRY RUN] ' if dry_run else ''}Git push: staging data/output/, committing, and pushing.")
     if not dry_run:
         _stamp_requirements(end_date)
     run(["git", "add", str(DATA_DIR), str(REQUIREMENTS_FILE)], dry_run=dry_run, cwd=HERE)
-    run(["git", "commit", "-m", commit_msg], dry_run=dry_run, cwd=HERE)
-    run(["git", "push"], dry_run=dry_run, cwd=HERE)
+
+    # Amend if the last commit is a data update, otherwise create a new commit.
+    amend = False
+    if not dry_run:
+        result = subprocess.run(
+            ["git", "log", "-1", "--pretty=%s"], capture_output=True, text=True, cwd=HERE
+        )
+        amend = result.stdout.strip() == commit_msg
+
+    if amend:
+        run(["git", "commit", "--amend", "-m", commit_msg], dry_run=dry_run, cwd=HERE)
+        run(["git", "push", "--force", "origin", "main"], dry_run=dry_run, cwd=HERE)
+    else:
+        run(["git", "commit", "-m", commit_msg], dry_run=dry_run, cwd=HERE)
+        run(["git", "push"], dry_run=dry_run, cwd=HERE)
 
 
 def accumulate_pitch_data(incremental_path: Path, accumulator_path: Path) -> None:
