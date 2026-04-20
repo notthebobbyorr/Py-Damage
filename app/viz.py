@@ -315,7 +315,7 @@ def _render_plot_controls(
             margin=dict(l=10, r=10, t=30, b=10),
             height=520,
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, width="stretch", key=f"{table_key}_plot")
 
 
 def render_table(

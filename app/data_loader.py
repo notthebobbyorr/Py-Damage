@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from app.config import DATA_DIR
+
+_NAME_COLS = {"hitter_name", "name", "pitcher_name", "runner_name"}
+
+
+def _to_ascii(val: object) -> object:
+    if pd.isna(val):
+        return val
+    return unicodedata.normalize("NFKD", str(val)).encode("ascii", "ignore").decode("ascii")
 
 
 @st.cache_resource(ttl=86400, max_entries=20)
@@ -24,6 +33,11 @@ def _optimize_dataframe_memory(df: pd.DataFrame) -> pd.DataFrame:
     """Reduce DataFrame memory footprint by optimizing dtypes"""
     if df.empty:
         return df
+
+    # Normalize player name columns to ASCII (strip diacritics)
+    for col in df.columns:
+        if col in _NAME_COLS:
+            df[col] = df[col].map(_to_ascii)
 
     # Convert object columns to category where appropriate (50%+ savings)
     for col in df.select_dtypes(include=["object"]).columns:

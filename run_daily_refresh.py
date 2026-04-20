@@ -58,6 +58,9 @@ STITCHED_TABLES = [
     "pitcher_baserunning",
     "location_v13_pitcher_season",
     "location_v13_pitcher_pitch",
+    "hitter_gamelogs",
+    "pitcher_gamelogs",
+    "pitch_type_gamelogs",
 ]
 
 
@@ -260,6 +263,20 @@ def main(
         ],
         dry_run=dry_run,
     )
+
+    # ── Step 3b: Build game-by-game gamelogs ──────────────────────────────
+    _scored_path = RAW_DIR / "location_v13_scored.parquet"
+    _gamelog_cmd = [
+        sys.executable, str(HERE / "pipeline" / "build_gamelogs.py"),
+        "--parquet-path", str(accumulator_path),
+        "--min-season", str(season),
+        "--max-season", str(season),
+        "--chunk-by-season",
+        "--chunk-dir", str(CHUNK_DIR),
+    ]
+    if _scored_path.exists():
+        _gamelog_cmd += ["--scored-path", str(_scored_path)]
+    run(_gamelog_cmd, dry_run=dry_run)
 
     # ── Step 4a: Build p(damage) source tables ─────────────────────────────
     run(

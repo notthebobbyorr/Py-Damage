@@ -2461,23 +2461,28 @@ def _build_outputs(
     )
 
     print(f"Computing pitcher percentiles...{_mem_note()}")
+    _pitcher_value_cols = [
+        "stuff",
+        "fastball_velo",
+        "max_velo",
+        "fastball_vaa",
+        "SwStr",
+        "Ball_pct",
+        "Z_Contact",
+        "Chase",
+        "CSW",
+        "rel_z",
+        "rel_x",
+        "ext",
+        "p_SwStr_pct",
+        "Damage_pct",
+        "p_Damage_pct",
+    ]
+    _pitcher_value_cols = [col for col in _pitcher_value_cols if col in pitchers.columns]
     pitcher_pct = add_percentiles(
         pitchers,
         group_cols=["season", "level_id", "game_type_group"],
-        value_cols=[
-            "stuff",
-            "fastball_velo",
-            "max_velo",
-            "fastball_vaa",
-            "SwStr",
-            "Ball_pct",
-            "Z_Contact",
-            "Chase",
-            "CSW",
-            "rel_z",
-            "rel_x",
-            "ext",
-        ],
+        value_cols=_pitcher_value_cols,
         filter_col="IP",
         min_threshold=40,
     )
@@ -2497,6 +2502,9 @@ def _build_outputs(
         "Z_Contact",
         "Chase",
         "CSW",
+        "p_SwStr_pct",
+        "Damage_pct",
+        "p_Damage_pct",
     ]
     pitch_types_value_cols = [
         col for col in pitch_types_value_cols if col in pitch_types.columns

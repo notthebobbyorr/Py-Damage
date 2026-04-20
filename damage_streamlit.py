@@ -18,6 +18,7 @@ from app.pages.glossary import glossary_hitting, glossary_pitching
 from app.pages.hitters import (
     hitter_ar,
     hitter_comps,
+    hitter_gamelogs_page,
     hitter_individual_stats,
     hitter_mlb_equivalencies,
     hitter_percentiles,
@@ -29,6 +30,7 @@ from app.pages.parks import park_data_page
 from app.pages.pitchers import (
     pitcher_ar,
     pitcher_comps,
+    pitcher_gamelogs_page,
     pitcher_individual_stats,
     pitcher_mlb_equivalencies,
     pitcher_percentiles,
@@ -40,8 +42,14 @@ from app.pages.pitches import (
     pitch_percentiles,
     pitch_shapes_outcomes,
     pitch_splits,
+    pitch_type_gamelogs_page,
 )
-from app.pages.teams import team_hitting, team_pitching
+from app.pages.teams import (
+    team_hitting,
+    team_hitting_gamelogs,
+    team_pitching,
+    team_pitching_gamelogs,
+)
 import app.viz as _viz
 
 
@@ -202,6 +210,7 @@ pages = {
         st.Page(hitter_mlb_equivalencies, title="MLB Equivalencies", icon="🔁"),
         st.Page(hitter_ar, title="Auto Regressed (AR)", icon="📈"),
         st.Page(hitter_splits, title="Splits", icon="📋"),
+        st.Page(hitter_gamelogs_page, title="Gamelogs", icon="📅"),
     ],
     "Pitchers": [
         st.Page(pitcher_individual_stats, title="Individual Stats", icon="⚾"),
@@ -210,6 +219,7 @@ pages = {
         st.Page(pitcher_mlb_equivalencies, title="MLB Equivalencies", icon="🔁"),
         st.Page(pitcher_ar, title="Auto Regressed (AR)", icon="📈"),
         st.Page(pitcher_splits, title="Splits", icon="📋"),
+        st.Page(pitcher_gamelogs_page, title="Gamelogs", icon="📅"),
     ],
     "Individual Pitches": [
         st.Page(pitch_shapes_outcomes, title="Shapes and Outcomes", icon="🎯"),
@@ -217,10 +227,13 @@ pages = {
         st.Page(pitch_percentiles, title="Percentiles", icon="📊"),
         st.Page(pitch_comps, title="Pitch Level Comps", icon="🔍"),
         st.Page(pitch_splits, title="Splits", icon="📋"),
+        st.Page(pitch_type_gamelogs_page, title="Gamelogs", icon="📅"),
     ],
     "Teams": [
         st.Page(team_hitting, title="Team Hitting", icon="🏆"),
         st.Page(team_pitching, title="Team Pitching", icon="🏆"),
+        st.Page(team_hitting_gamelogs, title="Hitting Gamelogs", icon="📅"),
+        st.Page(team_pitching_gamelogs, title="Pitching Gamelogs", icon="📅"),
     ],
     "League": [
         st.Page(league_hitting, title="Hitting Stats", icon="🌐"),

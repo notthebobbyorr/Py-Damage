@@ -115,6 +115,7 @@ OPTIONAL_COLS = [
     "pitch_outcome",
     "level_id",
     "game_type",
+    "game_pk",      # pass-through for game-level aggregation in gamelogs
     "pitch_velo",   # needed for personalized y_dp
     "ext",          # needed for personalized y_dp
 ]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from app.config import (
@@ -7,6 +8,7 @@ from app.config import (
     GAME_TYPE_GROUP_NOTE,
 )
 from app.datasets import (
+    pitch_type_gamelogs,
     pitch_type_splits_df,
     pitch_types,
     pitch_types_pct,
@@ -22,7 +24,7 @@ from app.filters import (
     season_options,
     team_options,
 )
-from app.utils import maybe_add_level_col
+from app.utils import maybe_add_level_col, rank_for_display
 from app.viz import render_table
 
 
@@ -400,6 +402,13 @@ def pitch_percentiles():
     if pitch_types_pct.empty:
         st.info("Missing pitch_types_pctiles.csv")
     else:
+        _LEVEL_MAP = {
+            "All": [1, 11, 14, 16],
+            "MLB": [1],
+            "Triple-A": [11],
+            "Low-A": [14],
+            "Low Minors": [16],
+        }
         left, right = st.columns([1, 3])
         with left:
             level = st.selectbox(
@@ -427,8 +436,8 @@ def pitch_percentiles():
             min_pitches = st.number_input(
                 "Minimum # Pitches",
                 min_value=0,
-                max_value=1000,
-                value=50,
+                max_value=2000,
+                value=20,
                 step=1,
                 key="pitch_pct_min_pitches",
             )
@@ -462,21 +471,22 @@ def pitch_percentiles():
         with right:
             if game_type_group != "Regular Season":
                 st.info(GAME_TYPE_GROUP_NOTE.format(game_type_group))
-            level_map = {
-                "All": [1, 11, 14, 16],
-                "MLB": [1],
-                "Triple-A": [11],
-                "Low-A": [14],
-                "Low Minors": [16],
-            }
             df = pitch_types_pct.copy()
-            df = df[df["level_id"].isin(level_map[level])]
+            df = df[df["level_id"].isin(_LEVEL_MAP[level])]
             df = filter_by_values(df, "season", season)
             df = filter_by_game_type_group(df, game_type_group)
             df = filter_by_team_token(df, "pitching_code", team)
             df = filter_by_values(df, "pitcher_mlbid", pitcher)
             df = filter_by_values(df, "pitch_tag", pitch_tag)
             df = df[df["pitches"] >= min_pitches]
+
+            df = rank_for_display(df, [
+                "pct", "stuff", "velo", "max_velo", "vaa", "haa",
+                "vbreak", "hbreak", "SwStr", "LA_lte_0", "Ball_pct",
+                "Z_Contact", "Chase", "CSW",
+                "p_SwStr_pct", "Damage_pct", "p_Damage_pct", "takeoff_rate",
+            ], ["season", "level_id", "game_type_group", "pitch_tag"],
+            reverse_cols={"vaa", "Ball_pct", "Z_Contact", "takeoff_rate", "Damage_pct", "p_Damage_pct"})
 
             columns = [
                 "name",
@@ -500,6 +510,11 @@ def pitch_percentiles():
                 "Chase_pctile",
                 "CSW_pctile",
                 "HR",
+                "grade_v13",
+                "p_SwStr_pct_pctile",
+                "Damage_pct_pctile",
+                "p_Damage_pct_pctile",
+                "takeoff_rate_pctile",
                 "__season",
                 "__level",
             ]
@@ -527,15 +542,21 @@ def pitch_percentiles():
                 "Chase_pctile": "Chase (%)",
                 "Ball_pct_pctile": "Ball (%)",
                 "HR": "HR",
+                "grade_v13": "Execution Grade",
+                "p_SwStr_pct_pctile": "pSwStr (%)",
+                "Damage_pct_pctile": "Damage/BBE%",
+                "p_Damage_pct_pctile": "pDamage/BBE%",
+                "takeoff_rate_pctile": "Takeoff Against (%)",
             }
             df = df.rename(columns=rename_map)
             df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Pitch Grade Pctile", ascending=False)
             render_table(
                 df,
-                reverse_cols={"VAA", "Ball (%)", "Z-Contact (%)", "HR"},
+                reverse_cols={"HR"},
                 abs_cols=ABS_GRADIENT_COLS_PITCH_TYPES,
                 label_cols=["Name", "Pitch Type", "Split", "split", "Split Type"],
+                round_decimals=0,
             )
             download_button(df, "pitch_percentiles", "pitch_pct_download")
 
@@ -760,3 +781,139 @@ def pitch_splits():
                     f"pitch_splits_{idx}",
                     f"pitch_splits_download_{idx}",
                 )
+
+
+def pitch_type_gamelogs_page():
+    """Individual Pitches - Game Logs page"""
+    st.title("Pitch Type Game Logs")
+
+    if pitch_type_gamelogs.empty:
+        st.info("Missing pitch_type_gamelogs.parquet — run the daily pipeline to generate it.")
+        return
+
+    _PT_GL_COLS = [
+        "game_date", "pitcher_name", "pitcher_mlbid", "pitching_code",
+        "pitch_tag", "pitcher_hand", "game_pk", "opp_team",
+        "bbe", "pitches", "whiffs", "chases", "velo", "stuff", "grade_v13",
+        "HR", "XBH", "hits", "damaged_bbe",
+        "la_gte_20_bbe", "la_lte_0_bbe", "BB", "K",
+        "strikes", "balls", "swings",
+        "zone_pitches", "out_of_zone",
+        "vs_LHB", "vs_RHB",
+    ]
+    _RENAME = {
+        "game_date": "Date", "pitcher_name": "Name",
+        "pitcher_mlbid": "Player ID", "pitching_code": "Team",
+        "pitch_tag": "Pitch Type", "pitcher_hand": "Hand", "game_pk": "Game ID",
+        "opp_team": "vs",
+        "bbe": "BBE", "damaged_bbe": "Damage BBE", "hits": "H",
+        "la_gte_20_bbe": "LA >= 20", "la_lte_0_bbe": "LA<=0",
+        "swings": "Swings", "chases": "Chases", "whiffs": "Whiffs",
+        "pitches": "Pitches",
+        "zone_pitches": "Zone", "out_of_zone": "Out of Zone",
+        "strikes": "Strikes", "balls": "Balls",
+        "velo": "Avg mph",
+        "vs_LHB": "vs LHB", "vs_RHB": "vs RHB",
+        "stuff": "Pitch Grade", "grade_v13": "Exec Grade",
+    }
+    _level_map = {
+        "All": [1, 11, 14, 16], "MLB": [1], "Triple-A": [11],
+        "Low-A": [14], "Low Minors": [16],
+    }
+
+    tab_date, tab_player = st.tabs(["By Date", "By Player"])
+
+    with tab_date:
+        left, right = st.columns([1, 3])
+        with left:
+            level = st.selectbox(
+                "Level", list(_level_map.keys()), index=1, key="ptgl_date_level"
+            )
+            season = st.multiselect(
+                "Season", season_options(pitch_type_gamelogs),
+                default=(
+                    [season_options(pitch_type_gamelogs)[1]]
+                    if len(season_options(pitch_type_gamelogs)) > 1 else ["All"]
+                ),
+                key="ptgl_date_season",
+            )
+            game_type_group = st.selectbox(
+                "Game Type", game_type_group_options(pitch_type_gamelogs),
+                index=0, key="ptgl_date_gtg",
+            )
+            base = pitch_type_gamelogs[
+                pitch_type_gamelogs["level_id"].isin(_level_map[level])
+            ]
+            base = filter_by_values(base, "season", season)
+            base = filter_by_game_type_group(base, game_type_group)
+            dates = sorted(base["game_date"].dropna().astype(str).unique(), reverse=True)
+            date_choice = st.selectbox(
+                "Date", ["All"] + (dates if dates else ["(none)"]), index=0, key="ptgl_date_date",
+                format_func=lambda d: (
+                    pd.to_datetime(d).strftime("%m/%d/%Y") if d not in ("All", "(none)", "") else d
+                ),
+            )
+            team = st.selectbox(
+                "Team", team_options(base, "pitching_code"), index=0, key="ptgl_date_team"
+            )
+        with right:
+            df = base.copy() if date_choice == "All" else base[base["game_date"].astype(str) == date_choice].copy()
+            df = filter_by_team_token(df, "pitching_code", team)
+            df = df[[c for c in _PT_GL_COLS if c in df.columns]].copy()
+            if "game_date" in df.columns:
+                _sort = ["game_date", "pitcher_name", "pitch_tag"] if "pitcher_name" in df.columns else ["game_date"]
+                df = df.sort_values(_sort, ascending=[False] + [True] * (len(_sort) - 1))
+                df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
+            df = df.rename(columns=_RENAME)
+            render_table(df, stats_df=pd.DataFrame())
+            download_button(df, "pitch_type_gamelogs_date", "ptgl_date_dl")
+
+    with tab_player:
+        left, right = st.columns([1, 3])
+        with left:
+            level = st.selectbox(
+                "Level", list(_level_map.keys()), index=1, key="ptgl_pl_level"
+            )
+            season = st.multiselect(
+                "Season", season_options(pitch_type_gamelogs),
+                default=(
+                    [season_options(pitch_type_gamelogs)[1]]
+                    if len(season_options(pitch_type_gamelogs)) > 1 else ["All"]
+                ),
+                key="ptgl_pl_season",
+            )
+            game_type_group = st.selectbox(
+                "Game Type", game_type_group_options(pitch_type_gamelogs),
+                index=0, key="ptgl_pl_gtg",
+            )
+            base = pitch_type_gamelogs[
+                pitch_type_gamelogs["level_id"].isin(_level_map[level])
+            ]
+            base = filter_by_values(base, "season", season)
+            base = filter_by_game_type_group(base, game_type_group)
+            player_opts, player_name_map = player_id_options(
+                base, "pitcher_mlbid", "pitcher_name"
+            )
+            player_vals = [v for v in player_opts if v != "All"]
+            player_choice = st.selectbox(
+                "Player", player_vals if player_vals else ["(none)"],
+                index=0,
+                format_func=lambda v: f"{player_name_map.get(v, 'Unknown')} ({int(v)})"
+                if v != "(none)" else "(none)",
+                key="ptgl_pl_player",
+            )
+        with right:
+            if not player_vals:
+                st.info("No players available.")
+            else:
+                df = base[base["pitcher_mlbid"] == player_choice].copy()
+                player_cols = [c for c in _PT_GL_COLS if c not in ("pitcher_name", "pitcher_mlbid")]
+                df = df[[c for c in player_cols if c in df.columns]].copy()
+                df = df.sort_values(
+                    ["game_date", "pitch_tag"], ascending=[False, True]
+                ) if "game_date" in df.columns else df
+                if "game_date" in df.columns:
+                    df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
+                df = df.rename(columns=_RENAME)
+                render_table(df, stats_df=pd.DataFrame())
+                download_button(df, "pitch_type_gamelogs_player", "ptgl_pl_dl")
