@@ -13,7 +13,6 @@ from app.config import (
     PITCHER_REVERSE_DISPLAY_COLS,
 )
 from app.datasets import (
-    get_dynamic_threshold,
     pitcher_df,
     pitcher_gamelogs,
     pitcher_mlb_eq_coeffs,
@@ -33,7 +32,7 @@ from app.filters import (
     season_options,
     team_options,
 )
-from app.utils import _pitcher_display_map, _similarity_choice_labels, maybe_add_level_col
+from app.utils import _pitcher_display_map, _similarity_choice_labels, maybe_add_level_col, rank_for_display
 from app.viz import render_table
 
 
@@ -255,16 +254,13 @@ def pitcher_percentiles():
                 index=0,
                 key="pitcher_pct_game_type_group",
             )
-            _default_min = get_dynamic_threshold(
-                "pitcher", _LEVEL_MAP[level], season, game_type_group
-            )
             min_value = st.number_input(
                 "Minimum Value",
                 min_value=0,
                 max_value=2000,
-                value=_default_min,
+                value=20,
                 step=1,
-                key=f"pitcher_pct_min_value_{level}_{sorted(season)}_{game_type_group}",
+                key="pitcher_pct_min_value",
             )
             filter_type = st.selectbox(
                 "Filter By",
@@ -302,6 +298,13 @@ def pitcher_percentiles():
             df = filter_by_team_token(df, "pitching_code", team)
             df = filter_by_values(df, "pitcher_mlbid", player)
             df = pitcher_workload_filter(df, filter_type, min_value)
+
+            df = rank_for_display(df, [
+                "stuff", "fastball_velo", "max_velo", "fastball_vaa",
+                "SwStr", "Ball_pct", "Z_Contact", "Chase", "CSW",
+                "rel_z", "rel_x", "ext",
+                "p_SwStr_pct", "Damage_pct", "p_Damage_pct", "takeoff_rate",
+            ], ["season", "level_id", "game_type_group"])
 
             columns = [
                 "name",

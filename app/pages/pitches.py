@@ -8,7 +8,6 @@ from app.config import (
     GAME_TYPE_GROUP_NOTE,
 )
 from app.datasets import (
-    get_dynamic_threshold,
     pitch_type_gamelogs,
     pitch_type_splits_df,
     pitch_types,
@@ -25,7 +24,7 @@ from app.filters import (
     season_options,
     team_options,
 )
-from app.utils import maybe_add_level_col
+from app.utils import maybe_add_level_col, rank_for_display
 from app.viz import render_table
 
 
@@ -434,16 +433,13 @@ def pitch_percentiles():
                 index=0,
                 key="pitch_types_pct_game_type_group",
             )
-            _default_min_pitches = get_dynamic_threshold(
-                "pitch", _LEVEL_MAP[level], season, game_type_group
-            )
             min_pitches = st.number_input(
                 "Minimum # Pitches",
                 min_value=0,
-                max_value=10000,
-                value=_default_min_pitches,
+                max_value=2000,
+                value=20,
                 step=1,
-                key=f"pitch_pct_min_pitches_{level}_{sorted(season)}_{game_type_group}",
+                key="pitch_pct_min_pitches",
             )
             team = st.selectbox(
                 "Select Team",
@@ -483,6 +479,13 @@ def pitch_percentiles():
             df = filter_by_values(df, "pitcher_mlbid", pitcher)
             df = filter_by_values(df, "pitch_tag", pitch_tag)
             df = df[df["pitches"] >= min_pitches]
+
+            df = rank_for_display(df, [
+                "pct", "stuff", "velo", "max_velo", "vaa", "haa",
+                "vbreak", "hbreak", "SwStr", "LA_lte_0", "Ball_pct",
+                "Z_Contact", "Chase", "CSW",
+                "p_SwStr_pct", "Damage_pct", "p_Damage_pct", "takeoff_rate",
+            ], ["season", "level_id", "game_type_group", "pitch_tag"])
 
             columns = [
                 "name",

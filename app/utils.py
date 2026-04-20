@@ -786,3 +786,32 @@ def maybe_add_level_col(df: pd.DataFrame, level: str) -> pd.DataFrame:
         idx = 0
     df.insert(idx, "Level", level_series)
     return df
+
+
+def rank_for_display(
+    df: pd.DataFrame,
+    cols: list[str],
+    group_cols: list[str],
+) -> pd.DataFrame:
+    """Compute 1-100 percentile ranks for raw columns within each group.
+
+    Adds a ``<col>_pctile`` column for every ``col`` that exists in ``df``.
+    Skips columns already ranked.  Safe when a column is all-NaN.
+    """
+    df = df.copy()
+    for col in cols:
+        if col not in df.columns:
+            continue
+        pctile_col = f"{col}_pctile"
+        try:
+            ranked = (
+                df.groupby(group_cols, observed=True)[col]
+                .rank(pct=True, na_option="keep")
+                .mul(100)
+                .round()
+                .clip(1, 100)
+            )
+            df[pctile_col] = pd.to_numeric(ranked, errors="coerce").astype("Int64")
+        except Exception:
+            df[pctile_col] = pd.array([pd.NA] * len(df), dtype="Int64")
+    return df

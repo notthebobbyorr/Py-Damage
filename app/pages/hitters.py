@@ -15,7 +15,6 @@ from app.config import (
 )
 from app.datasets import (
     damage_df,
-    get_dynamic_threshold,
     hitter_gamelogs,
     hitter_mlb_eq_coeffs,
     hitter_mlb_eq_metrics,
@@ -37,7 +36,7 @@ from app.filters import (
     season_options,
     team_options,
 )
-from app.utils import _hitter_display_map, _similarity_choice_labels, maybe_add_level_col
+from app.utils import _hitter_display_map, _similarity_choice_labels, maybe_add_level_col, rank_for_display
 from app.viz import render_table
 
 
@@ -223,16 +222,13 @@ def hitter_percentiles():
                 index=0,
                 key="hitter_pct_game_type_group",
             )
-            _default_min = get_dynamic_threshold(
-                "hitter", _LEVEL_MAP[level], season, game_type_group
-            )
             min_value = st.number_input(
                 "Minimum Value",
                 min_value=0,
                 max_value=2000,
-                value=_default_min,
+                value=20,
                 step=1,
-                key=f"hitter_pct_min_value_{level}_{sorted(season)}_{game_type_group}",
+                key="hitter_pct_min_value",
             )
             value_type = st.selectbox(
                 "Filter By", ["PA", "BBE"], index=1, key="hitter_pct_value_type"
@@ -281,6 +277,12 @@ def hitter_percentiles():
                 df = numeric_filter(df, "PA", min_value)
             else:
                 df = numeric_filter(df, "bbe", min_value)
+
+            df = rank_for_display(df, [
+                "SEAGER", "selection_skill", "hittable_pitches_taken", "damage_rate",
+                "EV90th", "max_EV", "pull_FB_pct", "chase", "z_con",
+                "secondary_whiff_pct", "whiffs_vs_95", "contact_vs_avg", "takeoff_rate",
+            ], ["season", "level_id", "game_type_group"])
 
             columns = [
                 "hitter_name", "batter_mlbid", "hitting_code", "season", "HR",
