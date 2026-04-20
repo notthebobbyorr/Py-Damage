@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import streamlit as st
 
 from app.config import (
@@ -14,6 +15,7 @@ from app.config import (
 )
 from app.datasets import (
     damage_df,
+    hitter_gamelogs,
     hitter_mlb_eq_coeffs,
     hitter_mlb_eq_metrics,
     hitter_pct,
@@ -1056,3 +1058,132 @@ def hitter_splits():
                     f"hitter_splits_{idx}",
                     f"hitter_splits_download_{idx}",
                 )
+
+
+def hitter_gamelogs_page():
+    """Hitters - Game Logs page"""
+    st.title("Hitter Game Logs")
+
+    if hitter_gamelogs.empty:
+        st.info("Missing hitter_gamelogs.parquet — run the daily pipeline to generate it.")
+        return
+
+    _HITTER_GL_COLS = [
+        "game_date", "hitter_name", "batter_mlbid", "hitting_code",
+        "game_pk", "opp_team",
+        "PA", "bbe", "HR", "XBH", "hits", "damaged_bbe",
+        "pulled_fbs", "la_gte_20_bbe", "la_lte_0_bbe", "BB", "K",
+        "pitches", "FA", "BR", "OFF", "swings", "chases", "whiffs",
+        "selective_takes", "hittable_takes", "vs_RHP", "vs_LHP",
+    ]
+    _RENAME = {
+        "game_date": "Date", "hitter_name": "Name",
+        "batter_mlbid": "Player ID", "hitting_code": "Team", "game_pk": "Game ID",
+        "opp_team": "vs",
+        "bbe": "BBE", "damaged_bbe": "Damage BBE", "hits": "H",
+        "pulled_fbs": "Pulled FBs",
+        "la_gte_20_bbe": "LA>=20", "la_lte_0_bbe": "LA<=0",
+        "pitches": "Pitches", "FA": "FA#", "BR": "BR#", "OFF": "OFF#",
+        "swings": "Swings", "chases": "Chases", "whiffs": "Whiffs",
+        "selective_takes": "Selective Takes", "hittable_takes": "Hittable Takes",
+        "vs_RHP": "vs RHP", "vs_LHP": "vs LHP",
+    }
+    _level_map = {
+        "All": [1, 11, 14, 16], "MLB": [1], "Triple-A": [11],
+        "Low-A": [14], "Low Minors": [16],
+    }
+
+    tab_date, tab_player = st.tabs(["By Date", "By Player"])
+
+    with tab_date:
+        left, right = st.columns([1, 3])
+        with left:
+            level = st.selectbox(
+                "Level", list(_level_map.keys()), index=1, key="hgl_date_level"
+            )
+            season = st.multiselect(
+                "Season", season_options(hitter_gamelogs),
+                default=(
+                    [season_options(hitter_gamelogs)[1]]
+                    if len(season_options(hitter_gamelogs)) > 1 else ["All"]
+                ),
+                key="hgl_date_season",
+            )
+            game_type_group = st.selectbox(
+                "Game Type", game_type_group_options(hitter_gamelogs),
+                index=0, key="hgl_date_gtg",
+            )
+            base = hitter_gamelogs[
+                hitter_gamelogs["level_id"].isin(_level_map[level])
+            ]
+            base = filter_by_values(base, "season", season)
+            base = filter_by_game_type_group(base, game_type_group)
+            dates = sorted(base["game_date"].dropna().astype(str).unique(), reverse=True)
+            date_choice = st.selectbox(
+                "Date", ["All"] + (dates if dates else ["(none)"]), index=0, key="hgl_date_date",
+                format_func=lambda d: (
+                    pd.to_datetime(d).strftime("%m/%d/%Y") if d not in ("All", "(none)", "") else d
+                ),
+            )
+            team = st.selectbox(
+                "Team", team_options(base, "hitting_code"), index=0, key="hgl_date_team"
+            )
+        with right:
+            df = base.copy() if date_choice == "All" else base[base["game_date"].astype(str) == date_choice].copy()
+            df = filter_by_team_token(df, "hitting_code", team)
+            df = df[[c for c in _HITTER_GL_COLS if c in df.columns]].copy()
+            if "game_date" in df.columns:
+                _sort = ["game_date", "hitter_name"] if "hitter_name" in df.columns else ["game_date"]
+                df = df.sort_values(_sort, ascending=[False] + [True] * (len(_sort) - 1))
+                df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
+            df = df.rename(columns=_RENAME)
+            render_table(df, stats_df=pd.DataFrame())
+            download_button(df, "hitter_gamelogs_date", "hgl_date_dl")
+
+    with tab_player:
+        left, right = st.columns([1, 3])
+        with left:
+            level = st.selectbox(
+                "Level", list(_level_map.keys()), index=1, key="hgl_pl_level"
+            )
+            season = st.multiselect(
+                "Season", season_options(hitter_gamelogs),
+                default=(
+                    [season_options(hitter_gamelogs)[1]]
+                    if len(season_options(hitter_gamelogs)) > 1 else ["All"]
+                ),
+                key="hgl_pl_season",
+            )
+            game_type_group = st.selectbox(
+                "Game Type", game_type_group_options(hitter_gamelogs),
+                index=0, key="hgl_pl_gtg",
+            )
+            base = hitter_gamelogs[
+                hitter_gamelogs["level_id"].isin(_level_map[level])
+            ]
+            base = filter_by_values(base, "season", season)
+            base = filter_by_game_type_group(base, game_type_group)
+            player_opts, player_name_map = player_id_options(
+                base, "batter_mlbid", "hitter_name"
+            )
+            player_vals = [v for v in player_opts if v != "All"]
+            player_choice = st.selectbox(
+                "Player", player_vals if player_vals else ["(none)"],
+                index=0,
+                format_func=lambda v: f"{player_name_map.get(v, 'Unknown')} ({int(v)})"
+                if v != "(none)" else "(none)",
+                key="hgl_pl_player",
+            )
+        with right:
+            if not player_vals:
+                st.info("No players available.")
+            else:
+                df = base[base["batter_mlbid"] == player_choice].copy()
+                player_cols = [c for c in _HITTER_GL_COLS if c not in ("hitter_name", "batter_mlbid")]
+                df = df[[c for c in player_cols if c in df.columns]].copy()
+                df = df.sort_values("game_date", ascending=False) if "game_date" in df.columns else df
+                if "game_date" in df.columns:
+                    df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
+                df = df.rename(columns=_RENAME)
+                render_table(df, stats_df=pd.DataFrame())
+                download_button(df, "hitter_gamelogs_player", "hgl_pl_dl")

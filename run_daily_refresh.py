@@ -58,6 +58,9 @@ STITCHED_TABLES = [
     "pitcher_baserunning",
     "location_v13_pitcher_season",
     "location_v13_pitcher_pitch",
+    "hitter_gamelogs",
+    "pitcher_gamelogs",
+    "pitch_type_gamelogs",
 ]
 
 
@@ -257,6 +260,19 @@ def main(
             "--chunk-by-season",
             "--chunk-dir", str(CHUNK_DIR),
             "--out-dir", str(DATA_DIR),
+        ],
+        dry_run=dry_run,
+    )
+
+    # ── Step 3b: Build game-by-game gamelogs ──────────────────────────────
+    run(
+        [
+            sys.executable, str(HERE / "pipeline" / "build_gamelogs.py"),
+            "--parquet-path", str(accumulator_path),
+            "--min-season", str(season),
+            "--max-season", str(season),
+            "--chunk-by-season",
+            "--chunk-dir", str(CHUNK_DIR),
         ],
         dry_run=dry_run,
     )
