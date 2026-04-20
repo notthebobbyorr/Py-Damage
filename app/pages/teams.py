@@ -8,9 +8,9 @@ from app.config import (
     HIGHER_IS_WORSE_COLS,
 )
 from app.datasets import (
+    get_team_hitter_gamelogs,
+    get_team_pitcher_gamelogs,
     team_damage,
-    team_hitter_gamelogs,
-    team_pitcher_gamelogs,
     team_stuff,
 )
 from app.filters import (
@@ -233,6 +233,7 @@ def team_pitching():
 def team_hitting_gamelogs():
     """Teams - Hitting Game Logs page"""
     st.title("Team Hitting Game Logs")
+    team_hitter_gamelogs = get_team_hitter_gamelogs()
 
     if team_hitter_gamelogs.empty:
         st.info("Missing hitter_gamelogs.parquet — run the daily pipeline to generate it.")
@@ -349,6 +350,7 @@ def team_hitting_gamelogs():
 def team_pitching_gamelogs():
     """Teams - Pitching Game Logs page"""
     st.title("Team Pitching Game Logs")
+    team_pitcher_gamelogs = get_team_pitcher_gamelogs()
 
     if team_pitcher_gamelogs.empty:
         st.info("Missing pitcher_gamelogs.parquet — run the daily pipeline to generate it.")

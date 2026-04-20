@@ -13,8 +13,8 @@ from app.config import (
     PITCHER_REVERSE_DISPLAY_COLS,
 )
 from app.datasets import (
+    get_pitcher_gamelogs,
     pitcher_df,
-    pitcher_gamelogs,
     pitcher_mlb_eq_coeffs,
     pitcher_pct,
     pitcher_splits_df,
@@ -1226,6 +1226,7 @@ def pitcher_splits():
 def pitcher_gamelogs_page():
     """Pitchers - Game Logs page"""
     st.title("Pitcher Game Logs")
+    pitcher_gamelogs = get_pitcher_gamelogs()
 
     if pitcher_gamelogs.empty:
         st.info("Missing pitcher_gamelogs.parquet — run the daily pipeline to generate it.")

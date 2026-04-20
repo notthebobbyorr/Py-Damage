@@ -8,7 +8,7 @@ from app.config import (
     GAME_TYPE_GROUP_NOTE,
 )
 from app.datasets import (
-    pitch_type_gamelogs,
+    get_pitch_type_gamelogs,
     pitch_type_splits_df,
     pitch_types,
     pitch_types_pct,
@@ -786,6 +786,7 @@ def pitch_splits():
 def pitch_type_gamelogs_page():
     """Individual Pitches - Game Logs page"""
     st.title("Pitch Type Game Logs")
+    pitch_type_gamelogs = get_pitch_type_gamelogs()
 
     if pitch_type_gamelogs.empty:
         st.info("Missing pitch_type_gamelogs.parquet — run the daily pipeline to generate it.")

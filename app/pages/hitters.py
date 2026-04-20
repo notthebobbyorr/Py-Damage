@@ -15,7 +15,7 @@ from app.config import (
 )
 from app.datasets import (
     damage_df,
-    hitter_gamelogs,
+    get_hitter_gamelogs,
     hitter_mlb_eq_coeffs,
     hitter_mlb_eq_metrics,
     hitter_pct,
@@ -1066,6 +1066,7 @@ def hitter_splits():
 def hitter_gamelogs_page():
     """Hitters - Game Logs page"""
     st.title("Hitter Game Logs")
+    hitter_gamelogs = get_hitter_gamelogs()
 
     if hitter_gamelogs.empty:
         st.info("Missing hitter_gamelogs.parquet — run the daily pipeline to generate it.")

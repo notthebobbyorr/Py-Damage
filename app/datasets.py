@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import streamlit as st
 
 from app.data_loader import load_csv, load_damage_df
 from app.utils import (
@@ -62,6 +63,26 @@ pitch_type_splits_df = _normalize_split_cols(pitch_type_splits_df)
 league_pitch_types = _normalize_split_cols(league_pitch_types)
 team_damage = _normalize_la_cols(team_damage)
 team_stuff = _normalize_la_cols(team_stuff)
+
+# ---------------------------------------------------------------------------
+# Season filter — drop pre-2020 rows from pitch-type and gamelog tables to
+# reduce memory.  Hitter/pitcher seasonal aggregates retain full history.
+# ---------------------------------------------------------------------------
+_GAMELOG_MIN_SEASON = 2020
+
+
+def _filter_min_season(df: pd.DataFrame) -> pd.DataFrame:
+    """Return rows where season >= _GAMELOG_MIN_SEASON; pass through if no season col."""
+    if df.empty or "season" not in df.columns:
+        return df
+    mask = pd.to_numeric(df["season"], errors="coerce") >= _GAMELOG_MIN_SEASON
+    return df[mask].reset_index(drop=True)
+
+
+pitch_types = _filter_min_season(pitch_types)
+pitch_types_pct = _filter_min_season(pitch_types_pct)
+pitch_types_regressed = _filter_min_season(pitch_types_regressed)
+pitch_type_splits_df = _filter_min_season(pitch_type_splits_df)
 
 
 def _recode_team(series: pd.Series, old: str, new: str) -> pd.Series:
@@ -399,12 +420,8 @@ pitchers_mlb_eq_df, pitcher_mlb_eq_coeffs, pitcher_mlb_eq_metrics = (
 )
 
 # ---------------------------------------------------------------------------
-# Gamelog tables
+# Gamelog helpers — no I/O at module level
 # ---------------------------------------------------------------------------
-hitter_gamelogs = load_csv("hitter_gamelogs.parquet")
-pitcher_gamelogs = load_csv("pitcher_gamelogs.parquet")
-pitch_type_gamelogs = load_csv("pitch_type_gamelogs.parquet")
-
 _GAMELOG_INT_COLS = [
     "PA", "TBF", "pitches", "bbe", "damaged_bbe", "HR", "XBH", "hits",
     "la_lte_0_bbe", "la_gte_20_bbe", "swings", "chases", "whiffs", "BB", "K",
@@ -570,79 +587,97 @@ for _anc in [_anchor_stuff_p, _anchor_stuff_pt, _anchor_exec_p, _anchor_exec_pt]
     if not _anc.empty and "season" in _anc.columns:
         _anc["season"] = pd.to_numeric(_anc["season"], errors="coerce").astype("Int64")
 
-hitter_gamelogs = _cast_gamelog_ints(hitter_gamelogs)
-hitter_gamelogs = _normalize_gamelog_dates(hitter_gamelogs)
-for _col in ["hitting_code", "opp_team"]:
-    if _col in hitter_gamelogs.columns:
-        hitter_gamelogs[_col] = _recode_team(hitter_gamelogs[_col], "AZ", "ARI")
-
-pitcher_gamelogs = _cast_gamelog_ints(pitcher_gamelogs)
-pitcher_gamelogs = _normalize_gamelog_dates(pitcher_gamelogs)
-for _col in ["pitching_code", "opp_team"]:
-    if _col in pitcher_gamelogs.columns:
-        pitcher_gamelogs[_col] = _recode_team(pitcher_gamelogs[_col], "AZ", "ARI")
-
-# Apply Pitch Grade and Execution Grade to pitcher gamelogs
-if "season" in pitcher_gamelogs.columns:
-    pitcher_gamelogs["season"] = pd.to_numeric(pitcher_gamelogs["season"], errors="coerce").astype("Int64")
-pitcher_gamelogs = _apply_stuff_grade(pitcher_gamelogs, _anchor_stuff_p, ["season"])
-pitcher_gamelogs = _apply_exec_grade(pitcher_gamelogs, _anchor_exec_p, ["season"])
-
-pitch_type_gamelogs = _cast_gamelog_ints(pitch_type_gamelogs)
-pitch_type_gamelogs = _normalize_gamelog_dates(pitch_type_gamelogs)
-for _col in ["pitching_code", "opp_team"]:
-    if _col in pitch_type_gamelogs.columns:
-        pitch_type_gamelogs[_col] = _recode_team(pitch_type_gamelogs[_col], "AZ", "ARI")
-
-# Apply Pitch Grade and Execution Grade to pitch-type gamelogs
-if "season" in pitch_type_gamelogs.columns:
-    pitch_type_gamelogs["season"] = pd.to_numeric(pitch_type_gamelogs["season"], errors="coerce").astype("Int64")
-pitch_type_gamelogs = _apply_stuff_grade(pitch_type_gamelogs, _anchor_stuff_pt, ["season", "pitch_tag"])
-pitch_type_gamelogs = _apply_exec_grade(pitch_type_gamelogs, _anchor_exec_pt, ["season", "pitch_tag"])
-
-# Team gamelogs — aggregate counting stats per (team, game, date)
+# ---------------------------------------------------------------------------
+# Lazy-loaded gamelog tables — deferred to first page access (~250 MB saved at startup)
+# Rows are filtered to _GAMELOG_MIN_SEASON+ to reduce memory further.
+# ---------------------------------------------------------------------------
 _T_H_KEYS = ["hitting_code", "game_pk", "game_date", "opp_team", "season", "level_id", "game_type_group"]
 _T_H_SUM = ["PA", "pitches", "bbe", "damaged_bbe", "HR", "XBH", "hits",
             "la_lte_0_bbe", "la_gte_20_bbe", "swings", "chases", "whiffs", "BB", "K",
             "pulled_fbs", "selective_takes", "hittable_takes",
             "FA", "BR", "OFF", "vs_RHP", "vs_LHP"]
-
-if not hitter_gamelogs.empty:
-    _hgl_k = [c for c in _T_H_KEYS if c in hitter_gamelogs.columns]
-    _hgl_s = [c for c in _T_H_SUM if c in hitter_gamelogs.columns]
-    team_hitter_gamelogs = (
-        hitter_gamelogs.groupby(_hgl_k, observed=True)[_hgl_s]
-        .sum()
-        .reset_index()
-    )
-    team_hitter_gamelogs = _cast_gamelog_ints(team_hitter_gamelogs)
-    team_hitter_gamelogs = _normalize_gamelog_dates(team_hitter_gamelogs)
-    del _hgl_k, _hgl_s
-else:
-    team_hitter_gamelogs = pd.DataFrame()
-
 _T_P_KEYS = ["pitching_code", "game_pk", "game_date", "opp_team", "season", "level_id", "game_type_group"]
 _T_P_SUM = ["TBF", "pitches", "bbe", "damaged_bbe", "HR", "XBH", "hits",
             "la_lte_0_bbe", "la_gte_20_bbe", "swings", "chases", "whiffs", "BB", "K",
             "zone_pitches", "FA", "BR", "OFF",
             "strikes", "balls", "out_of_zone", "vs_LHB", "vs_RHB"]
 
-if not pitcher_gamelogs.empty:
-    _pgl_k = [c for c in _T_P_KEYS if c in pitcher_gamelogs.columns]
-    _pgl_s = [c for c in _T_P_SUM if c in pitcher_gamelogs.columns]
-    team_pitcher_gamelogs = (
-        pitcher_gamelogs.groupby(_pgl_k, observed=True)[_pgl_s]
-        .sum()
-        .reset_index()
-    )
-    team_pitcher_gamelogs = _cast_gamelog_ints(team_pitcher_gamelogs)
-    team_pitcher_gamelogs = _normalize_gamelog_dates(team_pitcher_gamelogs)
 
+@st.cache_resource
+def get_hitter_gamelogs() -> pd.DataFrame:
+    df = load_csv("hitter_gamelogs.parquet")
+    if not df.empty and "season" in df.columns:
+        df = df[pd.to_numeric(df["season"], errors="coerce") >= _GAMELOG_MIN_SEASON].copy()
+    df = _cast_gamelog_ints(df)
+    df = _normalize_gamelog_dates(df)
+    for _col in ["hitting_code", "opp_team"]:
+        if _col in df.columns:
+            df[_col] = _recode_team(df[_col], "AZ", "ARI")
+    return df
+
+
+@st.cache_resource
+def get_pitcher_gamelogs() -> pd.DataFrame:
+    df = load_csv("pitcher_gamelogs.parquet")
+    if not df.empty and "season" in df.columns:
+        df = df[pd.to_numeric(df["season"], errors="coerce") >= _GAMELOG_MIN_SEASON].copy()
+    df = _cast_gamelog_ints(df)
+    df = _normalize_gamelog_dates(df)
+    for _col in ["pitching_code", "opp_team"]:
+        if _col in df.columns:
+            df[_col] = _recode_team(df[_col], "AZ", "ARI")
+    if "season" in df.columns:
+        df["season"] = pd.to_numeric(df["season"], errors="coerce").astype("Int64")
+    df = _apply_stuff_grade(df, _anchor_stuff_p, ["season"])
+    df = _apply_exec_grade(df, _anchor_exec_p, ["season"])
+    return df
+
+
+@st.cache_resource
+def get_pitch_type_gamelogs() -> pd.DataFrame:
+    df = load_csv("pitch_type_gamelogs.parquet")
+    if not df.empty and "season" in df.columns:
+        df = df[pd.to_numeric(df["season"], errors="coerce") >= _GAMELOG_MIN_SEASON].copy()
+    df = _cast_gamelog_ints(df)
+    df = _normalize_gamelog_dates(df)
+    for _col in ["pitching_code", "opp_team"]:
+        if _col in df.columns:
+            df[_col] = _recode_team(df[_col], "AZ", "ARI")
+    if "season" in df.columns:
+        df["season"] = pd.to_numeric(df["season"], errors="coerce").astype("Int64")
+    df = _apply_stuff_grade(df, _anchor_stuff_pt, ["season", "pitch_tag"])
+    df = _apply_exec_grade(df, _anchor_exec_pt, ["season", "pitch_tag"])
+    return df
+
+
+@st.cache_resource
+def get_team_hitter_gamelogs() -> pd.DataFrame:
+    hgl = get_hitter_gamelogs()
+    if hgl.empty:
+        return pd.DataFrame()
+    _hgl_k = [c for c in _T_H_KEYS if c in hgl.columns]
+    _hgl_s = [c for c in _T_H_SUM if c in hgl.columns]
+    result = hgl.groupby(_hgl_k, observed=True)[_hgl_s].sum().reset_index()
+    result = _cast_gamelog_ints(result)
+    result = _normalize_gamelog_dates(result)
+    return result
+
+
+@st.cache_resource
+def get_team_pitcher_gamelogs() -> pd.DataFrame:
+    pgl = get_pitcher_gamelogs()
+    if pgl.empty:
+        return pd.DataFrame()
+    _pgl_k = [c for c in _T_P_KEYS if c in pgl.columns]
+    _pgl_s = [c for c in _T_P_SUM if c in pgl.columns]
+    result = pgl.groupby(_pgl_k, observed=True)[_pgl_s].sum().reset_index()
+    result = _cast_gamelog_ints(result)
+    result = _normalize_gamelog_dates(result)
     # TBF-weighted average of Pitch/Exec grades for each team game
-    _grade_cols = [c for c in ["stuff", "grade_v13"] if c in pitcher_gamelogs.columns]
-    if _grade_cols and "TBF" in pitcher_gamelogs.columns:
-        _pg_g = pitcher_gamelogs[
-            [c for c in _pgl_k + ["TBF"] + _grade_cols if c in pitcher_gamelogs.columns]
+    _grade_cols = [c for c in ["stuff", "grade_v13"] if c in pgl.columns]
+    if _grade_cols and "TBF" in pgl.columns:
+        _pg_g = pgl[
+            [c for c in _pgl_k + ["TBF"] + _grade_cols if c in pgl.columns]
         ].copy()
         _pg_g["TBF"] = pd.to_numeric(_pg_g["TBF"], errors="coerce")
         for _gc in _grade_cols:
@@ -657,16 +692,9 @@ if not pitcher_gamelogs.empty:
             ).astype("Int64")
             _wg_agg = _wg_agg.drop(columns=[f"_{_gc}_sum"])
         _wg_agg = _wg_agg.drop(columns=["_TBF"])
-        team_pitcher_gamelogs = team_pitcher_gamelogs.merge(
+        result = result.merge(
             _wg_agg[[c for c in _wg_keys + _grade_cols if c in _wg_agg.columns]],
-            on=[c for c in _wg_keys if c in team_pitcher_gamelogs.columns],
+            on=[c for c in _wg_keys if c in result.columns],
             how="left",
         )
-        del _pg_g, _wg_agg_dict, _wg_agg, _grade_cols, _gc, _wg_keys
-
-    del _pgl_k, _pgl_s
-else:
-    team_pitcher_gamelogs = pd.DataFrame()
-
-del _T_H_KEYS, _T_H_SUM, _T_P_KEYS, _T_P_SUM
-del _anchor_stuff_p, _anchor_stuff_pt, _anchor_exec_p, _anchor_exec_pt
+    return result
