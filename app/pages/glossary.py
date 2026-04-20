@@ -35,6 +35,14 @@ def glossary_hitting():
 **Whiff vs. 95+ (%)**: Whiff rate against fastballs 95 mph or higher.
 
 **Contact Over Expected (%)**: Contact rate compared to expected contact rate based on pitch characteristics. Only applied to hitter swings.
+                
+**pSwing (%)**: Percentage of pitches the hitter would be expected to swing at based on count, pitch location, and pitch traits.
+                
+**SBO**: Stolen Base Opportunities. Number of times a player was on base with the base ahead of him unoccupied.
+                
+**SB**: Stolen Bases.
+
+**Takeoff (%)**: Percentage of SBO where the player attempted to steal the next base.                                
 """)
 
 
@@ -53,14 +61,22 @@ def glossary_pitching():
 
 **Max FA mph**: Maximum fastball velocity.
 
-**FA VAA**: Fastball vertical approach angle.
+**FA VAA**: Vertical approach angle of that pitcher's most-used fastball. Lower values indicate a flatter fastball. A good rule of thumb is that a 4 or lower is an elite "rising" fastball. League average is typically around 5.
 
-**FA Usage (%)**: Percentage of pitches that are fastballs.
+**FA Usage (%)**: Percentage of pitches that are fastballs (4-seam fastballs, sinkers, or hard cutters).
 
 **BB Spin**: Avg spin rate (RPM) of a pitcher's breaking balls.
 
 **SwStr (%)**: Swinging strike percentage.
+                
+**pSwStr (%)**: Expected swinging strike percentage based on pitch characteristics.
 
+**pSwing (%)**: Percentage of pitches the pitcher would be expected to force a swing on based on count, pitch location, and pitch traits.
+                
+**Damage/BBE (%)**: Percentage of batted ball events that result in "damage" (likely extra-base hits or hard-hit balls) against that pitcher.
+                
+**pDamage/BBE (%)**: Expected percentage of batted ball events that would result in "damage" based on pitch characteristics.
+                
 **Ball (%)**: Percentage of pitches resulting in balls.
 
 **Z-Contact (%)**: Contact rate on pitches in the strike zone.
@@ -86,4 +102,10 @@ def glossary_pitching():
 **HB (in.)**: Horizontal break in inches.
 
 **Zone (%)**: Percentage of pitches thrown in the strike zone.
+                
+**SBO**: Stolen Base Opportunities. Number of times a player was on base with the base ahead of him unoccupied.
+                
+**SB**: Stolen Bases.
+
+**Takeoff Against (%)**: Percentage of SBO where a player attempted to steal the next base against the pitcher.        
 """)
