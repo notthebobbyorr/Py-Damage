@@ -285,3 +285,86 @@ hitters_mlb_eq_df, hitter_mlb_eq_coeffs, hitter_mlb_eq_metrics = (
 pitchers_mlb_eq_df, pitcher_mlb_eq_coeffs, pitcher_mlb_eq_metrics = (
     _build_pitcher_mlb_equivalencies(pitchers_reg_df)
 )
+
+# ---------------------------------------------------------------------------
+# Gamelog tables
+# ---------------------------------------------------------------------------
+hitter_gamelogs = load_csv("hitter_gamelogs.parquet")
+pitcher_gamelogs = load_csv("pitcher_gamelogs.parquet")
+pitch_type_gamelogs = load_csv("pitch_type_gamelogs.parquet")
+
+_GAMELOG_INT_COLS = [
+    "PA", "TBF", "pitches", "bbe", "damaged_bbe", "HR", "XBH", "hits",
+    "la_lte_0_bbe", "la_gte_20_bbe", "swings", "chases", "whiffs", "BB", "K",
+    "zone_pitches", "FA", "BR", "OFF",
+    "strikes", "balls", "out_of_zone", "vs_LHB", "vs_RHB",
+    "pulled_fbs", "selective_takes", "hittable_takes",
+    "vs_RHP", "vs_LHP",
+]
+
+
+def _cast_gamelog_ints(df: pd.DataFrame) -> pd.DataFrame:
+    for col in _GAMELOG_INT_COLS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+    return df
+
+
+def _normalize_gamelog_dates(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "game_date" not in df.columns:
+        return df
+    df = df.copy()
+    _d = pd.to_datetime(df["game_date"], errors="coerce")
+    df["game_date"] = _d.dt.date.astype(str).where(_d.notna(), "")
+    return df
+
+
+hitter_gamelogs = _cast_gamelog_ints(hitter_gamelogs)
+hitter_gamelogs = _normalize_gamelog_dates(hitter_gamelogs)
+pitcher_gamelogs = _cast_gamelog_ints(pitcher_gamelogs)
+pitcher_gamelogs = _normalize_gamelog_dates(pitcher_gamelogs)
+pitch_type_gamelogs = _cast_gamelog_ints(pitch_type_gamelogs)
+pitch_type_gamelogs = _normalize_gamelog_dates(pitch_type_gamelogs)
+
+# Team gamelogs — aggregate counting stats per (team, game, date)
+_T_H_KEYS = ["hitting_code", "game_pk", "game_date", "opp_team", "season", "level_id", "game_type_group"]
+_T_H_SUM = ["PA", "pitches", "bbe", "damaged_bbe", "HR", "XBH", "hits",
+            "la_lte_0_bbe", "la_gte_20_bbe", "swings", "chases", "whiffs", "BB", "K",
+            "pulled_fbs", "selective_takes", "hittable_takes",
+            "FA", "BR", "OFF", "vs_RHP", "vs_LHP"]
+
+if not hitter_gamelogs.empty:
+    _hgl_k = [c for c in _T_H_KEYS if c in hitter_gamelogs.columns]
+    _hgl_s = [c for c in _T_H_SUM if c in hitter_gamelogs.columns]
+    team_hitter_gamelogs = (
+        hitter_gamelogs.groupby(_hgl_k, observed=True)[_hgl_s]
+        .sum()
+        .reset_index()
+    )
+    team_hitter_gamelogs = _cast_gamelog_ints(team_hitter_gamelogs)
+    team_hitter_gamelogs = _normalize_gamelog_dates(team_hitter_gamelogs)
+    del _hgl_k, _hgl_s
+else:
+    team_hitter_gamelogs = pd.DataFrame()
+
+_T_P_KEYS = ["pitching_code", "game_pk", "game_date", "opp_team", "season", "level_id", "game_type_group"]
+_T_P_SUM = ["TBF", "pitches", "bbe", "damaged_bbe", "HR", "XBH", "hits",
+            "la_lte_0_bbe", "la_gte_20_bbe", "swings", "chases", "whiffs", "BB", "K",
+            "zone_pitches", "FA", "BR", "OFF",
+            "strikes", "balls", "out_of_zone", "vs_LHB", "vs_RHB"]
+
+if not pitcher_gamelogs.empty:
+    _pgl_k = [c for c in _T_P_KEYS if c in pitcher_gamelogs.columns]
+    _pgl_s = [c for c in _T_P_SUM if c in pitcher_gamelogs.columns]
+    team_pitcher_gamelogs = (
+        pitcher_gamelogs.groupby(_pgl_k, observed=True)[_pgl_s]
+        .sum()
+        .reset_index()
+    )
+    team_pitcher_gamelogs = _cast_gamelog_ints(team_pitcher_gamelogs)
+    team_pitcher_gamelogs = _normalize_gamelog_dates(team_pitcher_gamelogs)
+    del _pgl_k, _pgl_s
+else:
+    team_pitcher_gamelogs = pd.DataFrame()
+
+del _T_H_KEYS, _T_H_SUM, _T_P_KEYS, _T_P_SUM
