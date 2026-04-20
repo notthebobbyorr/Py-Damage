@@ -1,0 +1,52 @@
+stats:
+  hitters: []
+  pitchers:
+    - name: p_SwStr_pct
+      kind: mean
+      value: pred_swstr_base
+      sample_n: pitches
+    - name: p_SwStr_with_loc_pct
+      kind: mean
+      value: pred_swstr_loc
+      sample_n: pitches
+    - name: p_Swing_pct
+      kind: mean
+      value: pred_swing_base
+      sample_n: pitches
+    - name: p_Swing_with_loc_pct
+      kind: mean
+      value: pred_swing_loc
+      sample_n: pitches
+    - name: p_Damage_pct
+      kind: mean
+      value: pred_damage_base
+      sample_n: bbe
+    - name: p_Damage_with_loc_pct
+      kind: mean
+      value: pred_damage_loc
+      sample_n: bbe
+  pitch_types:
+    - name: p_SwStr_pct
+      kind: mean
+      value: pred_swstr_base
+      sample_n: pitches
+    - name: p_SwStr_with_loc_pct
+      kind: mean
+      value: pred_swstr_loc
+      sample_n: pitches
+    - name: p_Swing_pct
+      kind: mean
+      value: pred_swing_base
+      sample_n: pitches
+    - name: p_Swing_with_loc_pct
+      kind: mean
+      value: pred_swing_loc
+      sample_n: pitches
+    - name: p_Damage_pct
+      kind: mean
+      value: pred_damage_base
+      sample_n: bbe
+    - name: p_Damage_with_loc_pct
+      kind: mean
+      value: pred_damage_loc
+      sample_n: bbe

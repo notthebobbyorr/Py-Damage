@@ -1,0 +1,44 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+.streamlit/secrets.toml
+
+# Chunk/intermediate outputs from aggregation/backfill workflows
+_season_chunks/
+_age_chunks/
+
+# Test files (optional - remove if you want to track)
+test_secrets.py
+
+# Raw play-by-play input data (large binary files)
+data/raw/
+
+# Intermediate pipeline chunk outputs (rebuilt on each run)
+data/output/_season_chunks/
+data/output/_age_chunks/
+
+# Pipeline operational logs
+data/logs/
+
+# Local Claude Code settings
+.claude/
+CLAUDE.md
+
+# Local refresh scripts
+run_daily_refresh.ps1
+
+# Model development scripts (local only, not used by deployed app)
+model_dev/
+
+# One-off utility scripts
+scripts/
+
+# .md files for internal use
+PAYWALL_SETUP_GUIDE.md
+LEAGUE_EQUIVALENCIES.md
+PIPELINE.md
+CHANGELOG.md
+
+# repo layout
+repo_structure.txt
