@@ -246,7 +246,7 @@ def _prep_execution(df: pd.DataFrame, id_cols: list[str]) -> pd.DataFrame:
     out["_wgrade"] = out["grade_v13"] * out["n_pitches"]
     grp_cols = [c for c in id_cols if c in out.columns]
     agg = (
-        out.groupby(grp_cols)
+        out.groupby(grp_cols, observed=True)
         .agg(_wgrade_sum=("_wgrade", "sum"), _n=("n_pitches", "sum"))
         .reset_index()
     )
@@ -353,7 +353,7 @@ if (
     if not _p.empty and "TBF" in _p.columns:
         _p["_wgrade"] = _p["grade_v13"] * _p["TBF"]
         _team_exec = (
-            _p.groupby(_team_keys)
+            _p.groupby(_team_keys, observed=True)
             .agg(_wgrade_sum=("_wgrade", "sum"), _n=("TBF", "sum"))
             .reset_index()
         )
@@ -508,7 +508,7 @@ if not pitcher_pct.empty and "stuff_raw" in pitcher_pct.columns and "season" in 
     _pct_mlb = _pct_mlb.dropna(subset=["stuff_raw"])
     if not _pct_mlb.empty:
         _anchor_stuff_p = (
-            _pct_mlb.groupby("season")["stuff_raw"]
+            _pct_mlb.groupby("season", observed=True)["stuff_raw"]
             .agg(stuff_p01=lambda x: x.quantile(0.01), stuff_p99=lambda x: x.quantile(0.99))
             .reset_index()
         )
@@ -542,7 +542,7 @@ if not execution_pitcher.empty and "pred_v13" in execution_pitcher.columns:
     _ep = _ep.dropna(subset=["pred_v13"])
     if not _ep.empty and "season" in _ep.columns:
         _anchor_exec_p = (
-            _ep.groupby("season")["pred_v13"]
+            _ep.groupby("season", observed=True)["pred_v13"]
             .agg(exec_p1=lambda x: x.quantile(0.01), exec_p99=lambda x: x.quantile(0.99))
             .reset_index()
         )
