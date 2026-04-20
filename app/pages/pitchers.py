@@ -304,7 +304,8 @@ def pitcher_percentiles():
                 "SwStr", "Ball_pct", "Z_Contact", "Chase", "CSW",
                 "rel_z", "rel_x", "ext",
                 "p_SwStr_pct", "Damage_pct", "p_Damage_pct", "takeoff_rate",
-            ], ["season", "level_id", "game_type_group"])
+            ], ["season", "level_id", "game_type_group"],
+            reverse_cols={"fastball_vaa", "Ball_pct", "Z_Contact", "takeoff_rate", "Damage_pct", "p_Damage_pct"})
 
             columns = [
                 "name",
@@ -314,6 +315,7 @@ def pitcher_percentiles():
                 "GS",
                 "HR",
                 "stuff_pctile",
+                "grade_v13",
                 "fastball_velo_pctile",
                 "max_velo_pctile",
                 "fastball_vaa_pctile",
@@ -325,7 +327,6 @@ def pitcher_percentiles():
                 "rel_z_pctile",
                 "rel_x_pctile",
                 "ext_pctile",
-                "grade_v13",
                 "p_SwStr_pct_pctile",
                 "Damage_pct_pctile",
                 "p_Damage_pct_pctile",
@@ -365,10 +366,7 @@ def pitcher_percentiles():
             df = df.sort_values(by="Pitch Grade Pctile", ascending=False)
             render_table(
                 df,
-                reverse_cols={
-                    "FA VAA", "Ball (%)", "Z-Contact (%)", "HR",
-                    "Damage/BBE%", "pDamage/BBE%", "Takeoff Against (%)",
-                },
+                reverse_cols={"HR"},
                 abs_cols=ABS_GRADIENT_COLS_PITCHERS,
                 round_decimals=0,
             )

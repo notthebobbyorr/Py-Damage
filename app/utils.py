@@ -792,21 +792,26 @@ def rank_for_display(
     df: pd.DataFrame,
     cols: list[str],
     group_cols: list[str],
+    reverse_cols: set[str] | None = None,
 ) -> pd.DataFrame:
     """Compute 1-100 percentile ranks for raw columns within each group.
 
     Adds a ``<col>_pctile`` column for every ``col`` that exists in ``df``.
-    Skips columns already ranked.  Safe when a column is all-NaN.
+    Columns in ``reverse_cols`` are ranked ascending=False so lower raw value
+    → higher percentile (rank 95 = best). Safe when a column is all-NaN.
     """
+    if reverse_cols is None:
+        reverse_cols = set()
     df = df.copy()
     for col in cols:
         if col not in df.columns:
             continue
         pctile_col = f"{col}_pctile"
+        ascending = col not in reverse_cols
         try:
             ranked = (
                 df.groupby(group_cols, observed=True)[col]
-                .rank(pct=True, na_option="keep")
+                .rank(pct=True, na_option="keep", ascending=ascending)
                 .mul(100)
                 .round()
                 .clip(1, 100)

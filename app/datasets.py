@@ -298,6 +298,43 @@ if not _exec_pt.empty and not pitch_types_pct.empty and "game_type_group" in pit
 
 del _exec_ps, _exec_pt, _exec_ps_keys, _exec_pt_keys
 
+# Merge predicted/damage metrics from pitcher_df into pitcher_pct (pct parquet may lack them)
+_pred_cols = [c for c in ["p_SwStr_pct", "Damage_pct", "p_Damage_pct"] if c in pitcher_df.columns]
+if _pred_cols and not pitcher_df.empty and not pitcher_pct.empty and "game_type_group" in pitcher_df.columns:
+    _pred_keys = ["pitcher_mlbid", "season", "level_id", "game_type_group"]
+    _psrc = pitcher_df.copy()
+    for _c in ["pitcher_mlbid", "season", "level_id"]:
+        if _c in _psrc.columns:
+            _psrc[_c] = pd.to_numeric(_psrc[_c], errors="coerce").astype("Int64")
+    _pdst = pitcher_pct.copy()
+    for _c in ["pitcher_mlbid", "season", "level_id"]:
+        if _c in _pdst.columns:
+            _pdst[_c] = pd.to_numeric(_pdst[_c], errors="coerce").astype("Int64")
+    for _col in _pred_cols:
+        if _col in _pdst.columns:
+            _pdst = _pdst.drop(columns=[_col])
+    pitcher_pct = _pdst.merge(_psrc[_pred_keys + _pred_cols].drop_duplicates(_pred_keys), on=_pred_keys, how="left")
+    del _psrc, _pdst
+
+# Merge predicted/damage metrics from pitch_types into pitch_types_pct
+_pred_cols_pt = [c for c in ["p_SwStr_pct", "Damage_pct", "p_Damage_pct"] if c in pitch_types.columns]
+if _pred_cols_pt and not pitch_types.empty and not pitch_types_pct.empty and "game_type_group" in pitch_types.columns:
+    _pred_keys_pt = ["pitcher_mlbid", "season", "level_id", "game_type_group", "pitch_tag"]
+    _ptsrc = pitch_types.copy()
+    for _c in ["pitcher_mlbid", "season", "level_id"]:
+        if _c in _ptsrc.columns:
+            _ptsrc[_c] = pd.to_numeric(_ptsrc[_c], errors="coerce").astype("Int64")
+    _ptdst = pitch_types_pct.copy()
+    for _c in ["pitcher_mlbid", "season", "level_id"]:
+        if _c in _ptdst.columns:
+            _ptdst[_c] = pd.to_numeric(_ptdst[_c], errors="coerce").astype("Int64")
+    for _col in _pred_cols_pt:
+        if _col in _ptdst.columns:
+            _ptdst = _ptdst.drop(columns=[_col])
+    pitch_types_pct = _ptdst.merge(_ptsrc[_pred_keys_pt + _pred_cols_pt].drop_duplicates(_pred_keys_pt), on=_pred_keys_pt, how="left")
+    del _ptsrc, _ptdst
+del _pred_cols, _pred_cols_pt
+
 # ---------------------------------------------------------------------------
 # Build team-level execution grade and merge onto team_stuff
 # ---------------------------------------------------------------------------

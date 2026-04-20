@@ -485,7 +485,8 @@ def pitch_percentiles():
                 "vbreak", "hbreak", "SwStr", "LA_lte_0", "Ball_pct",
                 "Z_Contact", "Chase", "CSW",
                 "p_SwStr_pct", "Damage_pct", "p_Damage_pct", "takeoff_rate",
-            ], ["season", "level_id", "game_type_group", "pitch_tag"])
+            ], ["season", "level_id", "game_type_group", "pitch_tag"],
+            reverse_cols={"vaa", "Ball_pct", "Z_Contact", "takeoff_rate", "Damage_pct", "p_Damage_pct"})
 
             columns = [
                 "name",
@@ -552,10 +553,7 @@ def pitch_percentiles():
             df = df.sort_values(by="Pitch Grade Pctile", ascending=False)
             render_table(
                 df,
-                reverse_cols={
-                    "VAA", "Ball (%)", "Z-Contact (%)", "HR",
-                    "Damage/BBE%", "pDamage/BBE%", "Takeoff Against (%)",
-                },
+                reverse_cols={"HR"},
                 abs_cols=ABS_GRADIENT_COLS_PITCH_TYPES,
                 label_cols=["Name", "Pitch Type", "Split", "split", "Split Type"],
                 round_decimals=0,

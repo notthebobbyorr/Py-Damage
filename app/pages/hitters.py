@@ -282,7 +282,8 @@ def hitter_percentiles():
                 "SEAGER", "selection_skill", "hittable_pitches_taken", "damage_rate",
                 "EV90th", "max_EV", "pull_FB_pct", "chase", "z_con",
                 "secondary_whiff_pct", "whiffs_vs_95", "contact_vs_avg", "takeoff_rate",
-            ], ["season", "level_id", "game_type_group"])
+            ], ["season", "level_id", "game_type_group"],
+            reverse_cols={"hittable_pitches_taken", "chase", "secondary_whiff_pct", "whiffs_vs_95"})
 
             columns = [
                 "hitter_name", "batter_mlbid", "hitting_code", "season", "HR",
@@ -312,12 +313,6 @@ def hitter_percentiles():
             df = df.sort_values(by="Damage Rate", ascending=False)
             render_table(
                 df,
-                reverse_cols={
-                    "Hittable Pitch Take",
-                    "Chase",
-                    "Whiff vs Secondaries",
-                    "Whiff vs 95+",
-                },
                 round_decimals=0,
             )
             download_button(df, "hitter_percentiles", "hitter_pct_download")
