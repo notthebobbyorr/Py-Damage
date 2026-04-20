@@ -15,6 +15,7 @@ from app.config import (
 )
 from app.datasets import (
     damage_df,
+    get_dynamic_threshold,
     hitter_gamelogs,
     hitter_mlb_eq_coeffs,
     hitter_mlb_eq_metrics,
@@ -191,6 +192,13 @@ def hitter_percentiles():
     if hitter_pct.empty:
         st.info("Missing hitter_pctiles.csv")
     else:
+        _LEVEL_MAP = {
+            "All": [1, 11, 14, 16],
+            "MLB": [1],
+            "Triple-A": [11],
+            "Low-A": [14],
+            "Low Minors": [16],
+        }
         left, right = st.columns([1, 3])
         with left:
             level = st.selectbox(
@@ -215,13 +223,16 @@ def hitter_percentiles():
                 index=0,
                 key="hitter_pct_game_type_group",
             )
+            _default_min = get_dynamic_threshold(
+                "hitter", _LEVEL_MAP[level], season, game_type_group
+            )
             min_value = st.number_input(
                 "Minimum Value",
                 min_value=0,
-                max_value=500,
-                value=100,
+                max_value=2000,
+                value=_default_min,
                 step=1,
-                key="hitter_pct_min_value",
+                key=f"hitter_pct_min_value_{level}_{sorted(season)}_{game_type_group}",
             )
             value_type = st.selectbox(
                 "Filter By", ["PA", "BBE"], index=1, key="hitter_pct_value_type"
@@ -258,15 +269,8 @@ def hitter_percentiles():
         with right:
             if game_type_group != "Regular Season":
                 st.info(GAME_TYPE_GROUP_NOTE.format(game_type_group))
-            level_map = {
-                "All": [1, 11, 14, 16],
-                "MLB": [1],
-                "Triple-A": [11],
-                "Low-A": [14],
-                "Low Minors": [16],
-            }
             df = hitter_pct.copy()
-            df = df[df["level_id"].isin(level_map[level])]
+            df = df[df["level_id"].isin(_LEVEL_MAP[level])]
             df = filter_by_values(df, "season", season)
             df = filter_by_game_type_group(df, game_type_group)
             df = filter_by_team_token(df, "hitting_code", team)
@@ -284,7 +288,7 @@ def hitter_percentiles():
                 "damage_rate_pctile", "EV90th_pctile", "max_EV_pctile",
                 "pull_FB_pct_pctile", "chase_pctile", "z_con_pctile",
                 "secondary_whiff_pct_pctile", "whiffs_vs_95_pctile",
-                "contact_vs_avg_pctile", "__season", "__level",
+                "contact_vs_avg_pctile", "takeoff_rate_pctile", "__season", "__level",
             ]
             df = df.assign(__season=df["season"], __level=df["level_id"])
             df = df[[col for col in columns if col in df.columns]].copy()
@@ -299,6 +303,7 @@ def hitter_percentiles():
                 "secondary_whiff_pct_pctile": "Whiff vs Secondaries",
                 "whiffs_vs_95_pctile": "Whiff vs 95+",
                 "contact_vs_avg_pctile": "Contact Over Expected",
+                "takeoff_rate_pctile": "Takeoff%",
             }
             df = df.rename(columns=rename_map)
             df = maybe_add_level_col(df, level)
@@ -311,6 +316,7 @@ def hitter_percentiles():
                     "Whiff vs Secondaries",
                     "Whiff vs 95+",
                 },
+                round_decimals=0,
             )
             download_button(df, "hitter_percentiles", "hitter_pct_download")
 

@@ -8,6 +8,7 @@ from app.config import (
     GAME_TYPE_GROUP_NOTE,
 )
 from app.datasets import (
+    get_dynamic_threshold,
     pitch_type_gamelogs,
     pitch_type_splits_df,
     pitch_types,
@@ -402,6 +403,13 @@ def pitch_percentiles():
     if pitch_types_pct.empty:
         st.info("Missing pitch_types_pctiles.csv")
     else:
+        _LEVEL_MAP = {
+            "All": [1, 11, 14, 16],
+            "MLB": [1],
+            "Triple-A": [11],
+            "Low-A": [14],
+            "Low Minors": [16],
+        }
         left, right = st.columns([1, 3])
         with left:
             level = st.selectbox(
@@ -426,13 +434,16 @@ def pitch_percentiles():
                 index=0,
                 key="pitch_types_pct_game_type_group",
             )
+            _default_min_pitches = get_dynamic_threshold(
+                "pitch", _LEVEL_MAP[level], season, game_type_group
+            )
             min_pitches = st.number_input(
                 "Minimum # Pitches",
                 min_value=0,
-                max_value=1000,
-                value=50,
+                max_value=10000,
+                value=_default_min_pitches,
                 step=1,
-                key="pitch_pct_min_pitches",
+                key=f"pitch_pct_min_pitches_{level}_{sorted(season)}_{game_type_group}",
             )
             team = st.selectbox(
                 "Select Team",
@@ -464,15 +475,8 @@ def pitch_percentiles():
         with right:
             if game_type_group != "Regular Season":
                 st.info(GAME_TYPE_GROUP_NOTE.format(game_type_group))
-            level_map = {
-                "All": [1, 11, 14, 16],
-                "MLB": [1],
-                "Triple-A": [11],
-                "Low-A": [14],
-                "Low Minors": [16],
-            }
             df = pitch_types_pct.copy()
-            df = df[df["level_id"].isin(level_map[level])]
+            df = df[df["level_id"].isin(_LEVEL_MAP[level])]
             df = filter_by_values(df, "season", season)
             df = filter_by_game_type_group(df, game_type_group)
             df = filter_by_team_token(df, "pitching_code", team)
@@ -502,6 +506,11 @@ def pitch_percentiles():
                 "Chase_pctile",
                 "CSW_pctile",
                 "HR",
+                "grade_v13",
+                "p_SwStr_pct_pctile",
+                "Damage_pct_pctile",
+                "p_Damage_pct_pctile",
+                "takeoff_rate_pctile",
                 "__season",
                 "__level",
             ]
@@ -529,15 +538,24 @@ def pitch_percentiles():
                 "Chase_pctile": "Chase (%)",
                 "Ball_pct_pctile": "Ball (%)",
                 "HR": "HR",
+                "grade_v13": "Execution Grade",
+                "p_SwStr_pct_pctile": "pSwStr (%)",
+                "Damage_pct_pctile": "Damage/BBE%",
+                "p_Damage_pct_pctile": "pDamage/BBE%",
+                "takeoff_rate_pctile": "Takeoff Against (%)",
             }
             df = df.rename(columns=rename_map)
             df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Pitch Grade Pctile", ascending=False)
             render_table(
                 df,
-                reverse_cols={"VAA", "Ball (%)", "Z-Contact (%)", "HR"},
+                reverse_cols={
+                    "VAA", "Ball (%)", "Z-Contact (%)", "HR",
+                    "Damage/BBE%", "pDamage/BBE%", "Takeoff Against (%)",
+                },
                 abs_cols=ABS_GRADIENT_COLS_PITCH_TYPES,
                 label_cols=["Name", "Pitch Type", "Split", "split", "Split Type"],
+                round_decimals=0,
             )
             download_button(df, "pitch_percentiles", "pitch_pct_download")
 

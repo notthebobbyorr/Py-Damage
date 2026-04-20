@@ -166,6 +166,62 @@ if not pitcher_baserunning_reg.empty and not pitcher_df.empty and "game_type_gro
     del _pbr, _pleft, _p_merge_keys, _pcol, _p_int_col
 
 # ---------------------------------------------------------------------------
+# Merge takeoff_rate onto hitter_pct (for Takeoff% column on percentile page)
+# ---------------------------------------------------------------------------
+if not baserunning_reg.empty and not hitter_pct.empty and "game_type_group" in hitter_pct.columns:
+    _br_hp = baserunning_reg.rename(columns={"runner_mlbid": "batter_mlbid"})
+    _br_hp_want = ["batter_mlbid", "season", "level_id", "game_type_group", "takeoff_rate_raw"]
+    _br_hp = (
+        _br_hp[[c for c in _br_hp_want if c in _br_hp.columns]]
+        .rename(columns={"takeoff_rate_raw": "takeoff_rate"})
+        .drop_duplicates(subset=["batter_mlbid", "season", "level_id", "game_type_group"])
+    )
+    del _br_hp_want
+    _hp = hitter_pct.copy()
+    _hp_keys = ["batter_mlbid", "season", "level_id", "game_type_group"]
+    for _c in ["batter_mlbid", "season", "level_id"]:
+        _hp[_c] = pd.to_numeric(_hp[_c], errors="coerce").astype("Int64")
+        _br_hp[_c] = pd.to_numeric(_br_hp[_c], errors="coerce").astype("Int64")
+    hitter_pct = _hp.merge(_br_hp, on=_hp_keys, how="left")
+    del _br_hp, _hp, _hp_keys, _c
+
+# Merge takeoff_rate onto pitcher_pct (for Takeoff Against % on percentile page)
+if not pitcher_baserunning_reg.empty and not pitcher_pct.empty and "game_type_group" in pitcher_pct.columns:
+    _pbr_pp = pitcher_baserunning_reg.copy()
+    _pbr_pp_want = ["pitcher_mlbid", "season", "level_id", "game_type_group", "takeoff_rate_raw"]
+    _pbr_pp = (
+        _pbr_pp[[c for c in _pbr_pp_want if c in _pbr_pp.columns]]
+        .rename(columns={"takeoff_rate_raw": "takeoff_rate"})
+        .drop_duplicates(subset=["pitcher_mlbid", "season", "level_id", "game_type_group"])
+    )
+    del _pbr_pp_want
+    _pp = pitcher_pct.copy()
+    _pp_keys = ["pitcher_mlbid", "season", "level_id", "game_type_group"]
+    for _c in ["pitcher_mlbid", "season", "level_id"]:
+        _pp[_c] = pd.to_numeric(_pp[_c], errors="coerce").astype("Int64")
+        _pbr_pp[_c] = pd.to_numeric(_pbr_pp[_c], errors="coerce").astype("Int64")
+    pitcher_pct = _pp.merge(_pbr_pp, on=_pp_keys, how="left")
+    del _pbr_pp, _pp, _pp_keys, _c
+
+# Merge pitcher takeoff_rate onto pitch_types_pct (pitcher-level rate per pitch row)
+if not pitcher_baserunning_reg.empty and not pitch_types_pct.empty and "game_type_group" in pitch_types_pct.columns:
+    _pbr_ptpct = pitcher_baserunning_reg.copy()
+    _pbr_ptpct_want = ["pitcher_mlbid", "season", "level_id", "game_type_group", "takeoff_rate_raw"]
+    _pbr_ptpct = (
+        _pbr_ptpct[[c for c in _pbr_ptpct_want if c in _pbr_ptpct.columns]]
+        .rename(columns={"takeoff_rate_raw": "takeoff_rate"})
+        .drop_duplicates(subset=["pitcher_mlbid", "season", "level_id", "game_type_group"])
+    )
+    del _pbr_ptpct_want
+    _ptpct = pitch_types_pct.copy()
+    _ptpct_keys = ["pitcher_mlbid", "season", "level_id", "game_type_group"]
+    for _c in ["pitcher_mlbid", "season", "level_id"]:
+        _ptpct[_c] = pd.to_numeric(_ptpct[_c], errors="coerce").astype("Int64")
+        _pbr_ptpct[_c] = pd.to_numeric(_pbr_ptpct[_c], errors="coerce").astype("Int64")
+    pitch_types_pct = _ptpct.merge(_pbr_ptpct, on=_ptpct_keys, how="left")
+    del _pbr_ptpct, _ptpct, _ptpct_keys, _c
+
+# ---------------------------------------------------------------------------
 # Merge execution grade (Location V13) onto pitcher_df and pitch_types
 # ---------------------------------------------------------------------------
 _GAME_TYPE_TO_GROUP = {
@@ -222,7 +278,72 @@ if not _exec_pt.empty and not pitch_types.empty and "game_type_group" in pitch_t
     pitch_types = _ptdf.merge(_exec_pt[_exec_pt_keys + ["grade_v13"]], on=_exec_pt_keys, how="left")
     del _ptdf
 
+# Merge grade_v13 onto pitcher_pct (Execution Grade on percentile page)
+if not _exec_ps.empty and not pitcher_pct.empty and "game_type_group" in pitcher_pct.columns:
+    _ppct = pitcher_pct.copy()
+    for _c in ["pitcher_mlbid", "season", "level_id"]:
+        if _c in _ppct.columns:
+            _ppct[_c] = pd.to_numeric(_ppct[_c], errors="coerce").astype("Int64")
+    pitcher_pct = _ppct.merge(_exec_ps[_exec_ps_keys + ["grade_v13"]], on=_exec_ps_keys, how="left")
+    del _ppct
+
+# Merge grade_v13 onto pitch_types_pct (Execution Grade on pitch percentile page)
+if not _exec_pt.empty and not pitch_types_pct.empty and "game_type_group" in pitch_types_pct.columns:
+    _ptpct2 = pitch_types_pct.copy()
+    for _c in ["pitcher_mlbid", "season", "level_id"]:
+        if _c in _ptpct2.columns:
+            _ptpct2[_c] = pd.to_numeric(_ptpct2[_c], errors="coerce").astype("Int64")
+    pitch_types_pct = _ptpct2.merge(_exec_pt[_exec_pt_keys + ["grade_v13"]], on=_exec_pt_keys, how="left")
+    del _ptpct2
+
 del _exec_ps, _exec_pt, _exec_ps_keys, _exec_pt_keys
+
+
+# ---------------------------------------------------------------------------
+# Ad-hoc percentile ranks for new metrics on the percentile pages
+# Columns may already have _pctile versions (from pipeline); if not, compute here.
+# ---------------------------------------------------------------------------
+def _compute_adhoc_pctiles(
+    df: pd.DataFrame,
+    cols: list[str],
+    group_cols: list[str],
+) -> pd.DataFrame:
+    """Add 1-100 percentile rank columns for raw value cols not yet ranked."""
+    df = df.copy()
+    for col in cols:
+        if col not in df.columns:
+            continue
+        pctile_col = f"{col}_pctile"
+        if pctile_col in df.columns:
+            continue
+        ranked = (
+            df.groupby(group_cols, observed=True)[col]
+            .rank(pct=True, na_option="keep")
+            .mul(100)
+            .round()
+            .clip(1, 100)
+        )
+        df[pctile_col] = pd.to_numeric(ranked, errors="coerce").astype("Int64")
+    return df
+
+
+hitter_pct = _compute_adhoc_pctiles(
+    hitter_pct,
+    ["takeoff_rate"],
+    ["season", "level_id", "game_type_group"],
+)
+
+pitcher_pct = _compute_adhoc_pctiles(
+    pitcher_pct,
+    ["grade_v13", "takeoff_rate", "p_SwStr_pct", "Damage_pct", "p_Damage_pct"],
+    ["season", "level_id", "game_type_group"],
+)
+
+pitch_types_pct = _compute_adhoc_pctiles(
+    pitch_types_pct,
+    ["grade_v13", "takeoff_rate", "p_SwStr_pct", "Damage_pct", "p_Damage_pct"],
+    ["season", "level_id", "game_type_group", "pitch_tag"],
+)
 
 # ---------------------------------------------------------------------------
 # Build team-level execution grade and merge onto team_stuff
@@ -379,3 +500,72 @@ else:
     team_pitcher_gamelogs = pd.DataFrame()
 
 del _T_H_KEYS, _T_H_SUM, _T_P_KEYS, _T_P_SUM
+
+# ---------------------------------------------------------------------------
+# Team games played — used for dynamic percentile page thresholds
+# team_games_df: median games per (season, level_id, game_type_group) across teams
+# team_tbf_df:   median team TBF per group (threshold for pitch-type pages)
+# ---------------------------------------------------------------------------
+if not team_hitter_gamelogs.empty and "game_pk" in team_hitter_gamelogs.columns:
+    _per_team_games = (
+        team_hitter_gamelogs
+        .groupby(["hitting_code", "season", "level_id", "game_type_group"], observed=True)["game_pk"]
+        .nunique()
+        .reset_index(name="games")
+    )
+    team_games_df = (
+        _per_team_games
+        .groupby(["season", "level_id", "game_type_group"], observed=True)["games"]
+        .median()
+        .round()
+        .astype(int)
+        .reset_index(name="median_games")
+    )
+    del _per_team_games
+else:
+    team_games_df = pd.DataFrame(columns=["season", "level_id", "game_type_group", "median_games"])
+
+if not team_stuff.empty and "TBF" in team_stuff.columns:
+    team_tbf_df = (
+        team_stuff
+        .groupby(["season", "level_id", "game_type_group"], observed=True)["TBF"]
+        .median()
+        .round()
+        .astype(int)
+        .reset_index(name="median_TBF")
+    )
+else:
+    team_tbf_df = pd.DataFrame(columns=["season", "level_id", "game_type_group", "median_TBF"])
+
+
+def get_dynamic_threshold(
+    kind: str,
+    level_ids: list[int],
+    seasons: list,
+    game_type_group: str,
+) -> int:
+    """Return the recommended minimum threshold for a percentile page.
+
+    kind: 'hitter' (1 PA/game), 'pitcher' (1 TBF/game), or 'pitch' (1 pitch/team-TBF).
+    """
+    _defaults = {"hitter": 100, "pitcher": 100, "pitch": 100}
+    if kind == "pitch":
+        src, col = team_tbf_df, "median_TBF"
+    else:
+        src, col = team_games_df, "median_games"
+
+    if src.empty or col not in src.columns:
+        return _defaults.get(kind, 100)
+
+    filt = src.copy()
+    if level_ids:
+        filt = filt[filt["level_id"].isin(level_ids)]
+    if seasons and "All" not in [str(s) for s in seasons]:
+        filt = filt[filt["season"].isin([s for s in seasons if s != "All"])]
+    if game_type_group and game_type_group != "All":
+        filt = filt[filt["game_type_group"] == game_type_group]
+
+    if filt.empty:
+        return _defaults.get(kind, 100)
+
+    return max(1, int(round(float(filt[col].median()))))
