@@ -7,8 +7,7 @@ def glossary_hitting():
     """Glossary - Hitting page"""
     st.title("Glossary - Hitting")
 
-    st.markdown(
-        """
+    st.markdown("""
 ### Hitting Metrics Glossary
 
 **Damage/BBE (%)**: Percentage of batted ball events that result in "damage" (extra-base hits or hard-hit balls likely to result in positive outcomes).
@@ -36,19 +35,19 @@ def glossary_hitting():
 **Whiff vs. 95+ (%)**: Whiff rate against fastballs 95 mph or higher.
 
 **Contact Over Expected (%)**: Contact rate compared to expected contact rate based on pitch characteristics. Only applied to hitter swings.
-"""
-    )
+""")
 
 
 def glossary_pitching():
     """Glossary - Pitching page"""
     st.title("Glossary - Pitching")
 
-    st.markdown(
-        """
+    st.markdown("""
 ### Pitching Metrics Glossary
 
 **Pitch Grade**: Overall pitch quality metric. Higher is better. Max is 80, min is 20. League median is typically within a few points of 50. Applied within pitch types.
+
+**Execution Grade**: Pitch execution metric. Factors in location and tunneling with the rest of the pitcher's arsenal. Higher is better. Max is 80, min is 20. League median is typically within a few points of 50.
 
 **FA mph**: Average fastball velocity.
 
@@ -87,5 +86,4 @@ def glossary_pitching():
 **HB (in.)**: Horizontal break in inches.
 
 **Zone (%)**: Percentage of pitches thrown in the strike zone.
-"""
-    )
+""")
