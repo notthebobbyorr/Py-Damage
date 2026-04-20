@@ -525,7 +525,7 @@ if not pitch_types_pct.empty and "stuff_raw" in pitch_types_pct.columns:
     _ptpct_mlb = _ptpct_mlb.dropna(subset=["stuff_raw"])
     if not _ptpct_mlb.empty and "pitch_tag" in _ptpct_mlb.columns:
         _anchor_stuff_pt = (
-            _ptpct_mlb.groupby(["season", "pitch_tag"])["stuff_raw"]
+            _ptpct_mlb.groupby(["season", "pitch_tag"], observed=True)["stuff_raw"]
             .agg(stuff_p01=lambda x: x.quantile(0.01), stuff_p99=lambda x: x.quantile(0.99))
             .reset_index()
         )
@@ -559,7 +559,7 @@ if not execution_pitch.empty and "pred_v13" in execution_pitch.columns:
     _ept = _ept.dropna(subset=["pred_v13"])
     if not _ept.empty and "pitch_tag" in _ept.columns and "season" in _ept.columns:
         _anchor_exec_pt = (
-            _ept.groupby(["season", "pitch_tag"])["pred_v13"]
+            _ept.groupby(["season", "pitch_tag"], observed=True)["pred_v13"]
             .agg(exec_p1=lambda x: x.quantile(0.01), exec_p99=lambda x: x.quantile(0.99))
             .reset_index()
         )
