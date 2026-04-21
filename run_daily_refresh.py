@@ -243,7 +243,9 @@ def stitch_season_chunks(min_season: int, current_season: int) -> None:
             combined = pl.concat(
                 [pl.scan_parquet(p) for p in chunks], how="diagonal_relaxed"
             )
-            combined.sink_parquet(out_path)
+            tmp_out = out_path.with_suffix(".parquet.tmp")
+            combined.sink_parquet(tmp_out)
+            tmp_out.replace(out_path)
         print(f"  Wrote {out_path.name} from {len(chunks)} chunks")
 
 

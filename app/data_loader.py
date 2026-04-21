@@ -64,7 +64,7 @@ def load_csv(name: str) -> pd.DataFrame:
     path = DATA_DIR / name
     if path.suffix == ".csv":
         parquet_path = path.with_suffix(".parquet")
-        if parquet_path.exists():
+        if parquet_path.exists() and parquet_path.stat().st_size > 0:
             path = parquet_path
     if not path.exists():
         return pd.DataFrame()

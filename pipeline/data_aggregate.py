@@ -1822,10 +1822,13 @@ def add_percentiles(
 
 def write_parquet(df: pl.DataFrame, name: str, out_dir: Path) -> None:
     path = out_dir / name
+    tmp_path = path.with_suffix(".parquet.tmp")
     start = perf_counter()
     try:
-        df.write_parquet(path)
+        df.write_parquet(tmp_path)
+        tmp_path.replace(path)
     except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
         raise RuntimeError(f"Failed writing {path}") from exc
     print(f"Wrote {len(df):,} rows to {path}")
     print(f"Write time: {perf_counter() - start:0.2f}s")
