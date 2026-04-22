@@ -308,7 +308,48 @@ def main(
         dry_run=dry_run,
     )
 
-    # ── Step 3: Re-aggregate current season chunk ──────────────────────────
+    # ── Step 3a: Build p(damage) source tables ────────────────────────────
+    # Must run BEFORE data_aggregate so the 2026 chunk gets non-null p_Damage
+    # values from data_aggregate's internal join (avoids nulls that the later
+    # merge step would have to fix, and eliminates a class of timing bugs).
+    run(
+        [
+            sys.executable, str(HERE / "pipeline" / "build_p_damage_sources.py"),
+            "--parquet-path", str(accumulator_path),
+        ],
+        dry_run=dry_run,
+    )
+
+    # ── Step 3b: Build p(swstr) source tables ─────────────────────────────
+    run(
+        [
+            sys.executable, str(HERE / "pipeline" / "build_p_swstr_sources.py"),
+            "--parquet-path", str(accumulator_path),
+        ],
+        dry_run=dry_run,
+    )
+
+    # ── Step 3c: Build hitter p(swstr/swing) source tables ────────────────
+    run(
+        [
+            sys.executable, str(HERE / "pipeline" / "build_p_swstr_hitter_sources.py"),
+            "--parquet-path", str(accumulator_path),
+        ],
+        dry_run=dry_run,
+    )
+
+    # ── Step 3d: Build hitter p(damage) source tables ─────────────────────
+    run(
+        [
+            sys.executable, str(HERE / "pipeline" / "build_p_damage_hitter_sources.py"),
+            "--parquet-path", str(accumulator_path),
+        ],
+        dry_run=dry_run,
+    )
+
+    # ── Step 4: Re-aggregate current season chunk ──────────────────────────
+    # Source tables (Steps 3a/3b) are already updated, so data_aggregate's
+    # internal join will populate p_Damage/p_SwStr in the 2026 chunk directly.
     run(
         [
             sys.executable, str(HERE / "pipeline" / "data_aggregate.py"),
@@ -322,7 +363,7 @@ def main(
         dry_run=dry_run,
     )
 
-    # ── Step 3b: Build game-by-game gamelogs ──────────────────────────────
+    # ── Step 4b: Build game-by-game gamelogs ──────────────────────────────
     _scored_path = RAW_DIR / "location_v13_scored.parquet"
     _gamelog_cmd = [
         sys.executable, str(HERE / "pipeline" / "build_gamelogs.py"),
@@ -335,42 +376,6 @@ def main(
     if _scored_path.exists():
         _gamelog_cmd += ["--scored-path", str(_scored_path)]
     run(_gamelog_cmd, dry_run=dry_run)
-
-    # ── Step 4a: Build p(damage) source tables ─────────────────────────────
-    run(
-        [
-            sys.executable, str(HERE / "pipeline" / "build_p_damage_sources.py"),
-            "--parquet-path", str(accumulator_path),
-        ],
-        dry_run=dry_run,
-    )
-
-    # ── Step 4b: Build p(swstr) source tables ──────────────────────────────
-    run(
-        [
-            sys.executable, str(HERE / "pipeline" / "build_p_swstr_sources.py"),
-            "--parquet-path", str(accumulator_path),
-        ],
-        dry_run=dry_run,
-    )
-
-    # ── Step 4c: Build hitter p(swstr/swing) source tables ─────────────────
-    run(
-        [
-            sys.executable, str(HERE / "pipeline" / "build_p_swstr_hitter_sources.py"),
-            "--parquet-path", str(accumulator_path),
-        ],
-        dry_run=dry_run,
-    )
-
-    # ── Step 4d: Build hitter p(damage) source tables ──────────────────────
-    run(
-        [
-            sys.executable, str(HERE / "pipeline" / "build_p_damage_hitter_sources.py"),
-            "--parquet-path", str(accumulator_path),
-        ],
-        dry_run=dry_run,
-    )
 
     # ── Step 5: Stitch all season chunks into final output ─────────────────
     if not dry_run:
