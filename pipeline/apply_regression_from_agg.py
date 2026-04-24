@@ -303,7 +303,9 @@ def main() -> None:
 
     config = load_config(args.config)
     stats_cfg = config.get("stats", {})
-    constants = pl.read_csv(args.constants)
+    constants = pl.read_csv(args.constants).with_columns(
+        pl.col("season").cast(pl.Int64)
+    )
 
     outputs = {
         "hitters": (
