@@ -75,8 +75,9 @@ from catboost import CatBoostRegressor, Pool
 # Paths — resolved relative to this script file
 # ---------------------------------------------------------------------------
 _HERE = Path(__file__).parent
-MODEL_PATH  = _HERE.parent / "models" / "location_v13.cbm"
-DEFAULT_CAL = _HERE.parent / "models" / "location_v13_grade_calibration.csv"
+MODEL_PATH      = _HERE.parent / "models" / "location_v13.cbm"
+DEFAULT_CAL     = _HERE.parent / "models" / "location_v13_grade_calibration.csv"
+STABILITY_CSV   = _HERE.parent / "config" / "stability_constants.csv"
 
 # ---------------------------------------------------------------------------
 # Constants — must match training exactly
@@ -631,6 +632,52 @@ def build_grades(
 
 
 # ---------------------------------------------------------------------------
+# Regression
+# ---------------------------------------------------------------------------
+
+def apply_pred_v13_regression(ps: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add pred_v13_reg column: Bayesian shrinkage toward the league mean.
+    Formula: (pred_v13 * n + K * mu) / (n + K)
+
+    K and mu are read from stability_constants.csv (dataset=pitchers, stat=pred_v13).
+    The most recent season's constants are used for each level_id, so future seasons
+    are covered as new K estimates are added over time.
+    Rows with no matching level_id constants fall back to the raw pred_v13.
+    """
+    if not STABILITY_CSV.exists():
+        ps["pred_v13_reg"] = ps["pred_v13"]
+        return ps
+
+    sc = pd.read_csv(STABILITY_CSV)
+    constants = sc[
+        (sc["dataset"] == "pitchers") & (sc["stat"] == "pred_v13")
+    ][["level_id", "season", "K", "mu"]]
+
+    if constants.empty:
+        ps["pred_v13_reg"] = ps["pred_v13"]
+        return ps
+
+    # Keep the most recent season's K/mu per level_id
+    latest = (
+        constants.sort_values("season")
+        .groupby("level_id")
+        .last()
+        .reset_index()[["level_id", "K", "mu"]]
+    )
+
+    ps = ps.merge(latest, on="level_id", how="left")
+    has_k = ps["K"].notna()
+    ps["pred_v13_reg"] = ps["pred_v13"]
+    ps.loc[has_k, "pred_v13_reg"] = (
+        (ps.loc[has_k, "pred_v13"] * ps.loc[has_k, "n_pitches"]
+         + ps.loc[has_k, "K"] * ps.loc[has_k, "mu"])
+        / (ps.loc[has_k, "n_pitches"] + ps.loc[has_k, "K"])
+    )
+    return ps.drop(columns=["K", "mu"])
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 def parse_args():
@@ -729,6 +776,11 @@ def main():
     print("\nBuilding 20-80 grades...")
     ps, pt = build_grades(df, cal_path=cal_path, min_n_pitcher=args.min_pitches)
     print(f"  {len(ps):,} pitcher-seasons  |  {len(pt):,} pitcher-pitch_tag rows")
+
+    # ── 7b. Bayesian regression on pred_v13 ───────────────────────────────
+    ps = apply_pred_v13_regression(ps)
+    n_reg = ps["pred_v13_reg"].notna().sum()
+    print(f"  pred_v13_reg applied to {n_reg:,} pitcher-season rows")
 
     # Quick leaderboard — MLB regular season only
     id_col   = "pitcher_name" if "pitcher_name" in ps.columns else "pitcher_mlbid"

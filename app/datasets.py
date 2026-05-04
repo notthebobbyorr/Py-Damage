@@ -253,7 +253,7 @@ _GAME_TYPE_TO_GROUP = {
 }
 
 def _prep_execution(df: pd.DataFrame, id_cols: list[str]) -> pd.DataFrame:
-    """Aggregate grade_v13 to game_type_group level (weighted by n_pitches) and cast keys."""
+    """Aggregate grade_v13 (and pred_v13_reg if present) to game_type_group level, weighted by n_pitches."""
     if df.empty or "grade_v13" not in df.columns:
         return pd.DataFrame()
     out = df.copy()
@@ -264,15 +264,23 @@ def _prep_execution(df: pd.DataFrame, id_cols: list[str]) -> pd.DataFrame:
         out["game_type_group"] = out["game_type"].map(_GAME_TYPE_TO_GROUP).fillna("Regular Season")
     elif "game_type_group" not in out.columns:
         out["game_type_group"] = "Regular Season"
+    has_reg = "pred_v13_reg" in out.columns
     out["_wgrade"] = out["grade_v13"] * out["n_pitches"]
+    agg_kwargs: dict = {"_wgrade_sum": ("_wgrade", "sum"), "_n": ("n_pitches", "sum")}
+    if has_reg:
+        out["_wreg"] = out["pred_v13_reg"] * out["n_pitches"]
+        agg_kwargs["_wreg_sum"] = ("_wreg", "sum")
     grp_cols = [c for c in id_cols if c in out.columns]
     agg = (
         out.groupby(grp_cols, observed=True)
-        .agg(_wgrade_sum=("_wgrade", "sum"), _n=("n_pitches", "sum"))
+        .agg(**agg_kwargs)
         .reset_index()
     )
     agg["grade_v13"] = (agg["_wgrade_sum"] / agg["_n"]).round(1)
-    out = agg.drop(columns=["_wgrade_sum", "_n"])
+    if has_reg:
+        agg["pred_v13_reg"] = agg["_wreg_sum"] / agg["_n"]
+    drop_cols = ["_wgrade_sum", "_n"] + (["_wreg_sum"] if has_reg else [])
+    out = agg.drop(columns=drop_cols)
     for _c in ["pitcher_mlbid", "season", "level_id"]:
         if _c in out.columns:
             out[_c] = pd.to_numeric(out[_c], errors="coerce").astype("Int64")
@@ -289,16 +297,18 @@ if not _exec_ps.empty and not pitcher_df.empty and "game_type_group" in pitcher_
     for _c in ["pitcher_mlbid", "season", "level_id"]:
         if _c in _pdf.columns:
             _pdf[_c] = pd.to_numeric(_pdf[_c], errors="coerce").astype("Int64")
-    pitcher_df = _pdf.merge(_exec_ps[_exec_ps_keys + ["grade_v13"]], on=_exec_ps_keys, how="left")
-    del _pdf
+    _ps_val_cols = [c for c in ["grade_v13", "pred_v13_reg"] if c in _exec_ps.columns]
+    pitcher_df = _pdf.merge(_exec_ps[_exec_ps_keys + _ps_val_cols], on=_exec_ps_keys, how="left")
+    del _pdf, _ps_val_cols
 
 if not _exec_pt.empty and not pitch_types.empty and "game_type_group" in pitch_types.columns:
     _ptdf = pitch_types.copy()
     for _c in ["pitcher_mlbid", "season", "level_id"]:
         if _c in _ptdf.columns:
             _ptdf[_c] = pd.to_numeric(_ptdf[_c], errors="coerce").astype("Int64")
-    pitch_types = _ptdf.merge(_exec_pt[_exec_pt_keys + ["grade_v13"]], on=_exec_pt_keys, how="left")
-    del _ptdf
+    _pt_val_cols = [c for c in ["grade_v13", "pred_v13_reg"] if c in _exec_pt.columns]
+    pitch_types = _ptdf.merge(_exec_pt[_exec_pt_keys + _pt_val_cols], on=_exec_pt_keys, how="left")
+    del _ptdf, _pt_val_cols
 
 # Merge grade_v13 onto pitcher_pct (Execution Grade on percentile page)
 if not _exec_ps.empty and not pitcher_pct.empty and "game_type_group" in pitcher_pct.columns:
@@ -514,23 +524,6 @@ def _apply_exec_grade(
 # Precompute grade anchors from season-long distributions
 # ---------------------------------------------------------------------------
 
-# Stuff anchors for pitcher gamelogs (by season only — pitcher overall average)
-_anchor_stuff_p = pd.DataFrame()
-if not pitcher_pct.empty and "stuff_raw" in pitcher_pct.columns and "season" in pitcher_pct.columns:
-    _pct_mlb = pitcher_pct.copy()
-    if "level_id" in _pct_mlb.columns:
-        _pct_mlb = _pct_mlb[pd.to_numeric(_pct_mlb["level_id"], errors="coerce") == 1]
-    if "game_type_group" in _pct_mlb.columns:
-        _pct_mlb = _pct_mlb[_pct_mlb["game_type_group"] == "Regular Season"]
-    _pct_mlb = _pct_mlb.dropna(subset=["stuff_raw"])
-    if not _pct_mlb.empty:
-        _anchor_stuff_p = (
-            _pct_mlb.groupby("season", observed=True)["stuff_raw"]
-            .agg(stuff_p01=lambda x: x.quantile(0.01), stuff_p99=lambda x: x.quantile(0.99))
-            .reset_index()
-        )
-    del _pct_mlb
-
 # Stuff anchors for pitch-type gamelogs (by season + pitch_tag)
 _anchor_stuff_pt = pd.DataFrame()
 if not pitch_types_pct.empty and "stuff_raw" in pitch_types_pct.columns:
@@ -547,23 +540,6 @@ if not pitch_types_pct.empty and "stuff_raw" in pitch_types_pct.columns:
             .reset_index()
         )
     del _ptpct_mlb
-
-# Exec anchors for pitcher gamelogs (by season — from pitcher-season pred_v13 distribution)
-_anchor_exec_p = pd.DataFrame()
-if not execution_pitcher.empty and "pred_v13" in execution_pitcher.columns:
-    _ep = execution_pitcher.copy()
-    if "level_id" in _ep.columns:
-        _ep = _ep[pd.to_numeric(_ep["level_id"], errors="coerce") == 1]
-    if "game_type" in _ep.columns:
-        _ep = _ep[_ep["game_type"] == "R"]
-    _ep = _ep.dropna(subset=["pred_v13"])
-    if not _ep.empty and "season" in _ep.columns:
-        _anchor_exec_p = (
-            _ep.groupby("season", observed=True)["pred_v13"]
-            .agg(exec_p1=lambda x: x.quantile(0.01), exec_p99=lambda x: x.quantile(0.99))
-            .reset_index()
-        )
-    del _ep
 
 # Exec anchors for pitch-type gamelogs (by season + pitch_tag)
 _anchor_exec_pt = pd.DataFrame()
@@ -583,9 +559,58 @@ if not execution_pitch.empty and "pred_v13" in execution_pitch.columns:
     del _ept
 
 # Convert season to int for join consistency
-for _anc in [_anchor_stuff_p, _anchor_stuff_pt, _anchor_exec_p, _anchor_exec_pt]:
+for _anc in [_anchor_stuff_pt, _anchor_exec_pt]:
     if not _anc.empty and "season" in _anc.columns:
         _anc["season"] = pd.to_numeric(_anc["season"], errors="coerce").astype("Int64")
+
+
+def _merge_pitch_type_grades(
+    pitcher_gl: pd.DataFrame,
+    pitch_type_gl: pd.DataFrame,
+    grade_cols: tuple[str, ...] = ("stuff", "grade_v13"),
+    pitch_col: str = "pitches",
+    join_keys: tuple[str, ...] = ("pitching_code", "game_pk"),
+) -> pd.DataFrame:
+    """
+    Replace pitcher-game grade columns with a pitch-count weighted average of the
+    per-pitch-type grades already computed in pitch_type_gl.  Only non-null grades
+    contribute to the weighted average, so a pitch type with a missing grade is
+    simply excluded rather than zeroed out.
+    """
+    if pitcher_gl.empty or pitch_type_gl.empty:
+        return pitcher_gl
+    _grade_cols = [c for c in grade_cols if c in pitch_type_gl.columns]
+    _keys = [c for c in join_keys if c in pitch_type_gl.columns and c in pitcher_gl.columns]
+    if not _grade_cols or not _keys or pitch_col not in pitch_type_gl.columns:
+        return pitcher_gl
+
+    ptgl = pitch_type_gl[_keys + [pitch_col] + _grade_cols].copy()
+    ptgl[pitch_col] = pd.to_numeric(ptgl[pitch_col], errors="coerce")
+
+    for gc in _grade_cols:
+        gc_num = pd.to_numeric(ptgl[gc], errors="coerce")
+        ptgl[f"_{gc}_w"] = gc_num * ptgl[pitch_col]
+        ptgl[f"_{gc}_p"] = ptgl[pitch_col].where(gc_num.notna(), 0.0)
+
+    agg_dict: dict = {}
+    for gc in _grade_cols:
+        agg_dict[f"_{gc}_wsum"] = (f"_{gc}_w", "sum")
+        agg_dict[f"_{gc}_psum"] = (f"_{gc}_p", "sum")
+
+    wgt = ptgl.groupby(_keys, observed=True).agg(**agg_dict).reset_index()
+
+    for gc in _grade_cols:
+        raw = wgt[f"_{gc}_wsum"] / wgt[f"_{gc}_psum"]
+        wgt[gc] = pd.to_numeric(raw.round(0), errors="coerce").astype("Int64")
+
+    wgt = wgt[_keys + _grade_cols]
+
+    drop_cols = [c for c in _grade_cols if c in pitcher_gl.columns]
+    if drop_cols:
+        pitcher_gl = pitcher_gl.drop(columns=drop_cols)
+
+    return pitcher_gl.merge(wgt, on=_keys, how="left")
+
 
 # ---------------------------------------------------------------------------
 # Lazy-loaded gamelog tables — deferred to first page access (~250 MB saved at startup)
@@ -628,8 +653,7 @@ def get_pitcher_gamelogs() -> pd.DataFrame:
             df[_col] = _recode_team(df[_col], "AZ", "ARI")
     if "season" in df.columns:
         df["season"] = pd.to_numeric(df["season"], errors="coerce").astype("Int64")
-    df = _apply_stuff_grade(df, _anchor_stuff_p, ["season"])
-    df = _apply_exec_grade(df, _anchor_exec_p, ["season"])
+    df = _merge_pitch_type_grades(df, get_pitch_type_gamelogs())
     return df
 
 

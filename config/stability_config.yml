@@ -220,6 +220,10 @@ stats:
       kind: mean
       value: arm_angle
       sample_n: pitches
+    - name: pred_v13
+      kind: mean
+      value: pred_v13
+      sample_n: pitches
 
   pitch_types:
     - name: SwStr

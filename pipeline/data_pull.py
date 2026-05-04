@@ -468,15 +468,22 @@ def fetch_level_ids(
     min_season: int,
     max_season: int,
     game_types: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> list[int]:
     game_types = game_types or DEFAULT_GAME_TYPES
     game_type_clause = ",".join(f"'{g}'" for g in game_types)
+    date_filter = ""
+    if start_date:
+        date_filter += f"\n            AND a.game_date >= '{start_date}'"
+    if end_date:
+        date_filter += f"\n            AND a.game_date <= '{end_date}'"
     query = f"""
         SELECT DISTINCT a.level_id
         FROM pitchinfo.pitches_public a
         WHERE a.season >= {min_season}
             AND a.season <= {max_season}
-            AND a.game_type IN ({game_type_clause})
+            AND a.game_type IN ({game_type_clause}){date_filter}
         ORDER BY a.level_id
     """
     level_df = _run_query_with_retry(cfg, query, label="level query")
@@ -997,6 +1004,8 @@ def main(
             min_season,
             max_season,
             game_types,
+            start_date,
+            end_date,
         )
     if exclude_level_ids:
         level_ids = [lid for lid in level_ids if int(lid) not in set(exclude_level_ids)]

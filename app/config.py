@@ -138,6 +138,7 @@ PITCHER_COMPS_BASE_FEATURE_COLS = [
     "rel_z_reg",
     "rel_x_reg",
     "ext_reg",
+    "pred_v13_reg",
 ]
 PITCHER_COMPS_EXTRA_FEATURE_COLS = [
     "Zone_reg",
