@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from app.config import DATA_DIR
 from app.data_loader import load_csv, load_damage_df
 from app.utils import (
     _build_hitter_mlb_equivalencies,
@@ -532,6 +533,8 @@ if not pitch_types_pct.empty and "stuff_raw" in pitch_types_pct.columns:
         _ptpct_mlb = _ptpct_mlb[pd.to_numeric(_ptpct_mlb["level_id"], errors="coerce") == 1]
     if "game_type_group" in _ptpct_mlb.columns:
         _ptpct_mlb = _ptpct_mlb[_ptpct_mlb["game_type_group"] == "Regular Season"]
+    if "pitches" in _ptpct_mlb.columns:
+        _ptpct_mlb = _ptpct_mlb[pd.to_numeric(_ptpct_mlb["pitches"], errors="coerce") >= 50]
     _ptpct_mlb = _ptpct_mlb.dropna(subset=["stuff_raw"])
     if not _ptpct_mlb.empty and "pitch_tag" in _ptpct_mlb.columns:
         _anchor_stuff_pt = (
@@ -541,22 +544,33 @@ if not pitch_types_pct.empty and "stuff_raw" in pitch_types_pct.columns:
         )
     del _ptpct_mlb
 
-# Exec anchors for pitch-type gamelogs (by season + pitch_tag)
+# Exec anchors for pitch-type gamelogs — use the same calibration file that
+# location_v13_apply.py uses for season grades, so both use identical p1/p99 rubrics.
 _anchor_exec_pt = pd.DataFrame()
-if not execution_pitch.empty and "pred_v13" in execution_pitch.columns:
-    _ept = execution_pitch.copy()
-    if "level_id" in _ept.columns:
-        _ept = _ept[pd.to_numeric(_ept["level_id"], errors="coerce") == 1]
-    if "game_type" in _ept.columns:
-        _ept = _ept[_ept["game_type"] == "R"]
-    _ept = _ept.dropna(subset=["pred_v13"])
-    if not _ept.empty and "pitch_tag" in _ept.columns and "season" in _ept.columns:
-        _anchor_exec_pt = (
-            _ept.groupby(["season", "pitch_tag"], observed=True)["pred_v13"]
-            .agg(exec_p1=lambda x: x.quantile(0.01), exec_p99=lambda x: x.quantile(0.99))
-            .reset_index()
-        )
-    del _ept
+_EXEC_CAL_PATH = DATA_DIR.parent.parent / "models" / "location_v13_grade_calibration.csv"
+if _EXEC_CAL_PATH.exists():
+    _cal = pd.read_csv(_EXEC_CAL_PATH)
+    _cal_pooled = (
+        _cal.groupby("pitch_tag")[["p1", "p99"]].median().reset_index()
+        .rename(columns={"p1": "p1_pool", "p99": "p99_pool"})
+    )
+    if not execution_pitch.empty and "season" in execution_pitch.columns and "pitch_tag" in execution_pitch.columns:
+        _seasons = execution_pitch["season"].dropna().unique()
+        _rows = []
+        for _s in _seasons:
+            _s_int = int(_s)
+            _cal_s = _cal[_cal["season"] == _s_int]
+            for _pt in execution_pitch["pitch_tag"].dropna().unique():
+                _match = _cal_s[_cal_s["pitch_tag"] == _pt]
+                if not _match.empty:
+                    _p1, _p99 = _match.iloc[0]["p1"], _match.iloc[0]["p99"]
+                else:
+                    _pool = _cal_pooled[_cal_pooled["pitch_tag"] == _pt]
+                    _p1 = _pool.iloc[0]["p1_pool"] if not _pool.empty else None
+                    _p99 = _pool.iloc[0]["p99_pool"] if not _pool.empty else None
+                _rows.append({"season": _s_int, "pitch_tag": _pt, "exec_p1": _p1, "exec_p99": _p99})
+        _anchor_exec_pt = pd.DataFrame(_rows).dropna(subset=["exec_p1", "exec_p99"])
+    del _cal, _cal_pooled
 
 # Convert season to int for join consistency
 for _anc in [_anchor_stuff_pt, _anchor_exec_pt]:

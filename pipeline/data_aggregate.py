@@ -1679,12 +1679,15 @@ def compute_stuff_percentiles(
     raw_col: str = "stuff_raw",
     min_pitches: int = 50,
 ) -> pl.DataFrame:
-    """Compute stuff grade percentile thresholds from MLB only (level_id=1)."""
+    """Compute stuff grade percentile thresholds from MLB Regular Season only (level_id=1, game_type_group='Regular Season')."""
     if df.is_empty() or raw_col not in df.columns:
         return pl.DataFrame()
 
     pitcher_avgs = (
-        df.filter(pl.col("level_id") == 1)
+        df.filter(
+            (pl.col("level_id") == 1)
+            & (pl.col("game_type_group") == "Regular Season")
+        )
         .group_by(["season", "pitcher_mlbid", "pitch_tag"])
         .agg(
             [
