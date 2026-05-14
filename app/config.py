@@ -81,8 +81,12 @@ HITTER_COMPS_BASE_FEATURE_COLS = [
 HITTER_COMPS_EXTRA_FEATURE_COLS = [
     "LD_pct_reg",
     "bat_speed_reg",
+    "fast_swing_pct",
     "swing_length_reg",
     "attack_angle_reg",
+    "attack_direction",
+    "intercept_x_inches",
+    "intercept_y_inches",
     "swing_path_tilt_reg",
     "max_EV_reg",
     "takeoff_rate_reg",
@@ -126,6 +130,7 @@ HITTER_MLB_MIN_SHIFT_FLOOR = {
 # ---------------------------------------------------------------------------
 PITCHER_COMPS_BASE_FEATURE_COLS = [
     "stuff",
+    "grade_v13",
     "fastball_velo_reg",
     "fastball_vaa_reg",
     "FA_pct_reg",
@@ -138,7 +143,7 @@ PITCHER_COMPS_BASE_FEATURE_COLS = [
     "rel_z_reg",
     "rel_x_reg",
     "ext_reg",
-    "pred_v13_reg",
+    "arm_angle_right",
 ]
 PITCHER_COMPS_EXTRA_FEATURE_COLS = [
     "Zone_reg",
@@ -147,7 +152,6 @@ PITCHER_COMPS_EXTRA_FEATURE_COLS = [
     "FA_spin_eff_reg",
     "LD_pct_reg",
     "LA_gte_20_reg",
-    "arm_angle_reg",
     "takeoff_rate_reg",
 ]
 PITCHER_MLB_PASS_THROUGH_COLS = {
@@ -157,7 +161,7 @@ PITCHER_MLB_PASS_THROUGH_COLS = {
     "rel_z_reg",
     "rel_x_reg",
     "ext_reg",
-    "arm_angle_reg",
+    "arm_angle_right",
 }
 PITCHER_MLB_HIGHER_IS_WORSE_METRICS = {
     "Ball_pct_reg",
@@ -185,4 +189,36 @@ PITCHER_REVERSE_DISPLAY_COLS = {
     "LA>=20 (%)",
     "Arm Angle",
     "Takeoff% Against",
+}
+
+# ---------------------------------------------------------------------------
+# Pitch (pitch_tag-level) comps feature columns
+# Raw (non-regressed) per user direction — pitch shapes regress quickly.
+# ---------------------------------------------------------------------------
+PITCH_COMPS_BASE_FEATURE_COLS = [
+    "velo",
+    "vbreak",
+    "hbreak",
+    "vaa",
+    "haa",
+    "rel_z",
+    "rel_x",
+    "ext",
+    "z_angle_release",
+    "x_angle_release",
+    "arm_angle_right",
+    "stuff",
+    "grade_v13",
+]
+PITCH_COMPS_EXTRA_FEATURE_COLS = [
+    "max_velo",
+    "SwStr",
+    "Zone",
+    "Chase",
+    "Ball_pct",
+]
+PITCH_REVERSE_DISPLAY_COLS = {
+    "Ball (%)",
+    "VAA",
+    "Z-Contact (%)",
 }

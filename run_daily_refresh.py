@@ -49,6 +49,8 @@ PANDAS_OPTIMIZED_TABLES = {
     "pitch_types_splits",
     "hitter_splits",
     "pitcher_splits",
+    "team_hitter_splits",
+    "team_pitcher_splits",
 }
 
 # Output table stem names (without .parquet) that are stitched from season chunks
@@ -61,6 +63,8 @@ STITCHED_TABLES = [
     "hitter_splits",
     "pitcher_splits",
     "pitch_types_splits",
+    "team_hitter_splits",
+    "team_pitcher_splits",
     "hitter_pctiles",
     "pitcher_pctiles",
     "pitch_types_pctiles",

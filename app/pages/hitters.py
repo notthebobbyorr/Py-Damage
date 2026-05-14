@@ -146,6 +146,8 @@ def hitter_individual_stats():
                 "chase", "z_con", "secondary_whiff_pct", "whiffs_vs_95",
                 "contact_vs_avg",
                 "Swing_pct", "p_Swing_with_loc_pct",
+                "bat_speed", "fast_swing_pct", "swing_length", "swing_path_tilt",
+                "attack_angle", "attack_direction", "intercept_x_inches", "intercept_y_inches",
                 "SBO", "SB", "takeoff_rate",
                 "__season", "__level",
             ]
@@ -164,6 +166,14 @@ def hitter_individual_stats():
                 "contact_vs_avg": "Contact Over Expected (%)",
                 "Swing_pct": "Swing (%)",
                 "p_Swing_with_loc_pct": "pSwing (%)",
+                "bat_speed": "Avg Swing Speed",
+                "fast_swing_pct": "Fast Swing (%)",
+                "swing_length": "Swing Length",
+                "swing_path_tilt": "VBA",
+                "attack_angle": "Attack Angle",
+                "attack_direction": "Attack Direction",
+                "intercept_x_inches": "Intercept X (in.)",
+                "intercept_y_inches": "Intercept Y (in.)",
                 "SBO": "SBO",
                 "SB": "SB",
                 "takeoff_rate": "Takeoff%",
@@ -176,7 +186,7 @@ def hitter_individual_stats():
             ].rename(columns=rename_map)
             render_table(
                 df,
-                reverse_cols=HIGHER_IS_WORSE_COLS | {"Chase (%)", "LA<=0%"},
+                reverse_cols=HIGHER_IS_WORSE_COLS | {"Chase (%)", "LA<=0%", "Swing Length"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
                 include_team_label=False,
@@ -344,6 +354,9 @@ def hitter_comps():
             use_mlb_eq = False
         else:
             comp_df = hitters_mlb_eq_df.copy()
+
+    if "game_type_group" in comp_df.columns:
+        comp_df = comp_df[comp_df["game_type_group"] != "Spring Training"]
 
     if use_mlb_eq:
         player_pool = comp_df[(comp_df["PA"] >= 20)].copy()
@@ -585,6 +598,7 @@ def hitter_comps():
         reverse_cols=reverse_hitters,
         group_cols=["__season", "__level"],
         stats_df=stats_df,
+        default_sort_col="Similarity (0-100)",
     )
 
 

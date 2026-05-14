@@ -37,6 +37,8 @@ execution_pitch = load_csv("location_v13_pitcher_pitch.parquet")
 hitter_splits_df = load_csv("hitter_splits.csv")
 pitcher_splits_df = load_csv("pitcher_splits.csv")
 pitch_type_splits_df = load_csv("pitch_types_splits.csv")
+team_hitter_splits_df = load_csv("team_hitter_splits.csv")
+team_pitcher_splits_df = load_csv("team_pitcher_splits.csv")
 league_pitch_types = load_csv("league_pitch_types.csv")
 park_data = load_csv("park_data.csv")
 baserunning_reg = load_csv("baserunning_regressed.parquet")
@@ -64,6 +66,10 @@ pitch_type_splits_df = _normalize_split_cols(pitch_type_splits_df)
 league_pitch_types = _normalize_split_cols(league_pitch_types)
 team_damage = _normalize_la_cols(team_damage)
 team_stuff = _normalize_la_cols(team_stuff)
+team_hitter_splits_df = _normalize_la_cols(team_hitter_splits_df)
+team_hitter_splits_df = _normalize_split_cols(team_hitter_splits_df)
+team_pitcher_splits_df = _normalize_la_cols(team_pitcher_splits_df)
+team_pitcher_splits_df = _normalize_split_cols(team_pitcher_splits_df)
 
 # ---------------------------------------------------------------------------
 # Season filter — drop pre-2020 rows from pitch-type and gamelog tables to
@@ -95,6 +101,14 @@ def _recode_team(series: pd.Series, old: str, new: str) -> pd.Series:
 
 team_damage["hitting_code"] = _recode_team(team_damage["hitting_code"], "AZ", "ARI")
 team_stuff["pitching_code"] = _recode_team(team_stuff["pitching_code"], "AZ", "ARI")
+if not team_hitter_splits_df.empty and "hitting_code" in team_hitter_splits_df.columns:
+    team_hitter_splits_df["hitting_code"] = _recode_team(
+        team_hitter_splits_df["hitting_code"], "AZ", "ARI"
+    )
+if not team_pitcher_splits_df.empty and "pitching_code" in team_pitcher_splits_df.columns:
+    team_pitcher_splits_df["pitching_code"] = _recode_team(
+        team_pitcher_splits_df["pitching_code"], "AZ", "ARI"
+    )
 
 # ---------------------------------------------------------------------------
 # Backfill pitch_group if missing

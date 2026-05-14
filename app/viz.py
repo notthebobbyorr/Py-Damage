@@ -330,6 +330,7 @@ def render_table(
     label_cols: list[str] | None = None,
     hide_cols: set[str] | None = None,
     round_decimals: int = 1,
+    default_sort_col: str | None = None,
 ) -> None:
     if df.empty:
         st.info("No data available yet.")
@@ -390,9 +391,16 @@ def render_table(
     if show_controls:
         ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([3, 1, 1, 1])
         with ctrl_col1:
+            sort_options = list(df_display.columns)
+            sort_index = (
+                sort_options.index(default_sort_col)
+                if default_sort_col in sort_options
+                else 0
+            )
             sort_col = st.selectbox(
                 "Sort by",
-                options=list(df_display.columns),
+                options=sort_options,
+                index=sort_index,
                 key=f"{table_key}_sort_col",
             )
         with ctrl_col2:

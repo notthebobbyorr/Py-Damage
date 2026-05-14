@@ -153,6 +153,7 @@ def pitcher_individual_stats():
                 "rel_z",
                 "rel_x",
                 "ext",
+                "arm_angle_right",
                 "SBO",
                 "SB",
                 "takeoff_rate",
@@ -196,6 +197,7 @@ def pitcher_individual_stats():
                 "rel_z": "Vertical Release (ft.)",
                 "rel_x": "Horizontal Release (ft.)",
                 "ext": "Extension (ft.)",
+                "arm_angle_right": "Arm Angle",
                 "SBO": "SBO",
                 "SB": "SB",
                 "takeoff_rate": "Takeoff% Against",
@@ -400,6 +402,9 @@ def pitcher_comps():
         else:
             comp_df = pitchers_mlb_eq_df.copy()
 
+    if "game_type_group" in comp_df.columns:
+        comp_df = comp_df[comp_df["game_type_group"] != "Spring Training"]
+
     if use_mlb_eq:
         player_pool = comp_df[(comp_df["TBF"] >= 20)].copy()
         eligible_all = comp_df[
@@ -589,6 +594,8 @@ def pitcher_comps():
     df = eligible_comp[
         [col for col in display_cols if col in eligible_comp.columns]
     ].copy()
+    if "grade_v13" in df.columns:
+        df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
     df = df.rename(columns={**base_rename, **similarity_labels})
     df = df.loc[:, ~df.columns.duplicated()]
 
@@ -609,7 +616,10 @@ def pitcher_comps():
     ]
     stats_df = stats_df[
         [col for col in stats_columns if col in stats_df.columns]
-    ].rename(columns={**base_rename, **similarity_labels})
+    ].copy()
+    if "grade_v13" in stats_df.columns:
+        stats_df["grade_v13"] = stats_df["grade_v13"].round(0).astype("Int64")
+    stats_df = stats_df.rename(columns={**base_rename, **similarity_labels})
     stats_df = stats_df.loc[:, ~stats_df.columns.duplicated()]
 
     target_cols = [
@@ -629,6 +639,8 @@ def pitcher_comps():
     target_df = target_df[
         [col for col in target_cols if col in target_df.columns]
     ].copy()
+    if "grade_v13" in target_df.columns:
+        target_df["grade_v13"] = target_df["grade_v13"].round(0).astype("Int64")
     if use_mlb_eq and "__level" in target_df.columns:
         target_df["__level"] = 1
     target_df = target_df.rename(columns={**base_rename, **similarity_labels})
@@ -668,6 +680,7 @@ def pitcher_comps():
         group_cols=["__season", "__level"],
         stats_df=stats_df,
         abs_cols=ABS_GRADIENT_COLS_PITCHERS,
+        default_sort_col="Similarity (0-100)",
     )
 
 
