@@ -2543,8 +2543,10 @@ def _build_outputs(
         input_dir=input_dir,
     )
 
-    # Fill arm_angle_right nulls (e.g. seasons where Statcast doesn't publish it)
-    # using the trained estimator. Real values take precedence; estimate fills gaps.
+    # Add `arm_angle_right_est` from the trained estimator. We keep the real
+    # `arm_angle_right` (which can be null) and the estimate as separate columns
+    # so display pages can show real-only while comp pages can fall back to the
+    # estimate. The comp pages compose the two at use time.
     import importlib.util as _il_util
     _est_path = Path(__file__).resolve().parent / "arm_angle_estimator.py"
     _spec = _il_util.spec_from_file_location("arm_angle_estimator", _est_path)
@@ -2552,9 +2554,7 @@ def _build_outputs(
     _spec.loader.exec_module(_aae)
 
     pitchers = _aae.fill_arm_angle_right(pitchers)
-    pitchers = _aae.coalesce_arm_angle_right(pitchers)
     pitch_types = _aae.fill_arm_angle_right(pitch_types)
-    pitch_types = _aae.coalesce_arm_angle_right(pitch_types)
 
     # For team_pitching, compute stuff grades from raw pitch data
     team_pitch_types = pitch.group_by(
