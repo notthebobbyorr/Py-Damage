@@ -980,6 +980,7 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("arm_angle").is_not_null().sum().alias("arm_angle_n"),
             pl.mean("arm_angle_right").alias("arm_angle_right"),
             pl.col("arm_angle_right").is_not_null().sum().alias("arm_angle_right_n"),
+            pl.col("pitcher_height").first().cast(pl.Float64, strict=False).alias("pitcher_height"),
             pl.col("primary_tag")
             .filter(pl.col("primary_tag").is_not_null())
             .unique()
@@ -1185,6 +1186,7 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("arm_angle").is_not_null().sum().alias("arm_angle_n"),
             pl.mean("arm_angle_right").alias("arm_angle_right"),
             pl.col("arm_angle_right").is_not_null().sum().alias("arm_angle_right_n"),
+            pl.col("pitcher_height").first().cast(pl.Float64, strict=False).alias("pitcher_height"),
         ]
     )
     if "LA_lte_0" not in pitch_types.columns:
@@ -2540,6 +2542,19 @@ def _build_outputs(
         pitch_types,
         input_dir=input_dir,
     )
+
+    # Fill arm_angle_right nulls (e.g. seasons where Statcast doesn't publish it)
+    # using the trained estimator. Real values take precedence; estimate fills gaps.
+    import importlib.util as _il_util
+    _est_path = Path(__file__).resolve().parent / "arm_angle_estimator.py"
+    _spec = _il_util.spec_from_file_location("arm_angle_estimator", _est_path)
+    _aae = _il_util.module_from_spec(_spec)
+    _spec.loader.exec_module(_aae)
+
+    pitchers = _aae.fill_arm_angle_right(pitchers)
+    pitchers = _aae.coalesce_arm_angle_right(pitchers)
+    pitch_types = _aae.fill_arm_angle_right(pitch_types)
+    pitch_types = _aae.coalesce_arm_angle_right(pitch_types)
 
     # For team_pitching, compute stuff grades from raw pitch data
     team_pitch_types = pitch.group_by(
