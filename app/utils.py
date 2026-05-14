@@ -187,7 +187,7 @@ def _pitcher_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
         "rel_z_reg": "Vertical Release (ft.)",
         "rel_x_reg": "Horizontal Release (ft.)",
         "ext_reg": "Extension (ft.)",
-        "arm_angle_right": "Arm Angle",
+        "inf_arm_angle": "Inferred Arm Angle",
         "takeoff_rate_reg": "Takeoff% Against",
         "similarity_score": "Similarity (0-100)",
     }
@@ -221,7 +221,7 @@ def _pitch_display_map() -> dict[str, str]:
         "ext": "Extension (ft.)",
         "z_angle_release": "VRA",
         "x_angle_release": "HRA",
-        "arm_angle_right": "Arm Angle",
+        "inf_arm_angle": "Inferred Arm Angle",
         "SwStr": "SwStr (%)",
         "Zone": "Zone (%)",
         "Chase": "Chase (%)",

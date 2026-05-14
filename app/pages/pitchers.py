@@ -153,7 +153,7 @@ def pitcher_individual_stats():
                 "rel_z",
                 "rel_x",
                 "ext",
-                "arm_angle_right",
+                "inf_arm_angle",
                 "SBO",
                 "SB",
                 "takeoff_rate",
@@ -197,7 +197,7 @@ def pitcher_individual_stats():
                 "rel_z": "Vertical Release (ft.)",
                 "rel_x": "Horizontal Release (ft.)",
                 "ext": "Extension (ft.)",
-                "arm_angle_right": "Arm Angle",
+                "inf_arm_angle": "Inferred Arm Angle",
                 "SBO": "SBO",
                 "SB": "SB",
                 "takeoff_rate": "Takeoff% Against",
@@ -405,17 +405,6 @@ def pitcher_comps():
     if "game_type_group" in comp_df.columns:
         comp_df = comp_df[comp_df["game_type_group"] != "Spring Training"]
 
-    # Fall back to the model-estimated arm_angle_right when Statcast didn't
-    # publish a real value. Track which rows are estimated for display.
-    if "arm_angle_right" in comp_df.columns and "inf_arm_angle" in comp_df.columns:
-        comp_df = comp_df.copy()
-        comp_df["arm_angle_right_imputed"] = (
-            comp_df["arm_angle_right"].isna() & comp_df["inf_arm_angle"].notna()
-        )
-        comp_df["arm_angle_right"] = comp_df["arm_angle_right"].fillna(
-            comp_df["inf_arm_angle"]
-        )
-
     if use_mlb_eq:
         player_pool = comp_df[(comp_df["TBF"] >= 20)].copy()
         eligible_all = comp_df[
@@ -599,7 +588,6 @@ def pitcher_comps():
         "GS",
         "similarity_score",
         *feature_cols,
-        "arm_angle_right_imputed",
         "__season",
         "__level",
     ]
@@ -608,11 +596,7 @@ def pitcher_comps():
     ].copy()
     if "grade_v13" in df.columns:
         df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
-    if "arm_angle_right_imputed" in df.columns:
-        df["arm_angle_right_imputed"] = df["arm_angle_right_imputed"].map(
-            lambda v: "*" if bool(v) else ""
-        )
-    df = df.rename(columns={**base_rename, **similarity_labels, "arm_angle_right_imputed": "Inferred"})
+    df = df.rename(columns={**base_rename, **similarity_labels})
     df = df.loc[:, ~df.columns.duplicated()]
 
     stats_df = eligible_all.copy()
@@ -646,7 +630,6 @@ def pitcher_comps():
         "IP",
         "GS",
         *list(dict.fromkeys(default_feature_cols + feature_cols)),
-        "arm_angle_right_imputed",
         "__season",
         "__level",
     ]
@@ -658,13 +641,9 @@ def pitcher_comps():
     ].copy()
     if "grade_v13" in target_df.columns:
         target_df["grade_v13"] = target_df["grade_v13"].round(0).astype("Int64")
-    if "arm_angle_right_imputed" in target_df.columns:
-        target_df["arm_angle_right_imputed"] = target_df["arm_angle_right_imputed"].map(
-            lambda v: "*" if bool(v) else ""
-        )
     if use_mlb_eq and "__level" in target_df.columns:
         target_df["__level"] = 1
-    target_df = target_df.rename(columns={**base_rename, **similarity_labels, "arm_angle_right_imputed": "Inferred"})
+    target_df = target_df.rename(columns={**base_rename, **similarity_labels})
     target_df = target_df.loc[:, ~target_df.columns.duplicated()]
 
     if use_mlb_eq:
@@ -680,11 +659,6 @@ def pitcher_comps():
         )
     else:
         st.caption("Selected season")
-    if "Inferred" in df.columns and (df["Inferred"] == "*").any():
-        st.caption(
-            "Rows with `*` in the **Inferred** column use a model-estimated arm angle "
-            "(applied when Statcast hasn't published the real value for that season)."
-        )
     render_table(
         target_df,
         reverse_cols=PITCHER_REVERSE_DISPLAY_COLS,

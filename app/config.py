@@ -143,7 +143,7 @@ PITCHER_COMPS_BASE_FEATURE_COLS = [
     "rel_z_reg",
     "rel_x_reg",
     "ext_reg",
-    "arm_angle_right",
+    "inf_arm_angle",
 ]
 PITCHER_COMPS_EXTRA_FEATURE_COLS = [
     "Zone_reg",
@@ -161,7 +161,7 @@ PITCHER_MLB_PASS_THROUGH_COLS = {
     "rel_z_reg",
     "rel_x_reg",
     "ext_reg",
-    "arm_angle_right",
+    "inf_arm_angle",
 }
 PITCHER_MLB_HIGHER_IS_WORSE_METRICS = {
     "Ball_pct_reg",
@@ -187,7 +187,7 @@ PITCHER_REVERSE_DISPLAY_COLS = {
     "Z-Contact (%)",
     "0<LA<20 (%)",
     "LA>=20 (%)",
-    "Arm Angle",
+    "Inferred Arm Angle",
     "Takeoff% Against",
 }
 
@@ -206,7 +206,7 @@ PITCH_COMPS_BASE_FEATURE_COLS = [
     "ext",
     "z_angle_release",
     "x_angle_release",
-    "arm_angle_right",
+    "inf_arm_angle",
     "stuff",
     "grade_v13",
 ]

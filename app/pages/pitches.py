@@ -586,16 +586,6 @@ def pitch_comps():
     if "game_type_group" in comp_df.columns:
         comp_df = comp_df[comp_df["game_type_group"] != "Spring Training"]
 
-    # Fall back to model-estimated arm_angle_right when Statcast didn't publish it.
-    if "arm_angle_right" in comp_df.columns and "inf_arm_angle" in comp_df.columns:
-        comp_df = comp_df.copy()
-        comp_df["arm_angle_right_imputed"] = (
-            comp_df["arm_angle_right"].isna() & comp_df["inf_arm_angle"].notna()
-        )
-        comp_df["arm_angle_right"] = comp_df["arm_angle_right"].fillna(
-            comp_df["inf_arm_angle"]
-        )
-
     target_pool = comp_df[
         (comp_df["level_id"] == 1) & (comp_df["pitches"] >= 5)
     ].copy()
@@ -733,7 +723,6 @@ def pitch_comps():
         "pitches",
         "similarity_score",
         *feature_cols,
-        "arm_angle_right_imputed",
         "__season",
         "__level",
     ]
@@ -742,11 +731,7 @@ def pitch_comps():
     ].copy()
     if "grade_v13" in df.columns:
         df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
-    if "arm_angle_right_imputed" in df.columns:
-        df["arm_angle_right_imputed"] = df["arm_angle_right_imputed"].map(
-            lambda v: "*" if bool(v) else ""
-        )
-    df = df.rename(columns={**display_map, **similarity_labels, "arm_angle_right_imputed": "Inferred"})
+    df = df.rename(columns={**display_map, **similarity_labels})
     df = df.loc[:, ~df.columns.duplicated()]
 
     stats_df = eligible_all.copy()
@@ -778,7 +763,6 @@ def pitch_comps():
         "pitch_tag",
         "pitches",
         *list(dict.fromkeys(default_feature_cols + feature_cols)),
-        "arm_angle_right_imputed",
         "__season",
         "__level",
     ]
@@ -790,19 +774,10 @@ def pitch_comps():
     ].copy()
     if "grade_v13" in target_view.columns:
         target_view["grade_v13"] = target_view["grade_v13"].round(0).astype("Int64")
-    if "arm_angle_right_imputed" in target_view.columns:
-        target_view["arm_angle_right_imputed"] = target_view["arm_angle_right_imputed"].map(
-            lambda v: "*" if bool(v) else ""
-        )
-    target_view = target_view.rename(columns={**display_map, **similarity_labels, "arm_angle_right_imputed": "Inferred"})
+    target_view = target_view.rename(columns={**display_map, **similarity_labels})
     target_view = target_view.loc[:, ~target_view.columns.duplicated()]
 
     st.caption("Selected pitch")
-    if "Inferred" in df.columns and (df["Inferred"] == "*").any():
-        st.caption(
-            "Rows with `*` in the **Inferred** column use a model-estimated arm angle "
-            "(applied when Statcast hasn't published the real value for that season)."
-        )
     render_table(
         target_view,
         reverse_cols=PITCH_REVERSE_DISPLAY_COLS,
