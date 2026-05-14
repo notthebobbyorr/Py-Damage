@@ -215,6 +215,18 @@ def _write_optimized_parquet(df: pd.DataFrame, path: Path) -> None:
     df.to_parquet(path, index=False)
 
 
+# Tables the app filters to season >= 2020 at load time. We mirror that at
+# stitch time so we don't waste GitHub bytes (and stay under the 100 MB hard
+# limit) on data the live app discards. Keep in sync with
+# `_GAMELOG_MIN_SEASON` / `_filter_min_season` in app/datasets.py.
+MIN_SEASON_2020_TABLES = {
+    "pitch_types_splits",
+    "pitch_type_gamelogs",
+    "hitter_gamelogs",
+    "pitcher_gamelogs",
+}
+
+
 def stitch_season_chunks(min_season: int, current_season: int) -> None:
     """Combine per-season chunks into final output files in DATA_DIR."""
     print(f"\nStitching season chunks ({min_season}-{current_season}) -> {DATA_DIR}")
@@ -235,6 +247,13 @@ def stitch_season_chunks(min_season: int, current_season: int) -> None:
         if not chunks:
             print(f"  No chunks found for {stem}, skipping.")
             continue
+        # Drop pre-2020 chunks for tables the app discards anyway, keeping the
+        # final parquet small enough to commit/push.
+        if stem in MIN_SEASON_2020_TABLES:
+            chunks = [p for p in chunks if int(p.stem.rsplit("_", 1)[1]) >= 2020]
+            if not chunks:
+                print(f"  No >=2020 chunks for {stem}, skipping.")
+                continue
         out_path = DATA_DIR / f"{stem}.parquet"
         if stem in PANDAS_OPTIMIZED_TABLES:
             # Write with pandas dtype optimisation to prevent ~20x memory expansion
