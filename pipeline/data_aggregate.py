@@ -441,6 +441,85 @@ def build_pitching_splits(
     return pitcher_splits, pitch_types_splits
 
 
+def build_team_hitting_splits(df: pl.DataFrame) -> pl.DataFrame:
+    if df.is_empty():
+        return df
+    split_specs = [
+        ("vs L/R", lambda x: _with_split(x, _split_vs_lr(x, "throws"))),
+        ("Home/Away", lambda x: _with_split(x, _split_home_away(x, hitter=True))),
+        ("Monthly", lambda x: _with_split(x, _split_month(x))),
+        ("1st Half/2nd Half", _split_half),
+    ]
+    frames: list[pl.DataFrame] = []
+    for split_type, split_fn in split_specs:
+        frames.extend(_build_split_frames(df, build_team_hitting, split_type, split_fn))
+    if not frames:
+        return pl.DataFrame()
+    return pl.concat(frames, how="diagonal_relaxed")
+
+
+def build_team_pitching_splits(
+    df: pl.DataFrame,
+    stuff_percentiles: pl.DataFrame,
+) -> pl.DataFrame:
+    if df.is_empty():
+        return pl.DataFrame()
+    split_specs = [
+        ("vs L/R", lambda x: _with_split(x, _split_vs_lr(x, "stands"))),
+        ("Home/Away", lambda x: _with_split(x, _split_home_away(x, hitter=False))),
+        ("Monthly", lambda x: _with_split(x, _split_month(x))),
+        ("1st Half/2nd Half", _split_half),
+    ]
+    team_keys = ["pitching_code", "season", "level_id", "game_type_group"]
+    frames: list[pl.DataFrame] = []
+    for split_type, split_fn in split_specs:
+        split_df = split_fn(df)
+        if split_df is None:
+            continue
+        labels = (
+            split_df.select(pl.col("__split").drop_nulls().unique())
+            .to_series()
+            .to_list()
+        )
+        for label in labels:
+            subset = split_df.filter(pl.col("__split") == label)
+            team_split = build_team_pitching(subset)
+            if team_split.is_empty():
+                continue
+            team_pitch_types = subset.group_by(
+                team_keys + ["pitch_tag"]
+            ).agg(
+                [
+                    pl.mean("stuff_raw").alias("stuff_raw"),
+                    pl.len().alias("pitches"),
+                ]
+            )
+            team_pitch_types = apply_stuff_grade(team_pitch_types, stuff_percentiles)
+            if not team_pitch_types.is_empty():
+                team_stuff = (
+                    team_pitch_types.filter(pl.col("stuff").is_not_null())
+                    .group_by(team_keys)
+                    .agg(
+                        (pl.col("stuff") * pl.col("pitches")).sum()
+                        / pl.col("pitches").sum()
+                    )
+                    .rename({"stuff": "stuff_grade"})
+                )
+                team_split = (
+                    team_split.join(team_stuff, on=team_keys, how="left")
+                    .with_columns(pl.col("stuff_grade").alias("stuff"))
+                    .drop("stuff_grade")
+                )
+            team_split = team_split.with_columns(
+                pl.lit(split_type).alias("split_type"),
+                pl.lit(label).alias("split"),
+            )
+            frames.append(team_split)
+    if not frames:
+        return pl.DataFrame()
+    return pl.concat(frames, how="diagonal")
+
+
 def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
@@ -631,10 +710,34 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
                 (pl.col("is_in_play") == True).sum().alias("LA_gte_20_den"),
                 pl.mean("bat_speed").alias("bat_speed"),
                 pl.col("bat_speed").is_not_null().sum().alias("bat_speed_n"),
+                pl.when(pl.col("bat_speed").is_not_null().sum() > 0)
+                .then(
+                    100
+                    * (pl.col("bat_speed") >= 75).sum()
+                    / pl.col("bat_speed").is_not_null().sum()
+                )
+                .otherwise(None)
+                .alias("fast_swing_pct"),
+                pl.col("bat_speed").is_not_null().sum().alias("fast_swing_pct_n"),
                 pl.mean("swing_length").alias("swing_length"),
                 pl.col("swing_length").is_not_null().sum().alias("swing_length_n"),
                 pl.mean("attack_angle").alias("attack_angle"),
                 pl.col("attack_angle").is_not_null().sum().alias("attack_angle_n"),
+                pl.mean("attack_direction").alias("attack_direction"),
+                pl.col("attack_direction")
+                .is_not_null()
+                .sum()
+                .alias("attack_direction_n"),
+                pl.mean("intercept_ball_minus_batter_pos_x_inches").alias("intercept_x_inches"),
+                pl.col("intercept_ball_minus_batter_pos_x_inches")
+                .is_not_null()
+                .sum()
+                .alias("intercept_x_inches_n"),
+                pl.mean("intercept_ball_minus_batter_pos_y_inches").alias("intercept_y_inches"),
+                pl.col("intercept_ball_minus_batter_pos_y_inches")
+                .is_not_null()
+                .sum()
+                .alias("intercept_y_inches_n"),
                 pl.mean("swing_path_tilt").alias("swing_path_tilt"),
                 pl.col("swing_path_tilt")
                 .is_not_null()
@@ -875,6 +978,8 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("ext").is_not_null().sum().alias("ext_n"),
             pl.mean("arm_angle").alias("arm_angle"),
             pl.col("arm_angle").is_not_null().sum().alias("arm_angle_n"),
+            pl.mean("arm_angle_right").alias("arm_angle_right"),
+            pl.col("arm_angle_right").is_not_null().sum().alias("arm_angle_right_n"),
             pl.col("primary_tag")
             .filter(pl.col("primary_tag").is_not_null())
             .unique()
@@ -946,6 +1051,10 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("vaa").is_not_null().sum().alias("vaa_n"),
             pl.mean("haa").alias("haa"),
             pl.col("haa").is_not_null().sum().alias("haa_n"),
+            pl.mean("z_angle_release").alias("z_angle_release"),
+            pl.col("z_angle_release").is_not_null().sum().alias("z_angle_release_n"),
+            pl.mean("x_angle_release").alias("x_angle_release"),
+            pl.col("x_angle_release").is_not_null().sum().alias("x_angle_release_n"),
             pl.mean("vbreak").alias("vbreak"),
             pl.col("vbreak").is_not_null().sum().alias("vbreak_n"),
             pl.mean("hbreak").alias("hbreak"),
@@ -1074,6 +1183,8 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("ext").is_not_null().sum().alias("ext_n"),
             pl.mean("arm_angle").alias("arm_angle"),
             pl.col("arm_angle").is_not_null().sum().alias("arm_angle_n"),
+            pl.mean("arm_angle_right").alias("arm_angle_right"),
+            pl.col("arm_angle_right").is_not_null().sum().alias("arm_angle_right_n"),
         ]
     )
     if "LA_lte_0" not in pitch_types.columns:
@@ -2286,6 +2397,26 @@ def _build_outputs(
     pitch = _tag_pitch(pitch)
     # Derive game_type_group for all downstream groupings
     pitch = _add_game_type_group(pitch)
+    # Cast numeric-as-string columns (Statcast metrics ingested as text).
+    # Without this, pl.mean() silently returns null for these aggregations.
+    _numeric_string_cols = (
+        "bat_speed",
+        "swing_length",
+        "swing_path_tilt",
+        "attack_angle",
+        "attack_direction",
+        "intercept_ball_minus_batter_pos_x_inches",
+        "intercept_ball_minus_batter_pos_y_inches",
+        "arm_angle",
+        "arm_angle_right",
+    )
+    _casts = [
+        pl.col(c).cast(pl.Float64, strict=False).alias(c)
+        for c in _numeric_string_cols
+        if c in pitch.columns
+    ]
+    if _casts:
+        pitch = pitch.with_columns(_casts)
 
     # Warn if stuff_raw is missing for a material share of pitches — indicates
     # the stuff model was not run on some rows (e.g. incremental data pulled
@@ -2368,6 +2499,8 @@ def _build_outputs(
     print("Building splits...")
     hitter_splits = build_hitter_splits(pitch)
     pitcher_splits, pitch_type_splits = build_pitching_splits(pitch, stuff_percentiles)
+    team_hitter_splits = build_team_hitting_splits(pitch)
+    team_pitcher_splits = build_team_pitching_splits(pitch, stuff_percentiles)
 
     # Apply stuff grades to pitch_types
     pitch_types = apply_stuff_grade(pitch_types, stuff_percentiles)
@@ -2535,6 +2668,8 @@ def _build_outputs(
         "hitter_splits.parquet": hitter_splits,
         "pitcher_splits.parquet": pitcher_splits,
         "pitch_types_splits.parquet": pitch_type_splits,
+        "team_hitter_splits.parquet": team_hitter_splits,
+        "team_pitcher_splits.parquet": team_pitcher_splits,
         "hitter_pctiles.parquet": hitter_pct,
         "pitcher_pctiles.parquet": pitcher_pct,
         "pitch_types_pctiles.parquet": pitch_types_pct,

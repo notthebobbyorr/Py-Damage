@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
 from app.config import (
     ABS_GRADIENT_COLS_PITCH_TYPES,
     GAME_TYPE_GROUP_NOTE,
+    PITCH_COMPS_BASE_FEATURE_COLS,
+    PITCH_COMPS_EXTRA_FEATURE_COLS,
+    PITCH_REVERSE_DISPLAY_COLS,
 )
 from app.datasets import (
     get_pitch_type_gamelogs,
@@ -24,7 +28,12 @@ from app.filters import (
     season_options,
     team_options,
 )
-from app.utils import maybe_add_level_col, rank_for_display
+from app.utils import (
+    _pitch_display_map,
+    _similarity_choice_labels,
+    maybe_add_level_col,
+    rank_for_display,
+)
 from app.viz import render_table
 
 
@@ -138,6 +147,8 @@ def pitch_shapes_outcomes():
                 "max_velo",
                 "vaa",
                 "haa",
+                "z_angle_release",
+                "x_angle_release",
                 "vbreak",
                 "hbreak",
                 "SwStr",
@@ -179,6 +190,8 @@ def pitch_shapes_outcomes():
                 "max_velo": "Max Velo",
                 "vaa": "VAA",
                 "haa": "HAA",
+                "z_angle_release": "VRA",
+                "x_angle_release": "HRA",
                 "vbreak": "IVB (in.)",
                 "hbreak": "HB (in.)",
                 "CSW": "CSW (%)",
@@ -562,11 +575,227 @@ def pitch_percentiles():
 
 
 def pitch_comps():
-    """Individual Pitches - Pitch Level Comps page (placeholder)"""
+    """Individual Pitches - Pitch Level Comps page"""
     st.title("Pitch Level Comparisons")
 
-    st.info("Pitch-level comparison functionality coming soon!")
-    st.write("This will allow you to find similar pitches based on shape and outcomes.")
+    if pitch_types.empty:
+        st.info("Missing new_pitch_types.csv")
+        return
+
+    comp_df = pitch_types.copy()
+    if "game_type_group" in comp_df.columns:
+        comp_df = comp_df[comp_df["game_type_group"] != "Spring Training"]
+
+    target_pool = comp_df[
+        (comp_df["level_id"] == 1) & (comp_df["pitches"] >= 5)
+    ].copy()
+    eligible_all = comp_df[
+        (comp_df["level_id"] == 1) & (comp_df["pitches"] >= 100)
+    ].copy()
+
+    if target_pool.empty:
+        st.info("No eligible MLB pitch-seasons (min 5 pitches).")
+        return
+    if eligible_all.empty:
+        st.info("No eligible MLB comparison pitch-seasons (min 100 pitches).")
+        return
+
+    seasons = season_options(target_pool, "season")[1:]
+    if not seasons:
+        st.info("No seasons available.")
+        return
+    season_choice = st.selectbox("Season", seasons, index=0, key="pitch_comps_season")
+    season_df = target_pool[target_pool["season"] == season_choice]
+    if season_df.empty:
+        st.info("No pitch rows for this season selection.")
+        return
+
+    player_options, player_name_map = player_id_options(
+        season_df, "pitcher_mlbid", "name"
+    )
+    player_values = [opt for opt in player_options if opt != "All"]
+    if not player_values:
+        st.info("No players available for this filter.")
+        return
+    player_choice = st.selectbox(
+        "Pitcher",
+        player_values,
+        index=0,
+        format_func=lambda v: f"{player_name_map.get(v, 'Unknown')} ({int(v)})",
+        key="pitch_comps_player",
+    )
+    player_df = season_df[season_df["pitcher_mlbid"] == player_choice]
+    if player_df.empty:
+        st.info("No pitches found for that pitcher in this season.")
+        return
+
+    pitch_tags = sorted(player_df["pitch_tag"].dropna().unique().tolist())
+    if not pitch_tags:
+        st.info("No pitch types available for this pitcher.")
+        return
+    pitch_tag_choice = st.selectbox(
+        "Pitch Type",
+        pitch_tags,
+        index=0,
+        key="pitch_comps_pitch_tag",
+    )
+    target_df = player_df[player_df["pitch_tag"] == pitch_tag_choice]
+    if target_df.empty:
+        st.info("No target row found for that selection.")
+        return
+
+    display_map = _pitch_display_map()
+    allowed_cols = list(
+        dict.fromkeys(PITCH_COMPS_BASE_FEATURE_COLS + PITCH_COMPS_EXTRA_FEATURE_COLS)
+    )
+    exclude_cols = {
+        "pitcher_mlbid",
+        "level_id",
+        "game_pk",
+        "pitches",
+        "pitches_n",
+        "pitches_num",
+        "pitches_den",
+        "season",
+        "pct",
+    }
+    numeric_cols, similarity_labels = _similarity_choice_labels(
+        eligible_all, display_map, exclude_cols
+    )
+    numeric_cols = [col for col in numeric_cols if col in allowed_cols]
+    default_feature_cols = [
+        col for col in PITCH_COMPS_BASE_FEATURE_COLS if col in numeric_cols
+    ]
+
+    feature_cols = st.multiselect(
+        "Similarity Score Columns",
+        options=numeric_cols,
+        default=default_feature_cols,
+        key="pitch_comps_similarity_cols",
+        format_func=lambda col: similarity_labels.get(col, col),
+    )
+    feature_cols = [col for col in feature_cols if col in numeric_cols]
+    feature_cols = list(dict.fromkeys(feature_cols))
+    if not feature_cols:
+        st.info("Select at least one column to compute similarity scores.")
+        return
+
+    # Exclude the target row from the comparison pool
+    eligible_comp = eligible_all.copy()
+    eligible_comp = eligible_comp[
+        ~(
+            (eligible_comp["pitcher_mlbid"] == player_choice)
+            & (eligible_comp["season"] == season_choice)
+            & (eligible_comp["pitch_tag"] == pitch_tag_choice)
+        )
+    ]
+    eligible_comp = eligible_comp[eligible_comp[feature_cols].notna().any(axis=1)]
+    if eligible_comp.empty:
+        st.info("No comparable pitches found.")
+        return
+
+    stats = eligible_comp[feature_cols].copy()
+    means = stats.mean().fillna(0.0)
+    stats = stats.fillna(means)
+    stds = stats.std(ddof=0).replace(0, np.nan)
+    zscores = ((stats - means) / stds).fillna(0)
+    target_stats = target_df[feature_cols].copy().fillna(means)
+    target_vec = ((target_stats - means) / stds).fillna(0).iloc[0].to_numpy()
+    distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
+    max_dist = distances.max() if len(distances) else 0.0
+    if max_dist == 0:
+        similarity = np.full_like(distances, 100.0, dtype=float)
+    else:
+        similarity = 100 * (1 - (distances / max_dist))
+
+    eligible_comp = eligible_comp.copy()
+    eligible_comp["similarity_score"] = similarity.round(0)
+    eligible_comp = eligible_comp.sort_values("similarity_score", ascending=False)
+    eligible_comp = eligible_comp.assign(
+        __season=eligible_comp["season"], __level=eligible_comp["level_id"]
+    )
+
+    display_cols = [
+        "name",
+        "pitching_code",
+        "season",
+        "pitch_tag",
+        "pitches",
+        "similarity_score",
+        *feature_cols,
+        "__season",
+        "__level",
+    ]
+    df = eligible_comp[
+        [col for col in display_cols if col in eligible_comp.columns]
+    ].copy()
+    if "grade_v13" in df.columns:
+        df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
+    df = df.rename(columns={**display_map, **similarity_labels})
+    df = df.loc[:, ~df.columns.duplicated()]
+
+    stats_df = eligible_all.copy()
+    stats_df = stats_df.assign(
+        __season=stats_df["season"], __level=stats_df["level_id"]
+    )
+    stats_columns = [
+        "name",
+        "pitching_code",
+        "season",
+        "pitch_tag",
+        "pitches",
+        *list(dict.fromkeys(default_feature_cols + feature_cols)),
+        "__season",
+        "__level",
+    ]
+    stats_df = stats_df[
+        [col for col in stats_columns if col in stats_df.columns]
+    ].copy()
+    if "grade_v13" in stats_df.columns:
+        stats_df["grade_v13"] = stats_df["grade_v13"].round(0).astype("Int64")
+    stats_df = stats_df.rename(columns={**display_map, **similarity_labels})
+    stats_df = stats_df.loc[:, ~stats_df.columns.duplicated()]
+
+    target_cols = [
+        "name",
+        "pitching_code",
+        "season",
+        "pitch_tag",
+        "pitches",
+        *list(dict.fromkeys(default_feature_cols + feature_cols)),
+        "__season",
+        "__level",
+    ]
+    target_view = target_df.assign(
+        __season=target_df["season"], __level=target_df["level_id"]
+    )
+    target_view = target_view[
+        [col for col in target_cols if col in target_view.columns]
+    ].copy()
+    if "grade_v13" in target_view.columns:
+        target_view["grade_v13"] = target_view["grade_v13"].round(0).astype("Int64")
+    target_view = target_view.rename(columns={**display_map, **similarity_labels})
+    target_view = target_view.loc[:, ~target_view.columns.duplicated()]
+
+    st.caption("Selected pitch")
+    render_table(
+        target_view,
+        reverse_cols=PITCH_REVERSE_DISPLAY_COLS,
+        group_cols=["__season", "__level"],
+        stats_df=stats_df,
+        show_controls=False,
+        label_cols=["Name", "Pitch Type"],
+    )
+    st.caption("Most similar pitches (MLB, min 100 pitches)")
+    render_table(
+        df,
+        reverse_cols=PITCH_REVERSE_DISPLAY_COLS,
+        group_cols=["__season", "__level"],
+        stats_df=stats_df,
+        label_cols=["Name", "Pitch Type"],
+        default_sort_col="Similarity (0-100)",
+    )
+    download_button(df, "pitch_comps", "pitch_comps_download")
 
 
 def pitch_splits():

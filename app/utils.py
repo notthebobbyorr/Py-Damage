@@ -139,9 +139,13 @@ def _hitter_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
         "whiffs_vs_95_reg": "Whiff vs. 95+ (%)",
         "contact_vs_avg_reg": "Contact Over Expected (%)",
         "LD_pct_reg": "0<LA<20 (%)",
-        "bat_speed_reg": "Bat Speed",
+        "bat_speed_reg": "Avg Swing Speed",
+        "fast_swing_pct": "Fast Swing (%)",
         "swing_length_reg": "Swing Length",
         "attack_angle_reg": "Attack Angle",
+        "attack_direction": "Attack Direction",
+        "intercept_x_inches": "Intercept X (in.)",
+        "intercept_y_inches": "Intercept Y (in.)",
         "swing_path_tilt_reg": "VBA",
         "max_EV_reg": "Max EV",
         "takeoff_rate_reg": "Takeoff%",
@@ -183,7 +187,7 @@ def _pitcher_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
         "rel_z_reg": "Vertical Release (ft.)",
         "rel_x_reg": "Horizontal Release (ft.)",
         "ext_reg": "Extension (ft.)",
-        "arm_angle_reg": "Arm Angle",
+        "arm_angle_right": "Arm Angle",
         "takeoff_rate_reg": "Takeoff% Against",
         "similarity_score": "Similarity (0-100)",
     }
@@ -194,6 +198,38 @@ def _pitcher_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
         if col.endswith("_reg") or col == "stuff":
             eq_map[f"{col}_mlb_eq"] = f"{label} MLB Eq"
     return {**display_map, **eq_map}
+
+
+def _pitch_display_map() -> dict[str, str]:
+    return {
+        "name": "Name",
+        "pitching_code": "Team",
+        "season": "Season",
+        "pitch_tag": "Pitch Type",
+        "pitches": "#",
+        "pct": "Usage (%)",
+        "stuff": "Pitch Grade",
+        "grade_v13": "Execution Grade",
+        "velo": "Velo",
+        "max_velo": "Max Velo",
+        "vaa": "VAA",
+        "haa": "HAA",
+        "vbreak": "IVB (in.)",
+        "hbreak": "HB (in.)",
+        "rel_z": "Vertical Release (ft.)",
+        "rel_x": "Horizontal Release (ft.)",
+        "ext": "Extension (ft.)",
+        "z_angle_release": "VRA",
+        "x_angle_release": "HRA",
+        "arm_angle_right": "Arm Angle",
+        "SwStr": "SwStr (%)",
+        "Zone": "Zone (%)",
+        "Chase": "Chase (%)",
+        "Ball_pct": "Ball (%)",
+        "Z_Contact": "Z-Contact (%)",
+        "CSW": "CSW (%)",
+        "similarity_score": "Similarity (0-100)",
+    }
 
 
 # ---------------------------------------------------------------------------
