@@ -42,6 +42,7 @@ def run_season(
     raw_hist_dir: Path,
     chunk_dir: Path,
     data_dir: Path,
+    input_dir: Path,
     dry_run: bool,
 ) -> None:
     source = raw_hist_dir / f"pitch_data_{year}.parquet"
@@ -57,6 +58,7 @@ def run_season(
         "--chunk-by-season",
         "--chunk-dir", str(chunk_dir),
         "--out-dir", str(data_dir),
+        "--input-dir", str(input_dir),
     ]
     print(f"\n=== {year} ===")
     print(" ".join(cmd))
@@ -101,6 +103,14 @@ def main() -> None:
         help="Override the per-season chunk directory (default: <out-dir>/_season_chunks).",
     )
     parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=HERE / "data" / "raw",
+        help="Override the input directory data_aggregate.py reads prediction "
+        "source files from (default: data/raw). Must contain pitcher_p_swstr.parquet, "
+        "pitcher_p_damage.parquet, etc., or predictions will be silently null.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print commands without running them.",
@@ -110,14 +120,18 @@ def main() -> None:
     raw_hist_dir = args.raw_hist_dir.resolve()
     data_dir = args.out_dir.resolve()
     chunk_dir = (args.chunk_dir or (data_dir / "_season_chunks")).resolve()
+    input_dir = args.input_dir.resolve()
 
     if not raw_hist_dir.exists():
         raise SystemExit(f"Historical pitch data directory not found: {raw_hist_dir}")
+    if not input_dir.exists():
+        raise SystemExit(f"Input directory (for prediction sources) not found: {input_dir}")
     chunk_dir.mkdir(parents=True, exist_ok=True)
 
     seasons = list(range(args.min_season, args.max_season + 1))
     print(f"Backfill plan: {len(seasons)} seasons ({args.min_season}-{args.max_season})")
     print(f"  Source:    {raw_hist_dir}")
+    print(f"  Input dir: {input_dir}")
     print(f"  Chunk dir: {chunk_dir}")
     print(f"  Output:    {data_dir}")
     print(f"  Estimated wall time: ~{len(seasons) * 4} minutes")
@@ -125,7 +139,7 @@ def main() -> None:
 
     t_start = time.time()
     for year in seasons:
-        run_season(year, raw_hist_dir, chunk_dir, data_dir, dry_run=args.dry_run)
+        run_season(year, raw_hist_dir, chunk_dir, data_dir, input_dir, dry_run=args.dry_run)
     elapsed = time.time() - t_start
 
     print(f"\nBackfill complete in {elapsed / 60:.1f} minutes.")

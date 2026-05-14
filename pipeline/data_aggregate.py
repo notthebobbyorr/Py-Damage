@@ -22,7 +22,7 @@ try:
 except ImportError:  # optional dependency
     psutil = None
 
-_REPO_DIR = Path(__file__).resolve().parent
+_REPO_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = _REPO_DIR / "data" / "output"
 RAW_DIR = _REPO_DIR / "data" / "raw"
 OUT_DIR = DATA_DIR
@@ -2417,6 +2417,16 @@ def _build_outputs(
     ]
     if _casts:
         pitch = pitch.with_columns(_casts)
+
+    # Recode legacy AZ team code to ARI everywhere (hitter, pitcher, team tables,
+    # splits all derive from these source columns).
+    _team_recodes = [
+        pl.col(c).replace("AZ", "ARI").alias(c)
+        for c in ("hitting_code", "pitching_code")
+        if c in pitch.columns
+    ]
+    if _team_recodes:
+        pitch = pitch.with_columns(_team_recodes)
 
     # Warn if stuff_raw is missing for a material share of pitches — indicates
     # the stuff model was not run on some rows (e.g. incremental data pulled
