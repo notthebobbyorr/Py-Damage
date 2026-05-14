@@ -407,13 +407,13 @@ def pitcher_comps():
 
     # Fall back to the model-estimated arm_angle_right when Statcast didn't
     # publish a real value. Track which rows are estimated for display.
-    if "arm_angle_right" in comp_df.columns and "arm_angle_right_est" in comp_df.columns:
+    if "arm_angle_right" in comp_df.columns and "inf_arm_angle" in comp_df.columns:
         comp_df = comp_df.copy()
         comp_df["arm_angle_right_imputed"] = (
-            comp_df["arm_angle_right"].isna() & comp_df["arm_angle_right_est"].notna()
+            comp_df["arm_angle_right"].isna() & comp_df["inf_arm_angle"].notna()
         )
         comp_df["arm_angle_right"] = comp_df["arm_angle_right"].fillna(
-            comp_df["arm_angle_right_est"]
+            comp_df["inf_arm_angle"]
         )
 
     if use_mlb_eq:
@@ -612,7 +612,7 @@ def pitcher_comps():
         df["arm_angle_right_imputed"] = df["arm_angle_right_imputed"].map(
             lambda v: "*" if bool(v) else ""
         )
-    df = df.rename(columns={**base_rename, **similarity_labels, "arm_angle_right_imputed": "Est?"})
+    df = df.rename(columns={**base_rename, **similarity_labels, "arm_angle_right_imputed": "Inferred"})
     df = df.loc[:, ~df.columns.duplicated()]
 
     stats_df = eligible_all.copy()
@@ -664,7 +664,7 @@ def pitcher_comps():
         )
     if use_mlb_eq and "__level" in target_df.columns:
         target_df["__level"] = 1
-    target_df = target_df.rename(columns={**base_rename, **similarity_labels, "arm_angle_right_imputed": "Est?"})
+    target_df = target_df.rename(columns={**base_rename, **similarity_labels, "arm_angle_right_imputed": "Inferred"})
     target_df = target_df.loc[:, ~target_df.columns.duplicated()]
 
     if use_mlb_eq:
@@ -680,10 +680,10 @@ def pitcher_comps():
         )
     else:
         st.caption("Selected season")
-    if "Est?" in df.columns and (df["Est?"] == "*").any():
+    if "Inferred" in df.columns and (df["Inferred"] == "*").any():
         st.caption(
-            "* Arm Angle marked with an asterisk in the **Est?** column is a model "
-            "estimate (used when Statcast hasn't published the real value for that season)."
+            "Rows with `*` in the **Inferred** column use a model-estimated arm angle "
+            "(applied when Statcast hasn't published the real value for that season)."
         )
     render_table(
         target_df,

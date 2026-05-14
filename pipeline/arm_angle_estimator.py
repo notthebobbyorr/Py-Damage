@@ -11,11 +11,11 @@ the aggregation step (see `build_pitchers` / `build_pitch_types`).
 
 Public functions:
     fill_arm_angle_right(df, *, rel_x="rel_x", rel_z="rel_z", ext="ext", height="pitcher_height")
-        Returns the input df with a new column `arm_angle_right_est` containing
+        Returns the input df with a new column `inf_arm_angle` containing
         the model's prediction (or null when any required feature is missing or
         the model isn't loaded).
 
-    coalesce_arm_angle_right(df, observed="arm_angle_right", est="arm_angle_right_est")
+    coalesce_arm_angle_right(df, observed="arm_angle_right", est="inf_arm_angle")
         Replaces nulls in `observed` with values from `est`, drops `est`.
 """
 
@@ -71,15 +71,15 @@ def fill_arm_angle_right(
     ext: str = "ext",
     height: str = "pitcher_height",
 ) -> pl.DataFrame:
-    """Add `arm_angle_right_est` column. Null when any feature is missing."""
+    """Add `inf_arm_angle` column. Null when any feature is missing."""
     if df.is_empty():
         return df.with_columns(
-            pl.lit(None, dtype=pl.Float64).alias("arm_angle_right_est")
+            pl.lit(None, dtype=pl.Float64).alias("inf_arm_angle")
         )
     payload = _load()
     if payload is None:
         return df.with_columns(
-            pl.lit(None, dtype=pl.Float64).alias("arm_angle_right_est")
+            pl.lit(None, dtype=pl.Float64).alias("inf_arm_angle")
         )
 
     model = payload["model"]
@@ -94,7 +94,7 @@ def fill_arm_angle_right(
             f"skipping imputation."
         )
         return df.with_columns(
-            pl.lit(None, dtype=pl.Float64).alias("arm_angle_right_est")
+            pl.lit(None, dtype=pl.Float64).alias("inf_arm_angle")
         )
 
     feat_df = df.select(
@@ -109,13 +109,13 @@ def fill_arm_angle_right(
     preds = np.full(len(df), np.nan, dtype=float)
     if valid.any():
         preds[valid] = model.predict(feat_df.loc[valid].to_numpy())
-    return df.with_columns(pl.Series("arm_angle_right_est", preds, dtype=pl.Float64))
+    return df.with_columns(pl.Series("inf_arm_angle", preds, dtype=pl.Float64))
 
 
 def coalesce_arm_angle_right(
     df: pl.DataFrame,
     observed: str = "arm_angle_right",
-    est: str = "arm_angle_right_est",
+    est: str = "inf_arm_angle",
 ) -> pl.DataFrame:
     """Replace nulls in `observed` with `est`, then drop `est`."""
     if df.is_empty() or observed not in df.columns or est not in df.columns:
