@@ -99,7 +99,7 @@ def pitcher_individual_stats():
             )
             min_value = st.number_input(
                 "Minimum Value",
-                min_value=0,
+                min_value=50,
                 max_value=1000,
                 value=10,
                 step=1,
