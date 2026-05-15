@@ -24,7 +24,7 @@ from app.pages.hitters import (
     hitter_percentiles,
     hitter_splits,
 )
-from app.pages.home import home_page
+from app.pages.home import home_page, home_timeline
 from app.pages.league import league_hitting, league_pitch_level, league_pitching
 from app.pages.parks import park_data_page
 from app.pages.pitchers import (
@@ -202,6 +202,7 @@ st.session_state.last_activity = _time.time()
 pages = {
     "Home": [
         st.Page(home_page, title="Welcome", icon="🏠"),
+        st.Page(home_timeline, title="What's New", icon="🆕"),
     ],
     "Hitters": [
         st.Page(hitter_individual_stats, title="Individual Stats", icon="⚾"),
@@ -223,9 +224,9 @@ pages = {
     ],
     "Individual Pitches": [
         st.Page(pitch_shapes_outcomes, title="Shapes and Outcomes", icon="🎯"),
-        st.Page(pitch_ar, title="Auto Regressed (AR)", icon="📈"),
         st.Page(pitch_percentiles, title="Percentiles", icon="📊"),
         st.Page(pitch_comps, title="Pitch Level Comps", icon="🔍"),
+        st.Page(pitch_ar, title="Auto Regressed (AR)", icon="📈"),
         st.Page(pitch_splits, title="Splits", icon="📋"),
         st.Page(pitch_type_gamelogs_page, title="Gamelogs", icon="📅"),
     ],

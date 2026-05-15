@@ -216,6 +216,8 @@ def _pitch_display_map() -> dict[str, str]:
         "haa": "HAA",
         "vbreak": "IVB (in.)",
         "hbreak": "HB (in.)",
+      "rpm": "RPM",
+      "spin_efficiency": "Inferred Spin Efficiency (%)",
         "rel_z": "Vertical Release (ft.)",
         "rel_x": "Horizontal Release (ft.)",
         "ext": "Extension (ft.)",
@@ -223,11 +225,15 @@ def _pitch_display_map() -> dict[str, str]:
         "x_angle_release": "HRA",
         "inf_arm_angle": "Inferred Arm Angle",
         "SwStr": "SwStr (%)",
+        "p_SwStr_pct": "pSwStr (%)",
         "Zone": "Zone (%)",
         "Chase": "Chase (%)",
         "Ball_pct": "Ball (%)",
         "Z_Contact": "Z-Contact (%)",
         "CSW": "CSW (%)",
+        "p_Damage_pct": "pDamage/BBE (%)",
+        "LA_lte_0": "LA<=0%",
+        "HR": "HR",
         "similarity_score": "Similarity (0-100)",
     }
 
@@ -856,3 +862,28 @@ def rank_for_display(
         except Exception:
             df[pctile_col] = pd.array([pd.NA] * len(df), dtype="Int64")
     return df
+
+
+def constant_pctile_subset(
+    df: pd.DataFrame,
+    cols: list[str],
+    workload_col: str,
+    workload_min: float,
+    reverse_cols: set[str] | None = None,
+    extra_group_cols: list[str] | None = None,
+) -> pd.DataFrame:
+    """Build the constant-percentile population.
+
+    Filters ``df`` to regular-season rows with ``workload_col`` >= ``workload_min``,
+    then ranks each col within ``(season, level_id [+ extra_group_cols])``. Used as
+    a stable, season-level percentile basis for multi-year / single-player views.
+    """
+    from app.filters import filter_by_game_type_group
+
+    if df.empty:
+        return df
+    df = filter_by_game_type_group(df, "Regular Season")
+    if workload_col in df.columns:
+        df = df[pd.to_numeric(df[workload_col], errors="coerce") >= workload_min]
+    group_cols = ["season", "level_id"] + (extra_group_cols or [])
+    return rank_for_display(df, cols, group_cols, reverse_cols=reverse_cols)

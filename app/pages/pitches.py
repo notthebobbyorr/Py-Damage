@@ -31,10 +31,37 @@ from app.filters import (
 from app.utils import (
     _pitch_display_map,
     _similarity_choice_labels,
+    constant_pctile_subset,
     maybe_add_level_col,
     rank_for_display,
 )
 from app.viz import render_table
+
+
+_PITCH_PCT_COLS = [
+    "pct", "stuff", "grade_v13", "velo", "max_velo", "vaa", "haa",
+    "vbreak", "hbreak", "rpm", "spin_efficiency",
+    "SwStr", "LA_lte_0", "Ball_pct",
+    "Z_Contact", "Chase", "CSW",
+    "p_SwStr_pct", "Damage_pct", "p_Damage_pct", "takeoff_rate",
+]
+_PITCH_PCT_REVERSE = {
+    "vaa", "Ball_pct", "Z_Contact", "takeoff_rate",
+    "Damage_pct", "p_Damage_pct",
+}
+
+
+@st.cache_resource
+def _pitch_constant_pct() -> pd.DataFrame:
+    """Constant percentile basis: Regular Season, pitches >= 150, per season + level + pitch_tag."""
+    return constant_pctile_subset(
+        pitch_types_pct,
+        cols=_PITCH_PCT_COLS,
+        workload_col="pitches",
+        workload_min=150,
+        reverse_cols=_PITCH_PCT_REVERSE,
+        extra_group_cols=["pitch_tag"],
+    )
 
 
 def pitch_shapes_outcomes():
@@ -151,6 +178,8 @@ def pitch_shapes_outcomes():
                 "x_angle_release",
                 "vbreak",
                 "hbreak",
+                "rpm",
+                "spin_efficiency",
                 "SwStr",
                 "p_SwStr_pct",
                 "Swing_pct",
@@ -176,6 +205,8 @@ def pitch_shapes_outcomes():
                 df["stuff"] = df["stuff"].round(0)
             if "grade_v13" in df.columns:
                 df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
+            if "rpm" in df.columns:
+                df["rpm"] = df["rpm"].round(0).astype("Int64")
             rename_map = {
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
@@ -194,6 +225,8 @@ def pitch_shapes_outcomes():
                 "x_angle_release": "HRA",
                 "vbreak": "IVB (in.)",
                 "hbreak": "HB (in.)",
+                "rpm": "RPM",
+                "spin_efficiency": "Inferred Spin Efficiency (%)",
                 "CSW": "CSW (%)",
                 "SwStr": "SwStr (%)",
                 "p_SwStr_pct": "pSwStr (%)",
@@ -342,6 +375,8 @@ def pitch_ar():
                 "haa_reg",
                 "vbreak_reg",
                 "hbreak_reg",
+                "rpm_reg",
+                "spin_efficiency_reg",
                 "SwStr_reg",
                 "p_SwStr_pct_reg",
                 "p_Swing_pct_reg",
@@ -361,6 +396,8 @@ def pitch_ar():
             df = df[[col for col in columns if col in df.columns]].copy()
             if "grade_v13" in df.columns:
                 df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
+            if "rpm_reg" in df.columns:
+                df["rpm_reg"] = df["rpm_reg"].round(0).astype("Int64")
             rename_map = {
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
@@ -377,6 +414,8 @@ def pitch_ar():
                 "haa_reg": "HAA",
                 "vbreak_reg": "IVB (in.)",
                 "hbreak_reg": "HB (in.)",
+                "rpm_reg": "RPM",
+                "spin_efficiency_reg": "Inferred Spin Efficiency (%)",
                 "CSW_reg": "CSW (%)",
                 "SwStr_reg": "SwStr (%)",
                 "p_SwStr_pct_reg": "pSwStr (%)",
@@ -424,6 +463,20 @@ def pitch_percentiles():
         }
         left, right = st.columns([1, 3])
         with left:
+            mode = st.radio(
+                "Percentile Mode",
+                ["Customizable", "Constant"],
+                index=0,
+                key="pitch_pct_mode",
+                help=(
+                    "Customizable: percentiles recompute against the population "
+                    "matching your filters and minimum pitch count. "
+                    "Constant: stable, season-level percentiles drawn from a fixed "
+                    "Regular-Season, 150+ pitches population per pitch type. Use "
+                    "Constant when filtering to a single pitcher so the displayed "
+                    "ranks reflect league-wide context rather than the pitcher's own row."
+                ),
+            )
             level = st.selectbox(
                 "Select Level",
                 ["All", "MLB", "Triple-A", "Low-A", "Low Minors"],
@@ -440,20 +493,28 @@ def pitch_percentiles():
                 ),
                 key="pitch_pct_season",
             )
-            game_type_group = st.selectbox(
-                "Game Type",
-                game_type_group_options(pitch_types_pct),
-                index=0,
-                key="pitch_types_pct_game_type_group",
-            )
-            min_pitches = st.number_input(
-                "Minimum # Pitches",
-                min_value=0,
-                max_value=2000,
-                value=20,
-                step=1,
-                key="pitch_pct_min_pitches",
-            )
+            if mode == "Customizable":
+                game_type_group = st.selectbox(
+                    "Game Type",
+                    game_type_group_options(pitch_types_pct),
+                    index=0,
+                    key="pitch_types_pct_game_type_group",
+                )
+                min_pitches = st.number_input(
+                    "Minimum # Pitches",
+                    min_value=0,
+                    max_value=2000,
+                    value=20,
+                    step=1,
+                    key="pitch_pct_min_pitches",
+                )
+            else:
+                game_type_group = "Regular Season"
+                min_pitches = 0
+                st.caption(
+                    "Constant mode: Regular Season, pitches ≥ 150, ranked within each season + level + pitch type. "
+                    "Recommended when viewing a single pitcher across years."
+                )
             team = st.selectbox(
                 "Select Team",
                 team_options(pitch_types_pct, "pitching_code"),
@@ -484,22 +545,26 @@ def pitch_percentiles():
         with right:
             if game_type_group != "Regular Season":
                 st.info(GAME_TYPE_GROUP_NOTE.format(game_type_group))
-            df = pitch_types_pct.copy()
+            if mode == "Constant":
+                df = _pitch_constant_pct().copy()
+            else:
+                df = pitch_types_pct.copy()
             df = df[df["level_id"].isin(_LEVEL_MAP[level])]
             df = filter_by_values(df, "season", season)
             df = filter_by_game_type_group(df, game_type_group)
             df = filter_by_team_token(df, "pitching_code", team)
             df = filter_by_values(df, "pitcher_mlbid", pitcher)
             df = filter_by_values(df, "pitch_tag", pitch_tag)
-            df = df[df["pitches"] >= min_pitches]
 
-            df = rank_for_display(df, [
-                "pct", "stuff", "velo", "max_velo", "vaa", "haa",
-                "vbreak", "hbreak", "SwStr", "LA_lte_0", "Ball_pct",
-                "Z_Contact", "Chase", "CSW",
-                "p_SwStr_pct", "Damage_pct", "p_Damage_pct", "takeoff_rate",
-            ], ["season", "level_id", "game_type_group", "pitch_tag"],
-            reverse_cols={"vaa", "Ball_pct", "Z_Contact", "takeoff_rate", "Damage_pct", "p_Damage_pct"})
+            if mode == "Customizable":
+                df = df[df["pitches"] >= min_pitches]
+
+                df = rank_for_display(
+                    df,
+                    _PITCH_PCT_COLS,
+                    ["season", "level_id", "game_type_group", "pitch_tag"],
+                    reverse_cols=_PITCH_PCT_REVERSE,
+                )
 
             columns = [
                 "name",
@@ -507,23 +572,24 @@ def pitch_percentiles():
                 "pitching_code",
                 "season",
                 "pitch_tag",
-                "pct",
+                "pct_pctile",
                 "stuff_z",
                 "stuff_pctile",
+                "grade_v13_pctile",
                 "velo_pctile",
                 "max_velo_pctile",
                 "vaa_pctile",
                 "haa_pctile",
                 "vbreak_pctile",
                 "hbreak_pctile",
+                "rpm_pctile",
+                "spin_efficiency_pctile",
                 "SwStr_pctile",
                 "LA_lte_0_pctile",
                 "Ball_pct_pctile",
                 "Z_Contact_pctile",
                 "Chase_pctile",
                 "CSW_pctile",
-                "HR",
-                "grade_v13",
                 "p_SwStr_pct_pctile",
                 "Damage_pct_pctile",
                 "p_Damage_pct_pctile",
@@ -539,7 +605,7 @@ def pitch_percentiles():
                 "pitching_code": "Team",
                 "season": "Season",
                 "pitch_tag": "Pitch Type",
-                "pct": "Usage (%)",
+                "pct_pctile": "Usage (%) Pctile",
                 "stuff_z": "Pitch Grade Z",
                 "stuff_pctile": "Pitch Grade Pctile",
                 "velo_pctile": "Velo",
@@ -548,14 +614,15 @@ def pitch_percentiles():
                 "haa_pctile": "HAA",
                 "vbreak_pctile": "IVB (in.)",
                 "hbreak_pctile": "HB (in.)",
+                "rpm_pctile": "RPM",
+                "spin_efficiency_pctile": "Inferred Spin Efficiency (%)",
                 "CSW_pctile": "CSW (%)",
                 "SwStr_pctile": "SwStr (%)",
                 "LA_lte_0_pctile": "LA<=0%",
                 "Z_Contact_pctile": "Z-Contact (%)",
                 "Chase_pctile": "Chase (%)",
                 "Ball_pct_pctile": "Ball (%)",
-                "HR": "HR",
-                "grade_v13": "Execution Grade",
+                "grade_v13_pctile": "Execution Grade Pctile",
                 "p_SwStr_pct_pctile": "pSwStr (%)",
                 "Damage_pct_pctile": "Damage/BBE%",
                 "p_Damage_pct_pctile": "pDamage/BBE%",
@@ -564,12 +631,24 @@ def pitch_percentiles():
             df = df.rename(columns=rename_map)
             df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Pitch Grade Pctile", ascending=False)
+            _pctile_scale = (1, 50, 100)
+            _fixed = {
+                col: _pctile_scale for col in [
+                    "Usage (%) Pctile",
+                    "Pitch Grade Pctile", "Execution Grade Pctile",
+                    "Velo", "Max Velo", "VAA", "HAA",
+                    "IVB (in.)", "HB (in.)", "RPM", "Inferred Spin Efficiency (%)",
+                    "CSW (%)", "SwStr (%)", "LA<=0%",
+                    "Z-Contact (%)", "Chase (%)", "Ball (%)", "pSwStr (%)",
+                    "Damage/BBE%", "pDamage/BBE%", "Takeoff Against (%)",
+                ]
+            }
             render_table(
                 df,
-                reverse_cols={"HR"},
                 abs_cols=ABS_GRADIENT_COLS_PITCH_TYPES,
                 label_cols=["Name", "Pitch Type", "Split", "split", "Split Type"],
                 round_decimals=0,
+                fixed_scale_cols=_fixed,
             )
             download_button(df, "pitch_percentiles", "pitch_pct_download")
 
@@ -680,15 +759,24 @@ def pitch_comps():
         st.info("Select at least one column to compute similarity scores.")
         return
 
-    # Exclude the target row from the comparison pool
+    # Restrict the comparison pool to pitches in the same pitch_group as the
+    # target (e.g. breaking-ball-to-breaking-ball) so similarity scores aren't
+    # inflated by cross-type variance.
+    target_pitch_group = (
+        target_df["pitch_group"].dropna().iloc[0]
+        if "pitch_group" in target_df.columns and target_df["pitch_group"].notna().any()
+        else None
+    )
+    # Exclude every pitch-season belonging to the target pitcher (other seasons
+    # and other pitch types alike), matching the hitter/pitcher comps behavior.
     eligible_comp = eligible_all.copy()
     eligible_comp = eligible_comp[
-        ~(
-            (eligible_comp["pitcher_mlbid"] == player_choice)
-            & (eligible_comp["season"] == season_choice)
-            & (eligible_comp["pitch_tag"] == pitch_tag_choice)
-        )
+        ~(eligible_comp["pitcher_mlbid"] == player_choice)
     ]
+    if target_pitch_group is not None and "pitch_group" in eligible_comp.columns:
+        eligible_comp = eligible_comp[
+            eligible_comp["pitch_group"] == target_pitch_group
+        ]
     eligible_comp = eligible_comp[eligible_comp[feature_cols].notna().any(axis=1)]
     if eligible_comp.empty:
         st.info("No comparable pitches found.")
@@ -702,11 +790,14 @@ def pitch_comps():
     target_stats = target_df[feature_cols].copy().fillna(means)
     target_vec = ((target_stats - means) / stds).fillna(0).iloc[0].to_numpy()
     distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
-    max_dist = distances.max() if len(distances) else 0.0
-    if max_dist == 0:
+    # Normalize against the 95th-percentile distance within the pitch_group pool
+    # so the similarity scale isn't compressed by a few outlier pitch-seasons.
+    # Rows farther than the 95th-percentile distance get clipped to 0.
+    ref_dist = float(np.quantile(distances, 0.95)) if len(distances) else 0.0
+    if ref_dist == 0:
         similarity = np.full_like(distances, 100.0, dtype=float)
     else:
-        similarity = 100 * (1 - (distances / max_dist))
+        similarity = np.clip(100 * (1 - (distances / ref_dist)), 0, 100)
 
     eligible_comp = eligible_comp.copy()
     eligible_comp["similarity_score"] = similarity.round(0)

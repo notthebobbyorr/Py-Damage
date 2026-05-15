@@ -331,6 +331,7 @@ def render_table(
     hide_cols: set[str] | None = None,
     round_decimals: int = 1,
     default_sort_col: str | None = None,
+    fixed_scale_cols: dict[str, tuple[float, float, float]] | None = None,
 ) -> None:
     if df.empty:
         st.info("No data available yet.")
@@ -553,7 +554,9 @@ def render_table(
                 if col not in format_cols:
                     styles.append("")
                     continue
-                if col in similarity_medians:
+                if fixed_scale_cols and col in fixed_scale_cols:
+                    vmin, vcenter, vmax = fixed_scale_cols[col]
+                elif col in similarity_medians:
                     vmin = 0
                     vmax = 99
                     vcenter = similarity_medians[col]
