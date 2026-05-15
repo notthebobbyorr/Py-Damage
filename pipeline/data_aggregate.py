@@ -208,6 +208,13 @@ def _split_vs_lr(df: pl.DataFrame, source_col: str) -> pl.Expr | None:
 
 
 def _split_home_away(df: pl.DataFrame, hitter: bool) -> pl.Expr | None:
+    # Preferred path: compare the player's team code to home_team/away_team.
+    # Fallback path: derive Home/Away from inning_topbot. The fallback fires
+    # per-row when the team strings are NULL or otherwise yield no label —
+    # incremental daily pulls sometimes leave home_team/away_team blank, and
+    # without this fallback those rows silently drop out of the aggregation.
+    team_home_cond = None
+    team_away_cond = None
     if "home_team" in df.columns and "away_team" in df.columns:
         home_team = (
             pl.col("home_team").cast(pl.Utf8).str.strip_chars().str.to_uppercase()
@@ -215,41 +222,46 @@ def _split_home_away(df: pl.DataFrame, hitter: bool) -> pl.Expr | None:
         away_team = (
             pl.col("away_team").cast(pl.Utf8).str.strip_chars().str.to_uppercase()
         )
-        if hitter and "hitting_code" in df.columns:
+        team_col = "hitting_code" if hitter else "pitching_code"
+        if team_col in df.columns:
             team = (
-                pl.col("hitting_code")
-                .cast(pl.Utf8)
-                .str.strip_chars()
-                .str.to_uppercase()
+                pl.col(team_col).cast(pl.Utf8).str.strip_chars().str.to_uppercase()
             )
-            home_cond = team == home_team
-            away_cond = team == away_team
-        elif (not hitter) and "pitching_code" in df.columns:
-            team = (
-                pl.col("pitching_code")
-                .cast(pl.Utf8)
-                .str.strip_chars()
-                .str.to_uppercase()
-            )
-            home_cond = team == home_team
-            away_cond = team == away_team
-        else:
-            home_cond = away_cond = None
-    else:
-        home_cond = away_cond = None
+            team_home_cond = team == home_team
+            team_away_cond = team == away_team
 
-    if home_cond is None or away_cond is None:
-        if "inning_topbot" not in df.columns:
-            return None
+    fallback_home_cond = None
+    fallback_away_cond = None
+    if "inning_topbot" in df.columns:
         topbot = (
             pl.col("inning_topbot").cast(pl.Utf8).str.strip_chars().str.to_lowercase()
         )
         if hitter:
-            home_cond = topbot.is_in(["bottom", "bot", "b"])
-            away_cond = topbot.is_in(["top", "t"])
+            fallback_home_cond = topbot.is_in(["bottom", "bot", "b"])
+            fallback_away_cond = topbot.is_in(["top", "t"])
         else:
-            home_cond = topbot.is_in(["top", "t"])
-            away_cond = topbot.is_in(["bottom", "bot", "b"])
+            fallback_home_cond = topbot.is_in(["top", "t"])
+            fallback_away_cond = topbot.is_in(["bottom", "bot", "b"])
+
+    if team_home_cond is None and fallback_home_cond is None:
+        return None
+    if team_home_cond is None:
+        home_cond = fallback_home_cond
+        away_cond = fallback_away_cond
+    elif fallback_home_cond is None:
+        home_cond = team_home_cond
+        away_cond = team_away_cond
+    else:
+        # Use the team comparison when it produces a definite Home or Away
+        # label for the row; otherwise fall back to inning_topbot.
+        team_labeled = team_home_cond.fill_null(False) | team_away_cond.fill_null(False)
+        home_cond = (
+            pl.when(team_labeled).then(team_home_cond).otherwise(fallback_home_cond)
+        )
+        away_cond = (
+            pl.when(team_labeled).then(team_away_cond).otherwise(fallback_away_cond)
+        )
+
     return (
         pl.when(home_cond)
         .then(pl.lit("Home"))
@@ -2421,10 +2433,11 @@ def _build_outputs(
         pitch = pitch.with_columns(_casts)
 
     # Recode legacy AZ team code to ARI everywhere (hitter, pitcher, team tables,
-    # splits all derive from these source columns).
+    # splits all derive from these source columns). Includes home_team/away_team
+    # because the Home/Away split compares pitching_code against them.
     _team_recodes = [
         pl.col(c).replace("AZ", "ARI").alias(c)
-        for c in ("hitting_code", "pitching_code")
+        for c in ("hitting_code", "pitching_code", "home_team", "away_team")
         if c in pitch.columns
     ]
     if _team_recodes:
