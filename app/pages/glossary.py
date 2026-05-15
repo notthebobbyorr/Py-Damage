@@ -42,6 +42,12 @@ def glossary_hitting():
                 
 **SB**: Stolen Bases.
 
+**VBA**: Vertical Bat Angle, or swing tilt.
+
+**Intercept X**: Horizontal inches away from the hitter's center of mass at which he makes contact or comes closest to the ball while swinging.
+
+**Intercept Y**: Inches towards the pitcher, away from the hitter's center of mass at which he makes contact or comes closest to the ball while swinging.
+
 **Takeoff (%)**: Percentage of SBO where the player attempted to steal the next base.                                
 """)
 
@@ -93,9 +99,13 @@ def glossary_pitching():
 
 **Extension (ft.)**: Release point extension toward home plate in feet.
 
-**VAA**: Vertical approach angle (for individual pitches).
+**VAA**: Vertical approach angle (for individual pitches). The vertical angle the ball enters the strike zone.
 
-**HAA**: Horizontal approach angle (for individual pitches).
+**HAA**: Horizontal approach angle (for individual pitches). The horizontal angle the ball enters the strike zone.
+
+**VRA**: Vertical release angle (for individual pitches). The vertical angle the ball comes out of the pitcher's hand.
+
+**HRA**: Horizontal release angle (for individual pitches). The horizontal angle the ball comes out of the pitcher's hand.
 
 **IVB (in.)**: Induced vertical break in inches.
 
@@ -104,6 +114,8 @@ def glossary_pitching():
 **Zone (%)**: Percentage of pitches thrown in the strike zone.
                 
 **SBO**: Stolen Base Opportunities. Number of times a player was on base with the base ahead of him unoccupied.
+
+**Inferred Arm Angle**: an approximation of the pitcher's arm angle based on release traits and the pitcher's height.
                 
 **SB**: Stolen Bases.
 

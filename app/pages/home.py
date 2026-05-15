@@ -4,6 +4,33 @@ import pandas as pd
 import streamlit as st
 
 
+FEATURE_TIMELINE: list[dict[str, str]] = [
+    {
+        "date": "2026-05-15",
+        "title": "Percentile Modes — Customizable vs. Constant",
+        "page": "Hitters / Pitchers / Individual Pitches → Percentiles",
+        "description": (
+            "Each percentile page now has a **Percentile Mode** toggle at the top of the filter panel. \n\n"
+            "**Customizable** (default) keeps the existing behavior — percentiles recompute from the population after applying filters. \n\n "
+            "**Constant** uses a fixed, stable percentile basis drawn from the Regular Season, 150+ PA for Hitters / 150+ TBF for Pitchers / 150+ pitches for Individual Pitches per season and level. "
+            "Tip: Use Constant when viewing a single player across multiple years — otherwise the dynamic recompute would rank the player only against themselves and return 100th percentile in every category. "
+        ),
+    },
+    {
+        "date": "2026-05-12",
+        "title": "Team Splits, New Stats, & Pitch-Level Comps",
+        "page": "Teams → Splits / Hitters → Individual Stats / Individual Pitches → Shapes and Outcomes / Individual Pitches → Pitch Level Comps",
+        "description": (
+            " - Added team-level splits (vs. L/R, Home/Away, 1st/2nd Half, Monthly) on the Team Hitting and Team Pitching pages. \n\n"
+          " - Added swing metrics (VBA, or swing tilt, Avg Swing Speed, Avg Swing Length, Fast Swing (75+ mph) %, Intercept X (in. from batter's body horizontally), Intercept Y (in. from batter's body towards the pitcher) to the Hitter stats page. \n\n"
+          " - Added Inferred Arm Angle to the Pitcher stats page. \n\n"
+          " - Added Vertical and Horizontal Release Angles to the Individual Pitches shapes and outcomes page. \n\n"
+          " - Added Pitch Level Comps for finding similar pitch-seasons by velo, shapes, release traits, or results. Every column from the Shapes and Outcomes page is available to form the comparison, and pitches are compared within broad pitch group buckets (fastballs to other fastballs, breaking balls to other breaking balls, etc.)."
+        ),
+    },
+]
+
+
 def home_page():
     """Welcome/Home page"""
     st.title("The App & New Features")
@@ -48,3 +75,36 @@ Pitch level comps are in the works and will be added soon, and I hope to have my
 """
     )
     st.write(f"Last Update: {pd.Timestamp.today().date()}")
+
+
+def home_timeline():
+    """What's New — chronological log of feature/page additions."""
+    st.title("What's New")
+    st.caption(
+        "A running log of new features, pages, and notable changes — newest first. "
+        "Use this to catch up on anything that's been added since your last visit."
+    )
+    st.markdown("---")
+
+    if not FEATURE_TIMELINE:
+        st.info("No entries yet — check back soon.")
+        return
+
+    sorted_entries = sorted(
+        FEATURE_TIMELINE, key=lambda e: e.get("date", ""), reverse=True
+    )
+    for entry in sorted_entries:
+        date = entry.get("date", "")
+        title = entry.get("title", "")
+        page = entry.get("page", "")
+        description = entry.get("description", "")
+        try:
+            date_dt = pd.to_datetime(date)
+            date_label = f"{date_dt.strftime('%B')} {date_dt.day}, {date_dt.year}"
+        except Exception:
+            date_label = date or ""
+        st.markdown(f"### {date_label} — {title}")
+        if page:
+            st.caption(f"📍 {page}")
+        st.markdown(description)
+        st.markdown("---")

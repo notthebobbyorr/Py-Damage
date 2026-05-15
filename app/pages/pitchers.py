@@ -32,8 +32,38 @@ from app.filters import (
     season_options,
     team_options,
 )
-from app.utils import _pitcher_display_map, _similarity_choice_labels, maybe_add_level_col, rank_for_display
+from app.utils import (
+    _pitcher_display_map,
+    _similarity_choice_labels,
+    constant_pctile_subset,
+    maybe_add_level_col,
+    rank_for_display,
+)
 from app.viz import render_table
+
+
+_PITCHER_PCT_COLS = [
+    "stuff", "grade_v13", "fastball_velo", "max_velo", "fastball_vaa",
+    "SwStr", "Ball_pct", "Z_Contact", "Chase", "CSW",
+    "rel_z", "rel_x", "ext",
+    "p_SwStr_pct", "Damage_pct", "p_Damage_pct", "takeoff_rate",
+]
+_PITCHER_PCT_REVERSE = {
+    "fastball_vaa", "Ball_pct", "Z_Contact", "takeoff_rate",
+    "Damage_pct", "p_Damage_pct",
+}
+
+
+@st.cache_resource
+def _pitcher_constant_pct() -> pd.DataFrame:
+    """Constant percentile basis: Regular Season, TBF >= 150, per season + level."""
+    return constant_pctile_subset(
+        pitcher_pct,
+        cols=_PITCHER_PCT_COLS,
+        workload_col="TBF",
+        workload_min=150,
+        reverse_cols=_PITCHER_PCT_REVERSE,
+    )
 
 
 def pitcher_individual_stats():
@@ -234,6 +264,20 @@ def pitcher_percentiles():
         }
         left, right = st.columns([1, 3])
         with left:
+            mode = st.radio(
+                "Percentile Mode",
+                ["Customizable", "Constant"],
+                index=0,
+                key="pitcher_pct_mode",
+                help=(
+                    "Customizable: percentiles recompute against the population "
+                    "matching your filters and minimum threshold. "
+                    "Constant: stable, season-level percentiles drawn from a fixed "
+                    "Regular-Season, 150+ TBF population. Use Constant when filtering "
+                    "to a single player so the displayed ranks reflect league-wide "
+                    "context rather than the player's own row."
+                ),
+            )
             level = st.selectbox(
                 "Select Level",
                 ["All", "MLB", "Triple-A", "Low-A", "Low Minors"],
@@ -250,26 +294,35 @@ def pitcher_percentiles():
                 ),
                 key="pitcher_pct_season",
             )
-            game_type_group = st.selectbox(
-                "Game Type",
-                game_type_group_options(pitcher_pct),
-                index=0,
-                key="pitcher_pct_game_type_group",
-            )
-            min_value = st.number_input(
-                "Minimum Value",
-                min_value=0,
-                max_value=2000,
-                value=20,
-                step=1,
-                key="pitcher_pct_min_value",
-            )
-            filter_type = st.selectbox(
-                "Filter By",
-                ["TBF", "IP", "GS"],
-                index=0,
-                key="pitcher_pct_filter_type",
-            )
+            if mode == "Customizable":
+                game_type_group = st.selectbox(
+                    "Game Type",
+                    game_type_group_options(pitcher_pct),
+                    index=0,
+                    key="pitcher_pct_game_type_group",
+                )
+                min_value = st.number_input(
+                    "Minimum Value",
+                    min_value=0,
+                    max_value=2000,
+                    value=20,
+                    step=1,
+                    key="pitcher_pct_min_value",
+                )
+                filter_type = st.selectbox(
+                    "Filter By",
+                    ["TBF", "IP", "GS"],
+                    index=0,
+                    key="pitcher_pct_filter_type",
+                )
+            else:
+                game_type_group = "Regular Season"
+                min_value = 0
+                filter_type = "TBF"
+                st.caption(
+                    "Constant mode: Regular Season, TBF ≥ 150, ranked within each season + level. "
+                    "Recommended when viewing a single player across years."
+                )
             team = st.selectbox(
                 "Select Team",
                 team_options(pitcher_pct, "pitching_code"),
@@ -293,31 +346,33 @@ def pitcher_percentiles():
         with right:
             if game_type_group != "Regular Season":
                 st.info(GAME_TYPE_GROUP_NOTE.format(game_type_group))
-            df = pitcher_pct.copy()
+            if mode == "Constant":
+                df = _pitcher_constant_pct().copy()
+            else:
+                df = pitcher_pct.copy()
             df = df[df["level_id"].isin(_LEVEL_MAP[level])]
             df = filter_by_values(df, "season", season)
             df = filter_by_game_type_group(df, game_type_group)
             df = filter_by_team_token(df, "pitching_code", team)
             df = filter_by_values(df, "pitcher_mlbid", player)
-            df = pitcher_workload_filter(df, filter_type, min_value)
 
-            df = rank_for_display(df, [
-                "stuff", "fastball_velo", "max_velo", "fastball_vaa",
-                "SwStr", "Ball_pct", "Z_Contact", "Chase", "CSW",
-                "rel_z", "rel_x", "ext",
-                "p_SwStr_pct", "Damage_pct", "p_Damage_pct", "takeoff_rate",
-            ], ["season", "level_id", "game_type_group"],
-            reverse_cols={"fastball_vaa", "Ball_pct", "Z_Contact", "takeoff_rate", "Damage_pct", "p_Damage_pct"})
+            if mode == "Customizable":
+                df = pitcher_workload_filter(df, filter_type, min_value)
+
+                df = rank_for_display(
+                    df,
+                    _PITCHER_PCT_COLS,
+                    ["season", "level_id", "game_type_group"],
+                    reverse_cols=_PITCHER_PCT_REVERSE,
+                )
 
             columns = [
                 "name",
                 "pitcher_mlbid",
                 "pitching_code",
                 "season",
-                "GS",
-                "HR",
                 "stuff_pctile",
-                "grade_v13",
+                "grade_v13_pctile",
                 "fastball_velo_pctile",
                 "max_velo_pctile",
                 "fastball_vaa_pctile",
@@ -343,8 +398,6 @@ def pitcher_percentiles():
                 "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
                 "season": "Season",
-                "GS": "GS",
-                "HR": "HR",
                 "stuff_pctile": "Pitch Grade Pctile",
                 "fastball_velo_pctile": "Avg FA mph",
                 "max_velo_pctile": "Max FA mph",
@@ -357,7 +410,7 @@ def pitcher_percentiles():
                 "rel_z_pctile": "Vertical Release (ft.)",
                 "rel_x_pctile": "Horizontal Release (ft.)",
                 "ext_pctile": "Extension (ft.)",
-                "grade_v13": "Execution Grade",
+                "grade_v13_pctile": "Execution Grade Pctile",
                 "p_SwStr_pct_pctile": "pSwStr (%)",
                 "Damage_pct_pctile": "Damage/BBE%",
                 "p_Damage_pct_pctile": "pDamage/BBE%",
@@ -366,11 +419,21 @@ def pitcher_percentiles():
             df = df.rename(columns=rename_map)
             df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Pitch Grade Pctile", ascending=False)
+            _pctile_scale = (1, 50, 100)
+            _fixed = {
+                col: _pctile_scale for col in [
+                    "Pitch Grade Pctile", "Execution Grade Pctile",
+                    "Avg FA mph", "Max FA mph", "FA VAA",
+                    "SwStr (%)", "Ball (%)", "Z-Contact (%)", "Chase (%)", "CSW (%)",
+                    "Vertical Release (ft.)", "Horizontal Release (ft.)", "Extension (ft.)",
+                    "pSwStr (%)", "Damage/BBE%", "pDamage/BBE%", "Takeoff Against (%)",
+                ]
+            }
             render_table(
                 df,
-                reverse_cols={"HR"},
                 abs_cols=ABS_GRADIENT_COLS_PITCHERS,
                 round_decimals=0,
+                fixed_scale_cols=_fixed,
             )
             download_button(df, "pitcher_percentiles", "pitcher_pct_download")
 

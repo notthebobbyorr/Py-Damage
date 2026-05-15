@@ -36,8 +36,36 @@ from app.filters import (
     season_options,
     team_options,
 )
-from app.utils import _hitter_display_map, _similarity_choice_labels, maybe_add_level_col, rank_for_display
+from app.utils import (
+    _hitter_display_map,
+    _similarity_choice_labels,
+    constant_pctile_subset,
+    maybe_add_level_col,
+    rank_for_display,
+)
 from app.viz import render_table
+
+
+_HITTER_PCT_COLS = [
+    "SEAGER", "selection_skill", "hittable_pitches_taken", "damage_rate",
+    "EV90th", "max_EV", "pull_FB_pct", "chase", "z_con",
+    "secondary_whiff_pct", "whiffs_vs_95", "contact_vs_avg", "takeoff_rate",
+]
+_HITTER_PCT_REVERSE = {
+    "hittable_pitches_taken", "chase", "secondary_whiff_pct", "whiffs_vs_95",
+}
+
+
+@st.cache_resource
+def _hitter_constant_pct() -> pd.DataFrame:
+    """Constant percentile basis: Regular Season, PA >= 150, per season + level."""
+    return constant_pctile_subset(
+        hitter_pct,
+        cols=_HITTER_PCT_COLS,
+        workload_col="PA",
+        workload_min=150,
+        reverse_cols=_HITTER_PCT_REVERSE,
+    )
 
 
 def hitter_individual_stats():
@@ -210,6 +238,20 @@ def hitter_percentiles():
         }
         left, right = st.columns([1, 3])
         with left:
+            mode = st.radio(
+                "Percentile Mode",
+                ["Customizable", "Constant"],
+                index=0,
+                key="hitter_pct_mode",
+                help=(
+                    "Customizable: percentiles recompute against the population "
+                    "matching your filters and minimum threshold. "
+                    "Constant: stable, season-level percentiles drawn from a fixed "
+                    "Regular-Season, 150+ PA population. Use Constant when filtering "
+                    "to a single player so the displayed ranks reflect league-wide "
+                    "context rather than the player's own row."
+                ),
+            )
             level = st.selectbox(
                 "Select Level",
                 ["All", "MLB", "Triple-A", "Low-A", "Low Minors"],
@@ -226,23 +268,32 @@ def hitter_percentiles():
                 ),
                 key="hitter_pct_season",
             )
-            game_type_group = st.selectbox(
-                "Game Type",
-                game_type_group_options(hitter_pct),
-                index=0,
-                key="hitter_pct_game_type_group",
-            )
-            min_value = st.number_input(
-                "Minimum Value",
-                min_value=0,
-                max_value=2000,
-                value=20,
-                step=1,
-                key="hitter_pct_min_value",
-            )
-            value_type = st.selectbox(
-                "Filter By", ["PA", "BBE"], index=1, key="hitter_pct_value_type"
-            )
+            if mode == "Customizable":
+                game_type_group = st.selectbox(
+                    "Game Type",
+                    game_type_group_options(hitter_pct),
+                    index=0,
+                    key="hitter_pct_game_type_group",
+                )
+                min_value = st.number_input(
+                    "Minimum Value",
+                    min_value=0,
+                    max_value=2000,
+                    value=20,
+                    step=1,
+                    key="hitter_pct_min_value",
+                )
+                value_type = st.selectbox(
+                    "Filter By", ["PA", "BBE"], index=1, key="hitter_pct_value_type"
+                )
+            else:
+                game_type_group = "Regular Season"
+                min_value = 0
+                value_type = "PA"
+                st.caption(
+                    "Constant mode: Regular Season, PA ≥ 150, ranked within each season + level. "
+                    "Recommended when viewing a single player across years."
+                )
             team = st.selectbox(
                 "Select Team",
                 team_options(hitter_pct, "hitting_code"),
@@ -275,7 +326,10 @@ def hitter_percentiles():
         with right:
             if game_type_group != "Regular Season":
                 st.info(GAME_TYPE_GROUP_NOTE.format(game_type_group))
-            df = hitter_pct.copy()
+            if mode == "Constant":
+                df = _hitter_constant_pct().copy()
+            else:
+                df = hitter_pct.copy()
             df = df[df["level_id"].isin(_LEVEL_MAP[level])]
             df = filter_by_values(df, "season", season)
             df = filter_by_game_type_group(df, game_type_group)
@@ -283,20 +337,21 @@ def hitter_percentiles():
             df = filter_by_positions(df, position)
             df = filter_by_values(df, "batter_mlbid", player)
 
-            if value_type == "PA":
-                df = numeric_filter(df, "PA", min_value)
-            else:
-                df = numeric_filter(df, "bbe", min_value)
+            if mode == "Customizable":
+                if value_type == "PA":
+                    df = numeric_filter(df, "PA", min_value)
+                else:
+                    df = numeric_filter(df, "bbe", min_value)
 
-            df = rank_for_display(df, [
-                "SEAGER", "selection_skill", "hittable_pitches_taken", "damage_rate",
-                "EV90th", "max_EV", "pull_FB_pct", "chase", "z_con",
-                "secondary_whiff_pct", "whiffs_vs_95", "contact_vs_avg", "takeoff_rate",
-            ], ["season", "level_id", "game_type_group"],
-            reverse_cols={"hittable_pitches_taken", "chase", "secondary_whiff_pct", "whiffs_vs_95"})
+                df = rank_for_display(
+                    df,
+                    _HITTER_PCT_COLS,
+                    ["season", "level_id", "game_type_group"],
+                    reverse_cols=_HITTER_PCT_REVERSE,
+                )
 
             columns = [
-                "hitter_name", "batter_mlbid", "hitting_code", "season", "HR",
+                "hitter_name", "batter_mlbid", "hitting_code", "season",
                 "SEAGER_pctile", "selection_skill_pctile", "hittable_pitches_taken_pctile",
                 "damage_rate_pctile", "EV90th_pctile", "max_EV_pctile",
                 "pull_FB_pct_pctile", "chase_pctile", "z_con_pctile",
@@ -307,7 +362,7 @@ def hitter_percentiles():
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
                 "hitter_name": "Name", "batter_mlbid": "Player ID",
-                "hitting_code": "Team", "season": "Season", "HR": "HR",
+                "hitting_code": "Team", "season": "Season",
                 "SEAGER_pctile": "SEAGER", "selection_skill_pctile": "Selection Skill",
                 "hittable_pitches_taken_pctile": "Hittable Pitch Take",
                 "damage_rate_pctile": "Damage Rate", "EV90th_pctile": "90th Pctile EV",
@@ -321,9 +376,18 @@ def hitter_percentiles():
             df = df.rename(columns=rename_map)
             df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Damage Rate", ascending=False)
+            _pctile_scale = (1, 50, 100)
             render_table(
                 df,
                 round_decimals=0,
+                fixed_scale_cols={
+                    col: _pctile_scale for col in [
+                        "SEAGER", "Selection Skill", "Hittable Pitch Take", "Damage Rate",
+                        "90th Pctile EV", "Max EV", "Pulled FB", "Chase", "Z-Contact",
+                        "Whiff vs Secondaries", "Whiff vs 95+", "Contact Over Expected",
+                        "Takeoff%",
+                    ]
+                },
             )
             download_button(df, "hitter_percentiles", "hitter_pct_download")
 
