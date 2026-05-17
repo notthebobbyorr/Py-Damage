@@ -209,7 +209,8 @@ def _split_vs_lr(df: pl.DataFrame, source_col: str) -> pl.Expr | None:
 
 def _split_home_away(df: pl.DataFrame, hitter: bool) -> pl.Expr | None:
     # Preferred path: compare the player's team code to home_team/away_team.
-    # Fallback path: derive Home/Away from inning_topbot. The fallback fires
+    # Fallback path: derive Home/Away from half_inning (older data may use the
+    # legacy name inning_topbot — both are checked). The fallback fires
     # per-row when the team strings are NULL or otherwise yield no label —
     # incremental daily pulls sometimes leave home_team/away_team blank, and
     # without this fallback those rows silently drop out of the aggregation.
@@ -232,9 +233,17 @@ def _split_home_away(df: pl.DataFrame, hitter: bool) -> pl.Expr | None:
 
     fallback_home_cond = None
     fallback_away_cond = None
-    if "inning_topbot" in df.columns:
+    # Source play-by-play uses "half_inning" (values: "top"/"bottom"). Older
+    # data may have used "inning_topbot" with the same semantics — accept
+    # either column name so older snapshots still work.
+    fallback_col = (
+        "half_inning"
+        if "half_inning" in df.columns
+        else ("inning_topbot" if "inning_topbot" in df.columns else None)
+    )
+    if fallback_col is not None:
         topbot = (
-            pl.col("inning_topbot").cast(pl.Utf8).str.strip_chars().str.to_lowercase()
+            pl.col(fallback_col).cast(pl.Utf8).str.strip_chars().str.to_lowercase()
         )
         if hitter:
             fallback_home_cond = topbot.is_in(["bottom", "bot", "b"])
