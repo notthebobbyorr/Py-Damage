@@ -14,6 +14,7 @@ from app.auth import (
     _is_user_subscribed,
 )
 from app.config import ANNUAL_PAYMENT_LINK, MONTHLY_PAYMENT_LINK, PREVIEW_ROWS
+from app.pages.compare import radar_compare
 from app.pages.glossary import glossary_hitting, glossary_pitching
 from app.pages.hitters import (
     hitter_ar,
@@ -243,6 +244,9 @@ pages = {
     ],
     "Parks": [
         st.Page(park_data_page, title="Park HR per Damage BBE", icon="🏟️"),
+    ],
+    "Compare": [
+        st.Page(radar_compare, title="Radar Comparisons", icon="🕸️"),
     ],
     "Glossary": [
         st.Page(glossary_hitting, title="Hitting Glossary", icon="📖"),

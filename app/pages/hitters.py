@@ -36,6 +36,7 @@ from app.filters import (
     season_options,
     team_options,
 )
+from app.aggregates import HITTER_SPEC, render_span_tab
 from app.utils import (
     _hitter_display_map,
     _similarity_choice_labels,
@@ -1175,7 +1176,7 @@ def hitter_gamelogs_page():
         "Low-A": [14], "Low Minors": [16],
     }
 
-    tab_date, tab_player = st.tabs(["By Date", "By Player"])
+    tab_date, tab_player, tab_range = st.tabs(["By Date", "By Player", "Date Range"])
 
     with tab_date:
         left, right = st.columns([1, 3])
@@ -1269,3 +1270,16 @@ def hitter_gamelogs_page():
                 df = df.rename(columns=_RENAME)
                 render_table(df, stats_df=pd.DataFrame())
                 download_button(df, "hitter_gamelogs_player", "hgl_pl_dl")
+
+    with tab_range:
+        render_span_tab(
+            hitter_gamelogs,
+            HITTER_SPEC,
+            level_map=_level_map,
+            key_prefix="hgl_span",
+            entity="player",
+            team_col="hitting_code",
+            rename_map=_RENAME,
+            id_col="batter_mlbid",
+            name_col="hitter_name",
+        )

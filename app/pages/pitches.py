@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from app.aggregates import PITCH_TYPE_SPEC, render_span_tab
 from app.config import (
     ABS_GRADIENT_COLS_PITCH_TYPES,
     GAME_TYPE_GROUP_NOTE,
@@ -759,9 +760,29 @@ def pitch_comps():
         st.info("Select at least one column to compute similarity scores.")
         return
 
-    # Restrict the comparison pool to pitches in the same pitch_group as the
-    # target (e.g. breaking-ball-to-breaking-ball) so similarity scores aren't
-    # inflated by cross-type variance.
+    within_group = st.radio(
+        "Filter within pitch group",
+        ["Yes", "No"],
+        index=0,
+        horizontal=True,
+        key="pitch_comps_within_group",
+        help=(
+            "Yes: restrict comparisons to pitches in the same pitch_group "
+            "(fastball / breaking / offspeed). No: open up the pool so you can "
+            "compare across pitch types — e.g. a LH changeup to a RH sweeper."
+        ),
+    )
+    if within_group == "No":
+        pool_choice = st.radio(
+            "Comparison pool",
+            ["All pitches", "All non-fastballs"],
+            index=0,
+            horizontal=True,
+            key="pitch_comps_pool_choice",
+        )
+    else:
+        pool_choice = None
+
     target_pitch_group = (
         target_df["pitch_group"].dropna().iloc[0]
         if "pitch_group" in target_df.columns and target_df["pitch_group"].notna().any()
@@ -773,10 +794,13 @@ def pitch_comps():
     eligible_comp = eligible_comp[
         ~(eligible_comp["pitcher_mlbid"] == player_choice)
     ]
-    if target_pitch_group is not None and "pitch_group" in eligible_comp.columns:
-        eligible_comp = eligible_comp[
-            eligible_comp["pitch_group"] == target_pitch_group
-        ]
+    if within_group == "Yes":
+        if target_pitch_group is not None and "pitch_group" in eligible_comp.columns:
+            eligible_comp = eligible_comp[
+                eligible_comp["pitch_group"] == target_pitch_group
+            ]
+    elif pool_choice == "All non-fastballs" and "pitch_group" in eligible_comp.columns:
+        eligible_comp = eligible_comp[eligible_comp["pitch_group"] != "FA"]
     eligible_comp = eligible_comp[eligible_comp[feature_cols].notna().any(axis=1)]
     if eligible_comp.empty:
         st.info("No comparable pitches found.")
@@ -877,7 +901,13 @@ def pitch_comps():
         show_controls=False,
         label_cols=["Name", "Pitch Type"],
     )
-    st.caption("Most similar pitches (MLB, min 100 pitches)")
+    if within_group == "Yes":
+        _pool_desc = f"same pitch group ({target_pitch_group})" if target_pitch_group else "same pitch group"
+    elif pool_choice == "All non-fastballs":
+        _pool_desc = "all non-fastballs"
+    else:
+        _pool_desc = "all pitches"
+    st.caption(f"Most similar pitches (MLB, min 100 pitches, pool: {_pool_desc})")
     render_table(
         df,
         reverse_cols=PITCH_REVERSE_DISPLAY_COLS,
@@ -1142,7 +1172,7 @@ def pitch_type_gamelogs_page():
         "Low-A": [14], "Low Minors": [16],
     }
 
-    tab_date, tab_player = st.tabs(["By Date", "By Player"])
+    tab_date, tab_player, tab_range = st.tabs(["By Date", "By Player", "Date Range"])
 
     with tab_date:
         left, right = st.columns([1, 3])
@@ -1238,3 +1268,17 @@ def pitch_type_gamelogs_page():
                 df = df.rename(columns=_RENAME)
                 render_table(df, stats_df=pd.DataFrame())
                 download_button(df, "pitch_type_gamelogs_player", "ptgl_pl_dl")
+
+    with tab_range:
+        render_span_tab(
+            pitch_type_gamelogs,
+            PITCH_TYPE_SPEC,
+            level_map=_level_map,
+            key_prefix="ptgl_span",
+            entity="player",
+            team_col="pitching_code",
+            rename_map=_RENAME,
+            id_col="pitcher_mlbid",
+            name_col="pitcher_name",
+            pitch_tag_filter=True,
+        )
