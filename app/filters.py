@@ -178,10 +178,112 @@ def download_button(df: pd.DataFrame, label: str, key: str) -> None:
     st.download_button(label, data=csv, file_name=f"{label}.csv", key=key)
 
 
+_CUSTOM_COL_OPS = {
+    "+": lambda a, b: a + b,
+    "-": lambda a, b: a - b,
+    "*": lambda a, b: a * b,
+    "/": lambda a, b: a / b.replace(0, np.nan),
+}
+
+
+def _apply_custom_columns(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
+    """Append session-defined custom columns to df (computed left-to-right)."""
+    state_key = f"{key_prefix}_custom_cols"
+    defs = st.session_state.get(state_key, [])
+    if not defs:
+        return df
+    out = df
+    for spec in defs:
+        name = spec.get("name")
+        base = spec.get("base_cols", [])
+        op = spec.get("op")
+        if not name or len(base) < 2 or op not in _CUSTOM_COL_OPS:
+            continue
+        if not all(col in out.columns for col in base):
+            continue
+        try:
+            series = pd.to_numeric(out[base[0]], errors="coerce")
+            for other in base[1:]:
+                other_series = pd.to_numeric(out[other], errors="coerce")
+                series = _CUSTOM_COL_OPS[op](series, other_series)
+            series = series.replace([np.inf, -np.inf], np.nan)
+            out = out.copy()
+            out[name] = series
+        except Exception:
+            continue
+    return out
+
+
+def _render_custom_column_builder(df: pd.DataFrame, key_prefix: str) -> None:
+    state_key = f"{key_prefix}_custom_cols"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = []
+
+    st.caption("**Custom columns** — build a derived column from existing numeric columns.")
+    numeric_cols = [
+        col for col in df.columns
+        if not col.startswith("__") and pd.api.types.is_numeric_dtype(df[col])
+    ]
+    existing = st.session_state[state_key]
+    existing_names = {spec["name"] for spec in existing}
+    candidate_cols = [c for c in numeric_cols if c not in existing_names]
+
+    if not candidate_cols or len(candidate_cols) < 2:
+        st.caption("Need at least 2 numeric columns to build a custom column.")
+    else:
+        builder_col1, builder_col2 = st.columns([3, 1])
+        with builder_col1:
+            base = st.multiselect(
+                "Base columns (applied left-to-right)",
+                options=candidate_cols,
+                key=f"{key_prefix}_custom_base",
+                max_selections=4,
+            )
+        with builder_col2:
+            op = st.selectbox(
+                "Operator",
+                options=list(_CUSTOM_COL_OPS.keys()),
+                key=f"{key_prefix}_custom_op",
+            )
+        name = st.text_input(
+            "Column name",
+            key=f"{key_prefix}_custom_name",
+            placeholder="e.g. HR rate",
+        )
+        if st.button("Add column", key=f"{key_prefix}_custom_add"):
+            cleaned_name = (name or "").strip()
+            if len(base) < 2:
+                st.warning("Select at least 2 base columns.")
+            elif not cleaned_name:
+                st.warning("Give the column a name.")
+            elif cleaned_name in df.columns or cleaned_name in existing_names:
+                st.warning(f"A column named '{cleaned_name}' already exists.")
+            else:
+                st.session_state[state_key].append(
+                    {"name": cleaned_name, "base_cols": list(base), "op": op}
+                )
+                st.rerun()
+
+    if existing:
+        st.caption("Active custom columns:")
+        for idx, spec in enumerate(existing):
+            row1, row2 = st.columns([5, 1])
+            with row1:
+                expr = f" {spec['op']} ".join(spec["base_cols"])
+                st.write(f"**{spec['name']}** = `{expr}`")
+            with row2:
+                if st.button("Remove", key=f"{key_prefix}_custom_rm_{idx}"):
+                    st.session_state[state_key].pop(idx)
+                    st.rerun()
+
+
 def apply_column_filters(df: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
     if df.empty:
         return df
+    df = _apply_custom_columns(df, key_prefix)
     with st.expander("Column filters", expanded=False):
+        _render_custom_column_builder(df, key_prefix)
+        st.markdown("---")
         filtered = df
         for col in df.columns:
             if col.startswith("__"):

@@ -6,6 +6,17 @@ import streamlit as st
 
 FEATURE_TIMELINE: list[dict[str, str]] = [
     {
+        "date": "2026-06-14",
+        "title": "Radar Comparisons, Custom Columns, Cross-Type Pitch Comps & Date-Range Gamelogs",
+        "page": "Compare → Radar Comparisons / any stats table → Column filters / Individual Pitches → Pitch Level Comps / all Gamelogs pages → Date Range",
+        "description": (
+            " - **Radar Comparisons** (new **Compare** section): pick up to 4 player-seasons and overlay them on a spider plot. Choose Hitter or Pitcher, Raw or Auto-Regressed values, and a template (e.g. Over the Plate, Batted Ball, Bat Path, Stuff/Traits, Overall). Each spoke is a league-wide percentile, and 'lower-is-better' stats are flipped so a bigger shape is always better. \n\n"
+            " - **Custom Columns**: open the **Column filters** expander on any stats table to build your own column from existing ones — pick 2+ columns, choose an operator (+, −, ×, ÷), and name it (e.g. HR ÷ BBE → 'HR rate'). It sorts, filters, and downloads like any other column. Custom columns last for your session. \n\n"
+            " - **Cross-Type Pitch Comps**: on Pitch Level Comps you can now turn off 'Filter within pitch group' to compare across pitch types — e.g. a lefty changeup vs. a righty sweeper — with an option to compare against all pitches or all non-fastballs. \n\n"
+            " - **Date-Range Aggregates** on every Gamelogs page (Hitters, Pitchers, Individual Pitches, Team Hitting, Team Pitching): a new **Date Range** tab lets you pick a start and end date and roll the games in that span into a single line — either raw counts or the rates as shown on the main stats pages — with the per-game rows listed beneath the total."
+        ),
+    },
+    {
         "date": "2026-05-15",
         "title": "Percentile Modes — Customizable vs. Constant",
         "page": "Hitters / Pitchers / Individual Pitches → Percentiles",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from app.aggregates import TEAM_HITTER_SPEC, TEAM_PITCHER_SPEC, render_span_tab
 from app.config import (
     GAME_TYPE_GROUP_NOTE,
     HIGHER_IS_WORSE_COLS,
@@ -547,7 +548,7 @@ def team_hitting_gamelogs():
         "MLB": [1], "Triple-A": [11], "Low-A": [14], "Low Minors": [16],
     }
 
-    tab_date, tab_team = st.tabs(["By Date", "By Team"])
+    tab_date, tab_team, tab_range = st.tabs(["By Date", "By Team", "Date Range"])
 
     with tab_date:
         left, right = st.columns([1, 3])
@@ -632,6 +633,17 @@ def team_hitting_gamelogs():
             render_table(df, stats_df=pd.DataFrame())
             download_button(df, "team_hitting_gamelogs_team", "thgl_tm_dl")
 
+    with tab_range:
+        render_span_tab(
+            team_hitter_gamelogs,
+            TEAM_HITTER_SPEC,
+            level_map=_level_map,
+            key_prefix="thgl_span",
+            entity="team",
+            team_col="hitting_code",
+            rename_map=_RENAME,
+        )
+
 
 def team_pitching_gamelogs():
     """Teams - Pitching Game Logs page"""
@@ -667,7 +679,7 @@ def team_pitching_gamelogs():
         "MLB": [1], "Triple-A": [11], "Low-A": [14], "Low Minors": [16],
     }
 
-    tab_date, tab_team = st.tabs(["By Date", "By Team"])
+    tab_date, tab_team, tab_range = st.tabs(["By Date", "By Team", "Date Range"])
 
     with tab_date:
         left, right = st.columns([1, 3])
@@ -751,3 +763,14 @@ def team_pitching_gamelogs():
             df = df.rename(columns=_RENAME)
             render_table(df, stats_df=pd.DataFrame())
             download_button(df, "team_pitching_gamelogs_team", "tpgl_tm_dl")
+
+    with tab_range:
+        render_span_tab(
+            team_pitcher_gamelogs,
+            TEAM_PITCHER_SPEC,
+            level_map=_level_map,
+            key_prefix="tpgl_span",
+            entity="team",
+            team_col="pitching_code",
+            rename_map=_RENAME,
+        )

@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from app.aggregates import PITCHER_SPEC, render_span_tab
 from app.config import (
     ABS_GRADIENT_COLS_PITCHERS,
     GAME_TYPE_GROUP_NOTE,
@@ -1339,7 +1340,7 @@ def pitcher_gamelogs_page():
         "Low-A": [14], "Low Minors": [16],
     }
 
-    tab_date, tab_player = st.tabs(["By Date", "By Player"])
+    tab_date, tab_player, tab_range = st.tabs(["By Date", "By Player", "Date Range"])
 
     with tab_date:
         left, right = st.columns([1, 3])
@@ -1433,3 +1434,16 @@ def pitcher_gamelogs_page():
                 df = df.rename(columns=_RENAME)
                 render_table(df, stats_df=pd.DataFrame())
                 download_button(df, "pitcher_gamelogs_player", "pgl_pl_dl")
+
+    with tab_range:
+        render_span_tab(
+            pitcher_gamelogs,
+            PITCHER_SPEC,
+            level_map=_level_map,
+            key_prefix="pgl_span",
+            entity="player",
+            team_col="pitching_code",
+            rename_map=_RENAME,
+            id_col="pitcher_mlbid",
+            name_col="pitcher_name",
+        )
