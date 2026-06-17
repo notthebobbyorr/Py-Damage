@@ -126,6 +126,12 @@ def git_push(end_date: date, dry_run: bool = False) -> None:
     If the tip of main is already a 'daily data update' commit, amend it
     in-place rather than adding a new commit. This keeps exactly one data
     commit on top of the code history, so the clone size stays constant.
+
+    Assumes the caller has already fast-forwarded local main to origin/main
+    (see run_pipeline), so the amend path only ever rewrites our own data
+    commit. The amend push uses --force-with-lease so that if origin/main
+    advanced since our last fetch (e.g. a PR merged mid-run), the push aborts
+    rather than discarding those commits.
     """
     commit_msg = "daily data update"
     print(f"\n{'[DRY RUN] ' if dry_run else ''}Git push: staging data/output/, committing, and pushing.")
@@ -143,7 +149,7 @@ def git_push(end_date: date, dry_run: bool = False) -> None:
 
     if amend:
         run(["git", "commit", "--amend", "-m", commit_msg], dry_run=dry_run, cwd=HERE)
-        run(["git", "push", "--force", "origin", "main"], dry_run=dry_run, cwd=HERE)
+        run(["git", "push", "--force-with-lease", "origin", "main"], dry_run=dry_run, cwd=HERE)
     else:
         run(["git", "commit", "-m", commit_msg], dry_run=dry_run, cwd=HERE)
         run(["git", "push"], dry_run=dry_run, cwd=HERE)
@@ -283,6 +289,12 @@ def main(
 ) -> None:
     # Ensure we are on main before doing anything — prevents committing to a feature branch
     run(["git", "checkout", "main"], dry_run=dry_run, cwd=HERE)
+    # Sync local main with the remote first so a PR merged on GitHub is incorporated
+    # rather than overwritten by the amend + force-push in git_push(). Fast-forward
+    # only: if history has diverged in a way that can't fast-forward, abort loudly
+    # instead of silently clobbering remote commits.
+    run(["git", "fetch", "origin", "main"], dry_run=dry_run, cwd=HERE)
+    run(["git", "merge", "--ff-only", "origin/main"], dry_run=dry_run, cwd=HERE)
 
     last_pull_date = read_last_pull_date()
     if start_date is None:
