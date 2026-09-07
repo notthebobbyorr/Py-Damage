@@ -19,6 +19,7 @@ from app.pages.glossary import glossary_hitting, glossary_pitching
 from app.pages.hitters import (
     hitter_ar,
     hitter_comps,
+    hitter_changes,
     hitter_gamelogs_page,
     hitter_individual_stats,
     hitter_mlb_equivalencies,
@@ -31,6 +32,7 @@ from app.pages.parks import park_data_page
 from app.pages.pitchers import (
     pitcher_ar,
     pitcher_comps,
+    pitcher_changes,
     pitcher_gamelogs_page,
     pitcher_individual_stats,
     pitcher_mlb_equivalencies,
@@ -211,6 +213,7 @@ pages = {
         st.Page(hitter_comps, title="Hitter Comps", icon="🔍"),
         st.Page(hitter_mlb_equivalencies, title="MLB Equivalencies", icon="🔁"),
         st.Page(hitter_ar, title="Auto Regressed (AR)", icon="📈"),
+        st.Page(hitter_changes, title="Changes", icon=":material/change_history:"),
         st.Page(hitter_splits, title="Splits", icon="📋"),
         st.Page(hitter_gamelogs_page, title="Gamelogs", icon="📅"),
     ],
@@ -220,6 +223,7 @@ pages = {
         st.Page(pitcher_comps, title="Pitcher Comps", icon="🔍"),
         st.Page(pitcher_mlb_equivalencies, title="MLB Equivalencies", icon="🔁"),
         st.Page(pitcher_ar, title="Auto Regressed (AR)", icon="📈"),
+        st.Page(pitcher_changes, title="Changes", icon=":material/change_history:"),
         st.Page(pitcher_splits, title="Splits", icon="📋"),
         st.Page(pitcher_gamelogs_page, title="Gamelogs", icon="📅"),
     ],

@@ -125,6 +125,9 @@ PITCH_TYPE_SPEC = SpanSpec(
     rate_specs=_PITCH_TYPE_RATES,
     wmean_specs=[
         ("Avg mph", "velo", "pitches"),
+        ("IVB (in.)", "vbreak", "vbreak_n"),
+        ("HB (in.)", "hbreak", "hbreak_n"),
+        ("RPM", "rpm", "rpm_n"),
         ("Pitch Grade", "stuff", "pitches"),
         ("Exec Grade", "grade_v13", "pitches"),
     ],
@@ -235,6 +238,7 @@ def aggregate_span(df_range: pd.DataFrame, spec: SpanSpec, mode: str) -> pd.Data
 
     if mode == "Rates":
         agg = _add_rates(agg, spec)
+    if mode == "Rates" or spec is PITCH_TYPE_SPEC:
         for label, val, wt in spec.wmean_specs:
             if val in work.columns and wt in work.columns:
                 v = pd.to_numeric(work[val], errors="coerce")
@@ -273,7 +277,8 @@ def _display_columns(spec: SpanSpec, mode: str) -> list[str]:
             continue
         id_cols.append(col)
     if mode == "Raw counts":
-        return id_cols + ["G"] + spec.count_cols
+        traits = ["Avg mph", "IVB (in.)", "HB (in.)", "RPM"] if spec is PITCH_TYPE_SPEC else []
+        return id_cols + ["G"] + traits + spec.count_cols
     rate_labels = [lbl for lbl, _, _ in spec.rate_specs]
     wmean_labels = [lbl for lbl, _, _ in spec.wmean_specs]
     ctx = [c for c in spec.context_cols]
@@ -295,6 +300,7 @@ def build_span_table(
     games = df_range.copy()
     if mode == "Rates":
         games = _add_rates(games, spec)
+    if mode == "Rates" or spec is PITCH_TYPE_SPEC:
         for label, val, _wt in spec.wmean_specs:
             if val in games.columns:
                 games[label] = pd.to_numeric(games[val], errors="coerce")
@@ -312,7 +318,10 @@ def build_span_table(
     games_view = games.reindex(columns=cols)
     games_view.insert(0, label_col, date_disp.values)
 
-    return pd.concat([agg, games_view], ignore_index=True)
+    table = pd.concat([agg, games_view], ignore_index=True)
+    if spec is PITCH_TYPE_SPEC and "RPM" in table.columns:
+        table["RPM"] = pd.to_numeric(table["RPM"], errors="coerce").round().astype("Int64")
+    return table
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +408,8 @@ def render_span_tab(
         mode = st.radio(
             "Values", ["Raw counts", "Rates"], horizontal=True,
             key=f"{key_prefix}_mode",
+            index=1 if spec is PITCH_TYPE_SPEC else 0,
+            format_func=lambda value: "Rates and averages" if value == "Rates" and spec is PITCH_TYPE_SPEC else value,
         )
 
     with right:
@@ -420,7 +431,13 @@ def render_span_tab(
             st.info("Nothing to aggregate.")
             return
         table = table.rename(columns=rename_map)
-        if mode == "Rates":
+        if spec is PITCH_TYPE_SPEC:
+            st.caption(
+                "The TOTAL row shows average mph, IVB, HB, and RPM for each pitcher and pitch type "
+                "over the selected dates. Velocity is weighted by pitch count; movement and RPM "
+                "use counts of valid measurements. RPM is rounded after averaging."
+            )
+        elif mode == "Rates":
             st.caption(
                 "Aggregate row reflects rates computed from summed counts over the span. "
                 "Only rates derivable from stored gamelog counts are shown."

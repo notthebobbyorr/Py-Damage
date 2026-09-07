@@ -1283,3 +1283,9 @@ def hitter_gamelogs_page():
             id_col="batter_mlbid",
             name_col="hitter_name",
         )
+
+
+def hitter_changes():
+    from app.changes import render_changes
+
+    render_changes(damage_df, hitter_splits_df, "Hitter")

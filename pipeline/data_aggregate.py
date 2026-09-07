@@ -33,6 +33,7 @@ POSITION_COUNT_COLS = ["UT", "C", "X1B", "X2B", "X3B", "SS", "OF", "P", "NA"]
 POSITION_BINARY_MIN_COUNT = 20
 
 ALL_STAR_DATES = {
+    2026: "2026-07-14",
     2025: "2025-07-15",
     2024: "2024-07-16",
     2023: "2023-07-11",
@@ -321,6 +322,9 @@ def _split_half(df: pl.DataFrame) -> pl.DataFrame | None:
     date_expr = _game_date_expr(df)
     if date_expr is None:
         return None
+    unknown_seasons = set(df["season"].drop_nulls().unique().to_list()) - set(ALL_STAR_DATES)
+    if unknown_seasons:
+        raise ValueError(f"Missing All-Star cutoff dates for seasons: {sorted(unknown_seasons)}. Update ALL_STAR_DATES before refreshing splits.")
     asg_df = pl.DataFrame(
         {
             "season": list(ALL_STAR_DATES.keys()),

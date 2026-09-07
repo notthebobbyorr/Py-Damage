@@ -25,6 +25,9 @@ data/logs/
 .claude/
 CLAUDE.md
 
+# Local Agent settings
+AGENTS.md
+
 # Local refresh scripts
 run_daily_refresh.ps1
 

@@ -1145,7 +1145,7 @@ def pitch_type_gamelogs_page():
     _PT_GL_COLS = [
         "game_date", "pitcher_name", "pitcher_mlbid", "pitching_code",
         "pitch_tag", "pitcher_hand", "game_pk", "opp_team",
-        "bbe", "pitches", "whiffs", "chases", "velo", "stuff", "grade_v13",
+        "bbe", "pitches", "whiffs", "chases", "velo", "vbreak", "hbreak", "rpm", "stuff", "grade_v13",
         "HR", "XBH", "hits", "damaged_bbe",
         "la_gte_20_bbe", "la_lte_0_bbe", "BB", "K",
         "strikes", "balls", "swings",
@@ -1163,7 +1163,7 @@ def pitch_type_gamelogs_page():
         "pitches": "Pitches",
         "zone_pitches": "Zone", "out_of_zone": "Out of Zone",
         "strikes": "Strikes", "balls": "Balls",
-        "velo": "Avg mph",
+        "velo": "Avg mph", "vbreak": "IVB (in.)", "hbreak": "HB (in.)", "rpm": "RPM",
         "vs_LHB": "vs LHB", "vs_RHB": "vs RHB",
         "stuff": "Pitch Grade", "grade_v13": "Exec Grade",
     }
@@ -1197,6 +1197,12 @@ def pitch_type_gamelogs_page():
             ]
             base = filter_by_values(base, "season", season)
             base = filter_by_game_type_group(base, game_type_group)
+            pitch_choice = st.multiselect(
+                "Pitch Type", sorted(base["pitch_tag"].dropna().unique().tolist()),
+                key="ptgl_date_pitch", help="Leave empty to show all pitch types.",
+            )
+            if pitch_choice:
+                base = base[base["pitch_tag"].isin(pitch_choice)]
             dates = sorted(base["game_date"].dropna().astype(str).unique(), reverse=True)
             date_choice = st.selectbox(
                 "Date", ["All"] + (dates if dates else ["(none)"]), index=0, key="ptgl_date_date",
@@ -1216,6 +1222,8 @@ def pitch_type_gamelogs_page():
                 df = df.sort_values(_sort, ascending=[False] + [True] * (len(_sort) - 1))
                 df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
             df = df.rename(columns=_RENAME)
+            if "RPM" in df.columns:
+                df["RPM"] = pd.to_numeric(df["RPM"], errors="coerce").round().astype("Int64")
             render_table(df, stats_df=pd.DataFrame())
             download_button(df, "pitch_type_gamelogs_date", "ptgl_date_dl")
 
@@ -1242,6 +1250,12 @@ def pitch_type_gamelogs_page():
             ]
             base = filter_by_values(base, "season", season)
             base = filter_by_game_type_group(base, game_type_group)
+            pitch_choice = st.multiselect(
+                "Pitch Type", sorted(base["pitch_tag"].dropna().unique().tolist()),
+                key="ptgl_pl_pitch", help="Leave empty to show all pitch types.",
+            )
+            if pitch_choice:
+                base = base[base["pitch_tag"].isin(pitch_choice)]
             player_opts, player_name_map = player_id_options(
                 base, "pitcher_mlbid", "pitcher_name"
             )
@@ -1266,6 +1280,8 @@ def pitch_type_gamelogs_page():
                 if "game_date" in df.columns:
                     df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
                 df = df.rename(columns=_RENAME)
+                if "RPM" in df.columns:
+                    df["RPM"] = pd.to_numeric(df["RPM"], errors="coerce").round().astype("Int64")
                 render_table(df, stats_df=pd.DataFrame())
                 download_button(df, "pitch_type_gamelogs_player", "ptgl_pl_dl")
 

@@ -1447,3 +1447,9 @@ def pitcher_gamelogs_page():
             id_col="pitcher_mlbid",
             name_col="pitcher_name",
         )
+
+
+def pitcher_changes():
+    from app.changes import render_changes
+
+    render_changes(pitcher_df, pitcher_splits_df, "Pitcher")

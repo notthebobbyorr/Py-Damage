@@ -6,6 +6,16 @@ import streamlit as st
 
 FEATURE_TIMELINE: list[dict[str, str]] = [
     {
+        "date": "2026-09-07",
+        "title": "Player Changes and Pitch Game Traits",
+        "page": "Hitters / Pitchers: Changes; Teams: Team Hitting / Team Pitching > Changes; Individual Pitches: Gamelogs",
+        "description": (
+            " - **Player Changes**: Compare player metrics between seasons, months, or halves with sample thresholds for both periods. Choose **By Stat** for player rankings or **By Player** for a full available statistical profile with before, after, and delta values.\n\n"
+            " - **Team Changes**: Team Hitting and Team Pitching now include Changes tabs with By Stat rankings and By Team before/after profiles.\n\n"
+            " - **Pitch Traits**: Pitch game logs now include IVB, HB, and RPM alongside velocity, plus pitch-type filters in **By Date** and **By Player**. **Date Range** shows average velocity, IVB, HB, and RPM in both display modes."
+        ),
+    },
+    {
         "date": "2026-06-14",
         "title": "Radar Comparisons, Custom Columns, Cross-Type Pitch Comps & Date-Range Gamelogs",
         "page": "Compare → Radar Comparisons / any stats table → Column filters / Individual Pitches → Pitch Level Comps / all Gamelogs pages → Date Range",

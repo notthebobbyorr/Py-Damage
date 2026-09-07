@@ -180,6 +180,12 @@ def build_pitch_type_gamelogs(df: pl.DataFrame) -> pl.DataFrame:
         (pl.col("batter_hand") == "R").sum().alias("vs_RHB"),
         pl.col("pitch_velo").mean().round(1).alias("velo"),
     ]
+    for trait in ["vbreak", "hbreak", "rpm"]:
+        if trait in df.columns:
+            pt_aggs.extend([
+                pl.col(trait).mean().alias(trait),
+                pl.col(trait).count().alias(f"{trait}_n"),
+            ])
     if "stuff_raw" in df.columns:
         pt_aggs.append(pl.col("stuff_raw").mean().alias("stuff_raw"))
     return (

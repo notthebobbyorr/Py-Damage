@@ -36,11 +36,15 @@ def team_hitting():
         st.info("Missing new_team_damage.csv")
         return
 
-    tab_season, tab_splits = st.tabs(["Season Stats", "Splits"])
+    tab_season, tab_splits, tab_changes = st.tabs(["Season Stats", "Splits", "Changes"])
     with tab_season:
         _team_hitting_season()
     with tab_splits:
         _team_hitting_splits()
+    with tab_changes:
+        from app.changes import render_changes
+
+        render_changes(team_damage, team_hitter_splits_df, "Hitter", team=True)
 
 
 def _team_hitting_season():
@@ -149,11 +153,15 @@ def team_pitching():
         st.info("Missing new_team_stuff.csv")
         return
 
-    tab_season, tab_splits = st.tabs(["Season Stats", "Splits"])
+    tab_season, tab_splits, tab_changes = st.tabs(["Season Stats", "Splits", "Changes"])
     with tab_season:
         _team_pitching_season()
     with tab_splits:
         _team_pitching_splits()
+    with tab_changes:
+        from app.changes import render_changes
+
+        render_changes(team_stuff, team_pitcher_splits_df, "Pitcher", team=True)
 
 
 def _team_pitching_season():
