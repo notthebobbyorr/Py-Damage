@@ -26,6 +26,8 @@ from app.filters import (
     team_options,
 )
 from app.viz import render_table
+from app.utils import maybe_add_level_col
+from app.config import LEVEL_LABELS
 
 
 def team_hitting():
@@ -52,7 +54,7 @@ def _team_hitting_season():
     with left:
         level = st.selectbox(
             "Select Level",
-            ["MLB", "Triple-A", "Low-A", "Low Minors"],
+            ["MLB", "Triple-A", "Low-A", "Low Minors", "All"],
             index=0,
             key="team_hitting_level",
         )
@@ -80,6 +82,7 @@ def _team_hitting_season():
             "Triple-A": [11],
             "Low-A": [14],
             "Low Minors": [16],
+            "All": [1, 11, 14, 16],
         }
         base_stats = team_damage.copy()
         base_stats = base_stats.assign(
@@ -131,12 +134,14 @@ def _team_hitting_season():
             "contact_vs_avg": "Contact Over Expected (%)",
         }
         df = df.rename(columns=rename_map)
+        df = maybe_add_level_col(df, level)
         df = df.sort_values(by="Damage/BBE (%)", ascending=False)
         stats_df = base_stats[
             [col for col in columns if col in base_stats.columns]
         ].rename(columns=rename_map)
         render_table(
             df,
+            plot_label_count=30,
             reverse_cols=HIGHER_IS_WORSE_COLS | {"Chase (%)", "LA<=0%"},
             group_cols=["__season", "__level"],
             stats_df=stats_df,
@@ -169,7 +174,7 @@ def _team_pitching_season():
     with left:
         level = st.selectbox(
             "Select Level",
-            ["MLB", "Triple-A", "Low-A", "Low Minors"],
+            ["MLB", "Triple-A", "Low-A", "Low Minors", "All"],
             index=0,
             key="team_pitching_level",
         )
@@ -197,6 +202,7 @@ def _team_pitching_season():
             "Triple-A": [11],
             "Low-A": [14],
             "Low Minors": [16],
+            "All": [1, 11, 14, 16],
         }
         base_stats = team_stuff.copy()
         base_stats = base_stats.assign(
@@ -245,12 +251,14 @@ def _team_pitching_season():
             "LA_lte_0": "LA<=0%",
         }
         df = df.rename(columns=rename_map)
+        df = maybe_add_level_col(df, level)
         df = df.sort_values(by="Pitch Grade", ascending=False)
         stats_df = base_stats[
             [col for col in columns if col in base_stats.columns]
         ].rename(columns=rename_map)
         render_table(
             df,
+            plot_label_count=30,
             reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "pDamage/BBE (%)", "pDamage+Loc/BBE (%)"},
             group_cols=["__season", "__level"],
             stats_df=stats_df,
@@ -287,7 +295,7 @@ def _team_hitting_splits():
             with left:
                 level = st.selectbox(
                     "Select Level",
-                    ["MLB", "Triple-A", "Low-A", "Low Minors"],
+                    ["MLB", "Triple-A", "Low-A", "Low Minors", "All"],
                     index=0,
                     key=f"team_hitting_splits_level_{idx}",
                 )
@@ -327,6 +335,7 @@ def _team_hitting_splits():
                     "Triple-A": [11],
                     "Low-A": [14],
                     "Low Minors": [16],
+                    "All": [1, 11, 14, 16],
                 }
                 base_stats = split_df.copy()
                 base_stats = base_stats.assign(
@@ -382,12 +391,14 @@ def _team_hitting_splits():
                     "contact_vs_avg": "Contact Over Expected (%)",
                 }
                 df = df.rename(columns=rename_map)
+                df = maybe_add_level_col(df, level)
                 df = df.sort_values(by="Damage/BBE (%)", ascending=False)
                 stats_df = base_stats[
                     [col for col in columns if col in base_stats.columns]
                 ].rename(columns=rename_map)
                 render_table(
                     df,
+                    plot_label_count=30,
                     reverse_cols=HIGHER_IS_WORSE_COLS | {"Chase (%)", "LA<=0%"},
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
@@ -419,7 +430,7 @@ def _team_pitching_splits():
             with left:
                 level = st.selectbox(
                     "Select Level",
-                    ["MLB", "Triple-A", "Low-A", "Low Minors"],
+                    ["MLB", "Triple-A", "Low-A", "Low Minors", "All"],
                     index=0,
                     key=f"team_pitching_splits_level_{idx}",
                 )
@@ -459,6 +470,7 @@ def _team_pitching_splits():
                     "Triple-A": [11],
                     "Low-A": [14],
                     "Low Minors": [16],
+                    "All": [1, 11, 14, 16],
                 }
                 base_stats = split_df.copy()
                 base_stats = base_stats.assign(
@@ -507,6 +519,7 @@ def _team_pitching_splits():
                     "LA_lte_0": "LA<=0%",
                 }
                 df = df.rename(columns=rename_map)
+                df = maybe_add_level_col(df, level)
                 if "Pitch Grade" in df.columns:
                     df = df.sort_values(by="Pitch Grade", ascending=False)
                 stats_df = base_stats[
@@ -514,6 +527,7 @@ def _team_pitching_splits():
                 ].rename(columns=rename_map)
                 render_table(
                     df,
+                    plot_label_count=30,
                     reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)"},
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
@@ -553,7 +567,7 @@ def team_hitting_gamelogs():
         "vs_RHP": "vs RHP", "vs_LHP": "vs LHP",
     }
     _level_map = {
-        "MLB": [1], "Triple-A": [11], "Low-A": [14], "Low Minors": [16],
+        "MLB": [1], "Triple-A": [11], "Low-A": [14], "Low Minors": [16], "All": [1, 11, 14, 16],
     }
 
     tab_date, tab_team, tab_range = st.tabs(["By Date", "By Team", "Date Range"])
@@ -594,13 +608,15 @@ def team_hitting_gamelogs():
         with right:
             df = base.copy() if date_choice == "All" else base[base["game_date"].astype(str) == date_choice].copy()
             df = filter_by_team_token(df, "hitting_code", team)
-            df = df[[c for c in _T_H_GL_COLS if c in df.columns]].copy()
+            df = df[[c for c in _T_H_GL_COLS + ["level_id"] if c in df.columns]].copy()
             if "game_date" in df.columns:
                 _sort = ["game_date", "hitting_code"] if "hitting_code" in df.columns else ["game_date"]
                 df = df.sort_values(_sort, ascending=[False] + [True] * (len(_sort) - 1))
                 df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
             df = df.rename(columns=_RENAME)
-            render_table(df, stats_df=pd.DataFrame())
+            if "level_id" in df.columns:
+                df["Level"] = df.pop("level_id").map(LEVEL_LABELS)
+            render_table(df, stats_df=pd.DataFrame(), plot_label_count=30)
             download_button(df, "team_hitting_gamelogs_date", "thgl_date_dl")
 
     with tab_team:
@@ -633,12 +649,14 @@ def team_hitting_gamelogs():
         with right:
             df = filter_by_team_token(base, "hitting_code", team)
             team_cols = [c for c in _T_H_GL_COLS if c != "hitting_code"]
-            df = df[[c for c in team_cols if c in df.columns]].copy()
+            df = df[[c for c in team_cols + ["level_id"] if c in df.columns]].copy()
             df = df.sort_values("game_date", ascending=False) if "game_date" in df.columns else df
             if "game_date" in df.columns:
                 df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
             df = df.rename(columns=_RENAME)
-            render_table(df, stats_df=pd.DataFrame())
+            if "level_id" in df.columns:
+                df["Level"] = df.pop("level_id").map(LEVEL_LABELS)
+            render_table(df, stats_df=pd.DataFrame(), plot_label_count=30)
             download_button(df, "team_hitting_gamelogs_team", "thgl_tm_dl")
 
     with tab_range:
@@ -684,7 +702,7 @@ def team_pitching_gamelogs():
         "stuff": "Pitch Grade", "grade_v13": "Exec Grade",
     }
     _level_map = {
-        "MLB": [1], "Triple-A": [11], "Low-A": [14], "Low Minors": [16],
+        "MLB": [1], "Triple-A": [11], "Low-A": [14], "Low Minors": [16], "All": [1, 11, 14, 16],
     }
 
     tab_date, tab_team, tab_range = st.tabs(["By Date", "By Team", "Date Range"])
@@ -725,13 +743,15 @@ def team_pitching_gamelogs():
         with right:
             df = base.copy() if date_choice == "All" else base[base["game_date"].astype(str) == date_choice].copy()
             df = filter_by_team_token(df, "pitching_code", team)
-            df = df[[c for c in _T_P_GL_COLS if c in df.columns]].copy()
+            df = df[[c for c in _T_P_GL_COLS + ["level_id"] if c in df.columns]].copy()
             if "game_date" in df.columns:
                 _sort = ["game_date", "pitching_code"] if "pitching_code" in df.columns else ["game_date"]
                 df = df.sort_values(_sort, ascending=[False] + [True] * (len(_sort) - 1))
                 df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
             df = df.rename(columns=_RENAME)
-            render_table(df, stats_df=pd.DataFrame())
+            if "level_id" in df.columns:
+                df["Level"] = df.pop("level_id").map(LEVEL_LABELS)
+            render_table(df, stats_df=pd.DataFrame(), plot_label_count=30)
             download_button(df, "team_pitching_gamelogs_date", "tpgl_date_dl")
 
     with tab_team:
@@ -764,12 +784,14 @@ def team_pitching_gamelogs():
         with right:
             df = filter_by_team_token(base, "pitching_code", team)
             team_cols = [c for c in _T_P_GL_COLS if c != "pitching_code"]
-            df = df[[c for c in team_cols if c in df.columns]].copy()
+            df = df[[c for c in team_cols + ["level_id"] if c in df.columns]].copy()
             df = df.sort_values("game_date", ascending=False) if "game_date" in df.columns else df
             if "game_date" in df.columns:
                 df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
             df = df.rename(columns=_RENAME)
-            render_table(df, stats_df=pd.DataFrame())
+            if "level_id" in df.columns:
+                df["Level"] = df.pop("level_id").map(LEVEL_LABELS)
+            render_table(df, stats_df=pd.DataFrame(), plot_label_count=30)
             download_button(df, "team_pitching_gamelogs_team", "tpgl_tm_dl")
 
     with tab_range:

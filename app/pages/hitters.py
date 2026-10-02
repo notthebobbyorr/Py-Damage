@@ -111,6 +111,12 @@ def hitter_individual_stats():
             value_type = st.selectbox(
                 "Filter By", ["PA", "BBE"], index=1, key="hitter_stats_value_type"
             )
+            handedness = st.multiselect(
+                "Bats",
+                ["All", "L", "R", "S"],
+                default=["All"],
+                key="hitter_stats_handedness",
+            )
             team = st.selectbox(
                 "Select Team",
                 team_options(damage_df, "hitting_code"),
@@ -158,6 +164,7 @@ def hitter_individual_stats():
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
             df = filter_by_game_type_group(df, game_type_group)
+            df = filter_by_values(df, "batter_hand", handedness)
             df = filter_by_team_token(df, "hitting_code", team)
             df = filter_by_positions(df, position)
             df = filter_by_values(df, "batter_mlbid", player)

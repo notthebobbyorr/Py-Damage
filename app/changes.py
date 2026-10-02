@@ -6,6 +6,7 @@ import streamlit as st
 from app.filters import download_button, filter_by_game_type_group, game_type_group_options, player_id_options
 from app.utils import _hitter_display_map, _pitcher_display_map
 from app.viz import render_table
+from app.config import LEVEL_LABELS
 
 
 def compare_periods(before, after, id_col, name_col, metric, workload, minimum, keep_missing=False):
@@ -99,12 +100,18 @@ def render_player_profile(source, before, after, id_col, name_col, metrics, work
         st.info("No players available for these periods.")
         return
     player = st.selectbox(entity.title(), options, format_func=lambda value: str(value) if team else f"{names.get(value, 'Unknown')} ({int(value)})", key=prefix + "_player")
-    profile = player_profile(source[source["period"] == before], source[source["period"] == after], player, id_col, name_col, metrics, workload, minimum)
+    profiles = []
+    for level_id, level_source in source.groupby("level_id", observed=True):
+        profile = player_profile(level_source[level_source["period"] == before], level_source[level_source["period"] == after], player, id_col, name_col, metrics, workload, minimum)
+        if not profile.empty:
+            profile.insert(0, "Level", LEVEL_LABELS.get(int(level_id), str(level_id)))
+            profiles.append(profile)
+    profile = pd.concat(profiles, ignore_index=True) if profiles else pd.DataFrame()
     st.caption(f"{names.get(player, 'Unknown')}: {after} minus {before}. Percentage metrics use percentage-point differences. Blank values indicate missing measurements or source rows that cannot be combined reliably. Incomplete periods use available data.")
     if profile.empty:
         st.info(f"This {entity} needs data and the minimum sample in both periods. Lower the minimum or choose other periods.")
         return
-    render_table(profile, stats_df=pd.DataFrame())
+    render_table(profile, stats_df=pd.DataFrame(), plot_label_count=30 if team else None, hide_cols={"Level", "Level ID"})
     download = profile.assign(Player=names.get(player, "Unknown"), **{"Player ID": player, "Before period": before, "After period": after})
     if team:
         download = download.rename(columns={"Player": "Team"}).drop(columns="Player ID")
@@ -127,9 +134,9 @@ def render_changes(season_df, splits_df, kind, team=False):
         st.info("No data available for this comparison.")
         return
     level_map = {"MLB": 1, "Triple-A": 11, "Low-A": 14, "Low Minors": 16}
-    level = st.selectbox("Level", list(level_map), key=prefix + "_level")
+    level = st.selectbox("Level", list(level_map) + ["All"], key=prefix + "_level")
     game_type = st.selectbox("Game Type", game_type_group_options(source), key=prefix + "_gt")
-    source = filter_by_game_type_group(source[source["level_id"] == level_map[level]], game_type)
+    source = filter_by_game_type_group(source[source["level_id"].isin(list(level_map.values()) if level == "All" else [level_map[level]])], game_type)
     source["season"] = pd.to_numeric(source["season"], errors="coerce")
     source = source.dropna(subset=["season"])
     source["period"] = source["season"].astype(int).astype(str)
@@ -184,5 +191,6 @@ def render_changes(season_df, splits_df, kind, team=False):
         return
     if team:
         result = result.rename(columns={"Name": "Team"}).drop(columns="Player ID")
-    render_table(result, stats_df=pd.DataFrame())
+    result["Level"] = result["Level ID"].map(LEVEL_LABELS)
+    render_table(result, stats_df=pd.DataFrame(), plot_label_count=30 if team else None, hide_cols={"Level", "Level ID"})
     download_button(result, prefix, prefix + "_download")

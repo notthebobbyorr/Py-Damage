@@ -190,6 +190,7 @@ def _render_plot_controls(
     include_team_label: bool,
     reverse_cols: set[str],
     label_cols: list[str] | None,
+    plot_label_count: int | None = None,
 ) -> None:
     exclude_cols = set(label_cols or [])
     plot_df, numeric_cols = _coerce_numeric_for_plot(df, exclude_cols=exclude_cols)
@@ -230,22 +231,26 @@ def _render_plot_controls(
             index=0,
             key=f"{table_key}_plot_color",
         )
-        max_points = st.number_input(
-            "Max labeled points (sampled if exceeded)",
-            min_value=100,
-            max_value=20000,
-            value=100,
-            step=100,
-            key=f"{table_key}_plot_max",
-        )
+        if plot_label_count is None:
+            max_points = st.number_input(
+                "Max labeled points (sampled if exceeded)",
+                min_value=100,
+                max_value=20000,
+                value=100,
+                step=100,
+                key=f"{table_key}_plot_max",
+            )
+        else:
+            max_points = plot_label_count
         show_labels = st.checkbox(
             "Show point labels",
             value=True,
             key=f"{table_key}_plot_labels",
         )
-        st.caption(
-            "Large point counts will disable labels. Lower Max points to show labels."
-        )
+        if plot_label_count is not None:
+            st.caption(f"Labels up to {plot_label_count} points; all points remain plotted.")
+        else:
+            st.caption("Labels highlight statistical extremes up to the selected maximum.")
 
         plot_df = plot_df.copy()
 
@@ -283,7 +288,7 @@ def _render_plot_controls(
                     label_cols=label_cols,
                 )
                 if labels is not None:
-                    label_mask = extremes.copy()
+                    label_mask = pd.Series(True, index=plot_df.index) if plot_label_count is not None else extremes.copy()
                     if label_mask.sum() > max_points:
                         sampled_idx = (
                             plot_df[label_mask]
@@ -332,6 +337,8 @@ def render_table(
     round_decimals: int = 1,
     default_sort_col: str | None = None,
     fixed_scale_cols: dict[str, tuple[float, float, float]] | None = None,
+    plot_label_count: int | None = None,
+    conditional_formatting: bool = True,
 ) -> None:
     if df.empty:
         st.info("No data available yet.")
@@ -387,6 +394,7 @@ def render_table(
         include_team_label,
         reverse_cols or set(),
         label_cols,
+        plot_label_count,
     )
 
     if show_controls:
@@ -462,7 +470,7 @@ def render_table(
     if len(float_cols) > 0:
         df_page_display[float_cols] = df_page_display[float_cols].round(round_decimals)
 
-    if len(format_cols) > 0 and total_cells <= max_elements:
+    if conditional_formatting and len(format_cols) > 0 and total_cells <= max_elements:
         stats_source = stats_df if stats_df is not None else df
         similarity_cols = [col for col in format_cols if col.startswith("Similarity")]
         stats_format_cols = [col for col in format_cols if col in stats_source.columns]
@@ -624,7 +632,7 @@ def render_table(
         if other_float_cols:
             df_page_display[other_float_cols] = df_page_display[
                 other_float_cols
-            ].applymap(lambda x: f"{x:.{round_decimals}f}" if pd.notna(x) else x)
+            ].map(lambda x: f"{x:.{round_decimals}f}" if pd.notna(x) else x)
         for col in int_cols:
             if col in df_page_display.columns:
                 df_page_display[col] = df_page_display[col].apply(

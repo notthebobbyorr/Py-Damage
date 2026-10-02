@@ -19,6 +19,7 @@ from app.filters import (
     season_options,
 )
 from app.viz import render_table
+from app.utils import maybe_add_level_col
 
 
 def league_hitting():
@@ -30,6 +31,10 @@ def league_hitting():
     else:
         left, right = st.columns([1, 3])
         with left:
+            level = st.selectbox(
+                "Select Level", ["MLB", "Triple-A", "Low-A", "Low Minors", "All"],
+                index=0, key="lg_hit_level",
+            )
             season = st.multiselect(
                 "Select Season",
                 season_options(hitting_avg),
@@ -50,6 +55,7 @@ def league_hitting():
             if game_type_group != "Regular Season":
                 st.info(GAME_TYPE_GROUP_NOTE.format(game_type_group))
             df = hitting_avg.copy()
+            df = filter_by_values(df, "level_id", [1, 11, 14, 16] if level == "All" else {"MLB": 1, "Triple-A": 11, "Low-A": 14, "Low Minors": 16}[level])
             df = filter_by_values(df, "season", season)
             df = filter_by_game_type_group(df, game_type_group)
             df = df.assign(
@@ -101,6 +107,8 @@ def league_hitting():
                 "contact_vs_avg": "Contact Over Expected (%)",
             }
             df = df.rename(columns=rename_map)
+            if "Level" not in df.columns:
+                df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Damage/BBE (%)", ascending=False)
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
@@ -109,6 +117,7 @@ def league_hitting():
                 df,
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
+                conditional_formatting=False,
             )
             download_button(df, "league_hitting", "league_hitting_download")
 
@@ -124,7 +133,7 @@ def league_pitching():
         with left:
             level = st.selectbox(
                 "Select Level",
-                ["MLB", "Triple-A", "Low-A", "Low Minors"],
+                ["MLB", "Triple-A", "Low-A", "Low Minors", "All"],
                 index=0,
                 key="lg_pitch_level",
             )
@@ -152,6 +161,7 @@ def league_pitching():
                 "Triple-A": [11],
                 "Low-A": [14],
                 "Low Minors": [16],
+                "All": [1, 11, 14, 16],
             }
             base_stats = pitching_avg.copy()
             base_stats = base_stats.assign(
@@ -202,6 +212,8 @@ def league_pitching():
                 "LA_lte_0": "LA<=0%",
             }
             df = df.rename(columns=rename_map)
+            if "Level" not in df.columns:
+                df = maybe_add_level_col(df, level)
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
             ].rename(columns=rename_map)
@@ -209,6 +221,7 @@ def league_pitching():
                 df,
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
+                conditional_formatting=False,
             )
             download_button(df, "league_pitching", "league_pitching_download")
 
@@ -226,6 +239,10 @@ def league_pitch_level():
 
     left, right = st.columns([1, 3])
     with left:
+        level = st.selectbox(
+            "Select Level", ["MLB", "Triple-A", "Low-A", "Low Minors", "All"],
+            index=0, key="lg_pitch_types_level",
+        )
         season = st.multiselect(
             "Select Season",
             season_options(league_pitch_types),
@@ -261,11 +278,12 @@ def league_pitch_level():
         base_stats = league_pitch_types.copy()
         base_stats = base_stats.assign(__season=base_stats["season"])
         df = league_pitch_types.copy()
+        df = filter_by_values(df, "level_id", [1, 11, 14, 16] if level == "All" else {"MLB": 1, "Triple-A": 11, "Low-A": 14, "Low Minors": 16}[level])
         df = filter_by_values(df, "season", season)
         df = filter_by_game_type_group(df, game_type_group)
         df = filter_by_values(df, "throws", throws)
         df = filter_by_values(df, "pitch_tag", pitch_tag)
-        df = df.assign(__season=df["season"])
+        df = df.assign(__season=df["season"], __level=df["level_id"])
 
         columns = [
             "season",
@@ -285,6 +303,7 @@ def league_pitch_level():
             "Chase",
             "CSW",
             "__season",
+            "__level",
         ]
         df = df[[col for col in columns if col in df.columns]].copy()
         rename_map = {
@@ -306,6 +325,7 @@ def league_pitch_level():
             "CSW": "CSW (%)",
         }
         df = df.rename(columns=rename_map)
+        df = maybe_add_level_col(df, level)
         stats_df = base_stats[
             [col for col in columns if col in base_stats.columns]
         ].rename(columns=rename_map)
@@ -314,5 +334,6 @@ def league_pitch_level():
             reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA", "pDamage/BBE (%)", "pDamage+Loc/BBE (%)"},
             group_cols=["__season"],
             stats_df=stats_df,
+            conditional_formatting=False,
         )
         download_button(df, "league_pitch_types", "league_pitch_types_download")

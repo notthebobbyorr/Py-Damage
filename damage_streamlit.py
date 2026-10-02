@@ -28,7 +28,6 @@ from app.pages.hitters import (
 )
 from app.pages.home import home_page, home_timeline
 from app.pages.league import league_hitting, league_pitch_level, league_pitching
-from app.pages.parks import park_data_page
 from app.pages.pitchers import (
     pitcher_ar,
     pitcher_comps,
@@ -245,9 +244,6 @@ pages = {
         st.Page(league_hitting, title="Hitting Stats", icon="🌐"),
         st.Page(league_pitching, title="Pitching Stats", icon="🌐"),
         st.Page(league_pitch_level, title="Pitch Level Shapes", icon="🌐"),
-    ],
-    "Parks": [
-        st.Page(park_data_page, title="Park HR per Damage BBE", icon="🏟️"),
     ],
     "Compare": [
         st.Page(radar_compare, title="Radar Comparisons", icon="🕸️"),

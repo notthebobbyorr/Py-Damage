@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from app.config import LEVEL_LABELS
 from app.filters import (
     download_button,
     filter_by_game_type_group,
@@ -200,6 +201,8 @@ def _join_team_codes(s: pd.Series) -> str:
 def aggregate_span(df_range: pd.DataFrame, spec: SpanSpec, mode: str) -> pd.DataFrame:
     """Collapse the in-range rows into one summary row per group."""
     keys = [c for c in spec.group_keys if c in df_range.columns]
+    if "level_id" in df_range.columns and "level_id" not in keys:
+        keys.append("level_id")
     if not keys:
         return pd.DataFrame()
     counts = [c for c in spec.count_cols if c in df_range.columns]
@@ -307,6 +310,8 @@ def build_span_table(
 
     cols = [c for c in _display_columns(spec, mode) if c in agg.columns or c in games.columns]
 
+    if "level_id" in agg.columns and "level_id" not in cols:
+        cols.insert(0, "level_id")
     agg = agg.reindex(columns=cols)
     agg.insert(0, label_col, span_label)
 
@@ -431,6 +436,8 @@ def render_span_tab(
             st.info("Nothing to aggregate.")
             return
         table = table.rename(columns=rename_map)
+        if "level_id" in table.columns:
+            table["Level"] = table.pop("level_id").map(LEVEL_LABELS)
         if spec is PITCH_TYPE_SPEC:
             st.caption(
                 "The TOTAL row shows average mph, IVB, HB, and RPM for each pitcher and pitch type "
@@ -442,5 +449,5 @@ def render_span_tab(
                 "Aggregate row reflects rates computed from summed counts over the span. "
                 "Only rates derivable from stored gamelog counts are shown."
             )
-        render_table(table, stats_df=pd.DataFrame())
+        render_table(table, stats_df=pd.DataFrame(), plot_label_count=30 if entity == "team" else None)
         download_button(table, f"{key_prefix}_span", f"{key_prefix}_span_dl")

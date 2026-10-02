@@ -560,6 +560,10 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
         .agg(
             [
                 hitter_age_expr,
+                pl.when(pl.col("batter_hand").filter(pl.col("batter_hand").is_in(["L", "R"])).n_unique() == 2)
+                .then(pl.lit("S"))
+                .otherwise(pl.col("batter_hand").filter(pl.col("batter_hand").is_in(["L", "R", "S"])).first())
+                .alias("batter_hand"),
                 pl.len().alias("pitches"),
                 pl.n_unique("pa_id").alias("PA"),
                 pl.sum("bbe").alias("bbe"),

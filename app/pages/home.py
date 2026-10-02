@@ -6,6 +6,16 @@ import streamlit as st
 
 FEATURE_TIMELINE: list[dict[str, str]] = [
     {
+        "date": "2026-10-02",
+        "title": "Stat Filters and Team Plot Labels",
+        "page": "Hitters / Pitchers / Individual Pitches / Leagues / Teams",
+        "description": (
+            "- Added handedness filters to Hitter, Pitcher, and Pitches stat pages\n"
+            "- Added level filters to league stat pages\n"
+            "- Changed plot labels on Team stat pages"
+        ),
+    },
+    {
         "date": "2026-09-07",
         "title": "Player Changes and Pitch Game Traits",
         "page": "Hitters / Pitchers: Changes; Teams: Team Hitting / Team Pitching > Changes; Individual Pitches: Gamelogs",

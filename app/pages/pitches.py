@@ -104,6 +104,12 @@ def pitch_shapes_outcomes():
                 step=1,
                 key="pitch_shapes_min_pitches",
             )
+            handedness = st.multiselect(
+                "Throws",
+                ["All", "L", "R", "S"],
+                default=["All"],
+                key="pitch_shapes_handedness",
+            )
             team = st.selectbox(
                 "Select Team",
                 team_options(pitch_types, "pitching_code"),
@@ -154,6 +160,7 @@ def pitch_shapes_outcomes():
             df = df[df["level_id"].isin(level_map[level])]
             df = filter_by_values(df, "season", season)
             df = filter_by_game_type_group(df, game_type_group)
+            df = filter_by_values(df, "pitcher_hand", handedness)
             df = filter_by_team_token(df, "pitching_code", team)
             df = filter_by_values(df, "pitcher_mlbid", pitcher)
             df = filter_by_values(df, "pitch_group", pitch_group)
