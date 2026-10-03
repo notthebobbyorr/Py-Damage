@@ -80,5 +80,5 @@ def render_official_table(display, full, key, pitching=False, team=False):
     styler = display if hasattr(display, "hide") else display.style
     # Escape all source text before putting the existing table styles into HTML.
     html = styler.format(escape="html", subset=styler.data.select_dtypes(exclude="number").columns).format_index(escape="html", axis=1).hide(axis="index").to_html()
-    st.caption(("Click a team row to show official regular-season team totals for this level." if team else "Click a player row to show official regular-season totals for this level across all teams.") + " Click again to collapse. Totals reflect the latest official-stat refresh." + ((" Hld = holds; HA = hits allowed." + ("" if team else " Inh. Runners % = inherited runners who scored.")) if pitching else ""))
+    st.caption(("Click a team row to show official regular-season team totals for this level." if team else "Click a player row to show official regular-season totals for this level across all teams.") + " Click again to collapse." + ((" Hld = holds; HA = hits allowed." + ("" if team else " Inh. Runners % = inherited runners who scored.")) if pitching else ""))
     _component(data={"html": html, "details": details, "columns": columns}, key=key)
