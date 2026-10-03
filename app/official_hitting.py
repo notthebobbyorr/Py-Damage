@@ -40,8 +40,19 @@ def detail_values(row):
 
 _component = components.component(
     "official_hitter_table",
-    html='<div class="table-scroll"></div>',
+    html='<div class="table-toolbar"><details class="column-picker"><summary>Columns</summary><div class="column-options"></div></details><button type="button" class="fullscreen-toggle">Fullscreen</button></div><div class="table-scroll"></div><dialog class="table-fullscreen" aria-label="Fullscreen stats table"></dialog>',
     css="""
+    .table-toolbar {display:flex; justify-content:flex-end; gap:8px; margin-bottom:4px; position:relative;}
+    .column-picker summary {cursor:pointer; padding:5px 10px; border:1px solid #d5d9df; border-radius:5px;}
+    .column-options {position:absolute; right:0; top:100%; z-index:5; width:310px; max-height:50vh; overflow:auto; padding:10px; border:1px solid #d5d9df; border-radius:5px; background:var(--st-background-color); color:var(--st-text-color); box-shadow:0 4px 12px #0003;}
+    .column-option {display:flex; align-items:center; gap:6px; padding:4px 0;}
+    .column-option label {flex:1; font:13px sans-serif;}
+    .column-option button {cursor:pointer; background:var(--st-background-color); color:var(--st-text-color); border:1px solid #d5d9df; border-radius:3px;}
+    .fullscreen-toggle {cursor:pointer; padding:5px 10px; border:1px solid #d5d9df; border-radius:5px; background:var(--st-background-color); color:var(--st-text-color);}
+    .table-fullscreen {box-sizing:border-box; width:calc(100vw - 24px); height:calc(100vh - 24px); max-width:none; max-height:none; padding:12px; border:1px solid #d5d9df; border-radius:5px; background:var(--st-background-color); color:var(--st-text-color);}
+    .table-fullscreen[open] {display:flex; flex-direction:column;}
+    .table-fullscreen::backdrop {background:rgba(0,0,0,0.45);}
+    .table-fullscreen .table-scroll {flex:1; min-height:0; max-height:none;}
     .table-scroll {overflow:auto; max-height:620px; border:1px solid #d5d9df; border-radius:5px;}
     table {border-collapse:collapse; font:13px sans-serif; color:var(--st-text-color); width:max-content; min-width:100%;}
     th, td {padding:8px 10px; border-bottom:1px solid #d5d9df; text-align:right; white-space:nowrap;}
@@ -80,5 +91,5 @@ def render_official_table(display, full, key, pitching=False, team=False):
     styler = display if hasattr(display, "hide") else display.style
     # Escape all source text before putting the existing table styles into HTML.
     html = styler.format(escape="html", subset=styler.data.select_dtypes(exclude="number").columns).format_index(escape="html", axis=1).hide(axis="index").to_html()
-    st.caption(("Click a team row to show official regular-season team totals for this level." if team else "Click a player row to show official regular-season totals for this level across all teams.") + " Click again to collapse. Totals reflect the latest official-stat refresh." + ((" Hld = holds; HA = hits allowed." + ("" if team else " Inh. Runners % = inherited runners who scored.")) if pitching else ""))
+    st.caption(("Click a team row to show official regular-season team totals for this level." if team else "Click a player row to show official regular-season totals for this level across all teams.") + " Click again to collapse." + ((" Hld = holds; HA = hits allowed." + ("" if team else " Inh. Runners % = inherited runners who scored.")) if pitching else ""))
     _component(data={"html": html, "details": details, "columns": columns}, key=key)

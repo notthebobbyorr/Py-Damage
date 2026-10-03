@@ -9,3 +9,5 @@ The saved data covers the supported seasons and levels. The current team model t
 Refresh with `.venv/Scripts/python.exe pipeline/build_official_teams.py --seasons 2026`. This runs during the daily refresh using the existing local scraper transport. Standard and advanced team endpoints are paginated and saved atomically to data/output/official_teams.parquet. The app only reads that file via cache_resource.
 
 The shared HTML component supports click/keyboard expand-collapse and column sorting; it has the same native-dataframe toolbar limitations as the player popouts. Remove the team detail flags from the two Season Stats render_table calls to roll back the UI.
+
+Fullscreen viewing is available using the table’s Fullscreen button. Exit fullscreen or Escape restores the table in place, preserving expanded rows and column sorting.

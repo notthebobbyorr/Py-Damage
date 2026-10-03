@@ -23,3 +23,5 @@ Sabermetrics: FIP, xFIP, FIP-, ERA-, WAR, RA9-WAR, RAR, leverage indices (pLI, i
 LOB% was not present in the standard, advanced, or sabermetric responses inspected. It has not been calculated or added. An estimated strand rate would need separate labeling and agreement on its definition.
 
 Player sabermetrics: official wRC+ follows OPS for hitters; xFIP follows ERA for pitchers. These are fetched during daily refresh with complete pagination and player-season-level matching. Missing API values remain blank (displayed as a dash), and team tables omit these metrics.
+
+Fullscreen viewing is available using the table’s Fullscreen button. Exit fullscreen or Escape restores the table in place, preserving expanded rows and column sorting.
