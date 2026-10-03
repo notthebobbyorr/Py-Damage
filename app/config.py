@@ -10,7 +10,7 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "output"
 # ---------------------------------------------------------------------------
 # UI / display
 # ---------------------------------------------------------------------------
-DEFAULT_NO_FORMAT_COLS = {"Season", "PA", "BBE", "TBF", "IP", "GS", "Age", "HR"}
+DEFAULT_NO_FORMAT_COLS = {"Pitches", "Season", "PA", "BBE", "TBF", "IP", "GS", "Age", "HR"}
 
 # Columns where higher values are worse (red=high, green=low) — inverted color scale
 HIGHER_IS_WORSE_COLS = {

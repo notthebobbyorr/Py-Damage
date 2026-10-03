@@ -456,6 +456,25 @@ def main(
         dry_run=dry_run,
     )
 
+    # Refresh preloaded official MLB hitter totals for the inline detail rows.
+    run(
+        [sys.executable, str(HERE / "pipeline" / "build_official_hitting.py"),
+         "--seasons", str(season)],
+        dry_run=dry_run,
+    )
+
+    run(
+        [sys.executable, str(HERE / "pipeline" / "build_official_pitching.py"),
+         "--seasons", str(season)],
+        dry_run=dry_run,
+    )
+
+    run(
+        [sys.executable, str(HERE / "pipeline" / "build_official_teams.py"),
+         "--seasons", str(season)],
+        dry_run=dry_run,
+    )
+
     # ── Step 8: Update last pull date ──────────────────────────────────────
     if not dry_run:
         write_last_pull_date(end_date)

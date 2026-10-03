@@ -673,15 +673,19 @@ def pitch_comps():
     if "game_type_group" in comp_df.columns:
         comp_df = comp_df[comp_df["game_type_group"] != "Spring Training"]
 
+    level_map = {"MLB": 1, "Triple-A": 11, "Low-A": 14, "Low Minors": 16}
+    target_level = st.selectbox(
+        "Target Level", list(level_map), index=0, key="pitch_comps_target_level"
+    )
     target_pool = comp_df[
-        (comp_df["level_id"] == 1) & (comp_df["pitches"] >= 5)
+        (comp_df["level_id"] == level_map[target_level]) & (comp_df["pitches"] >= 5)
     ].copy()
     eligible_all = comp_df[
         (comp_df["level_id"] == 1) & (comp_df["pitches"] >= 100)
     ].copy()
 
     if target_pool.empty:
-        st.info("No eligible MLB pitch-seasons (min 5 pitches).")
+        st.info(f"No eligible {target_level} pitch-seasons (min 5 pitches).")
         return
     if eligible_all.empty:
         st.info("No eligible MLB comparison pitch-seasons (min 100 pitches).")
@@ -696,6 +700,12 @@ def pitch_comps():
     if season_df.empty:
         st.info("No pitch rows for this season selection.")
         return
+
+    game_type = st.selectbox(
+        "Game Type", game_type_group_options(season_df), index=0,
+        key="pitch_comps_game_type",
+    )
+    season_df = filter_by_game_type_group(season_df, game_type)
 
     player_options, player_name_map = player_id_options(
         season_df, "pitcher_mlbid", "name"
@@ -729,6 +739,10 @@ def pitch_comps():
     target_df = player_df[player_df["pitch_tag"] == pitch_tag_choice]
     if target_df.empty:
         st.info("No target row found for that selection.")
+        return
+
+    if len(target_df) != 1:
+        st.warning("Multiple rows match this pitch selection; a unique target is required.")
         return
 
     display_map = _pitch_display_map()
@@ -899,7 +913,7 @@ def pitch_comps():
     target_view = target_view.rename(columns={**display_map, **similarity_labels})
     target_view = target_view.loc[:, ~target_view.columns.duplicated()]
 
-    st.caption("Selected pitch")
+    st.caption(f"Selected pitch ({target_level}, {game_type})")
     render_table(
         target_view,
         reverse_cols=PITCH_REVERSE_DISPLAY_COLS,

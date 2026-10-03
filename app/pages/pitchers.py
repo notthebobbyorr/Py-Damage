@@ -165,9 +165,7 @@ def pitcher_individual_stats():
                 "pitcher_mlbid",
                 "pitching_code",
                 "season",
-                "TBF",
-                "IP",
-                "GS",
+                "pitches",
                 "HR",
                 "stuff",
                 "grade_v13",
@@ -207,6 +205,7 @@ def pitcher_individual_stats():
             if "grade_v13" in df.columns:
                 df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
             rename_map = {
+                "pitches": "Pitches",
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
@@ -248,6 +247,7 @@ def pitcher_individual_stats():
             ].rename(columns=rename_map)
             render_table(
                 df,
+                official_pitching_details=(game_type_group == "Regular Season"),
                 reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "Damage/BBE (%)", "pDamage/BBE (%)", "HR", "SBO", "SB", "Takeoff% Against"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
@@ -379,6 +379,7 @@ def pitcher_percentiles():
                 "pitcher_mlbid",
                 "pitching_code",
                 "season",
+                "pitches",
                 "stuff_pctile",
                 "grade_v13_pctile",
                 "fastball_velo_pctile",
@@ -402,6 +403,7 @@ def pitcher_percentiles():
             df = df.assign(__season=df["season"], __level=df["level_id"])
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
+                "pitches": "Pitches",
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
@@ -439,6 +441,7 @@ def pitcher_percentiles():
             }
             render_table(
                 df,
+                official_pitching_details=(game_type_group == "Regular Season"),
                 abs_cols=ABS_GRADIENT_COLS_PITCHERS,
                 round_decimals=0,
                 fixed_scale_cols=_fixed,
@@ -640,11 +643,15 @@ def pitcher_comps():
     eligible_comp["similarity_score"] = similarity.round(0)
     eligible_comp = eligible_comp.sort_values("similarity_score", ascending=False)
     eligible_comp = eligible_comp.assign(
-        __season=eligible_comp["season"], __level=eligible_comp["level_id"]
+        __season=eligible_comp["season"], __level=eligible_comp["level_id"],
+        __official_level=eligible_comp["level_id"],
+        __official_game_type=eligible_comp.get("game_type_group", "Regular Season")
     )
 
     base_rename = {
+        "pitches": "Pitches",
         "name": "Name",
+        "pitcher_mlbid": "Player ID",
         "pitching_code": "Team",
         "season": "Season",
         "similarity_score": "Similarity (0-100)",
@@ -652,15 +659,16 @@ def pitcher_comps():
 
     display_cols = [
         "name",
+        "pitcher_mlbid",
         "pitching_code",
         "season",
-        "TBF",
-        "IP",
-        "GS",
+        "pitches",
         "similarity_score",
         *feature_cols,
         "__season",
         "__level",
+        "__official_level",
+        "__official_game_type",
     ]
     df = eligible_comp[
         [col for col in display_cols if col in eligible_comp.columns]
@@ -676,14 +684,15 @@ def pitcher_comps():
     )
     stats_columns = [
         "name",
+        "pitcher_mlbid",
         "pitching_code",
         "season",
-        "TBF",
-        "IP",
-        "GS",
+        "pitches",
         *list(dict.fromkeys(default_feature_cols + feature_cols)),
         "__season",
         "__level",
+        "__official_level",
+        "__official_game_type",
     ]
     stats_df = stats_df[
         [col for col in stats_columns if col in stats_df.columns]
@@ -695,17 +704,20 @@ def pitcher_comps():
 
     target_cols = [
         "name",
+        "pitcher_mlbid",
         "pitching_code",
         "season",
-        "TBF",
-        "IP",
-        "GS",
+        "pitches",
         *list(dict.fromkeys(default_feature_cols + feature_cols)),
         "__season",
         "__level",
+        "__official_level",
+        "__official_game_type",
     ]
     target_df = player_df.assign(
-        __season=player_df["season"], __level=player_df["level_id"]
+        __season=player_df["season"], __level=player_df["level_id"],
+        __official_level=player_df["level_id"],
+        __official_game_type=player_df.get("game_type_group", "Regular Season")
     )
     target_df = target_df[
         [col for col in target_cols if col in target_df.columns]
@@ -732,6 +744,7 @@ def pitcher_comps():
         st.caption("Selected season")
     render_table(
         target_df,
+        official_pitching_details=True,
         reverse_cols=PITCHER_REVERSE_DISPLAY_COLS,
         group_cols=["__season", "__level"],
         stats_df=stats_df,
@@ -747,6 +760,7 @@ def pitcher_comps():
         st.caption("Most similar MLB seasons (IP >= 50)")
     render_table(
         df,
+        official_pitching_details=True,
         reverse_cols=PITCHER_REVERSE_DISPLAY_COLS,
         group_cols=["__season", "__level"],
         stats_df=stats_df,
@@ -1031,9 +1045,7 @@ def pitcher_ar():
                 "pitcher_mlbid",
                 "pitching_code",
                 "season",
-                "TBF",
-                "IP",
-                "GS",
+                "pitches",
                 "HR",
                 "stuff",
                 "grade_v13",
@@ -1065,6 +1077,7 @@ def pitcher_ar():
             if "grade_v13" in df.columns:
                 df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
             rename_map = {
+                "pitches": "Pitches",
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
@@ -1103,6 +1116,7 @@ def pitcher_ar():
             ].rename(columns=rename_map)
             render_table(
                 df,
+                official_pitching_details=(game_type_group == "Regular Season"),
                 reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "Damage/BBE (%)", "pDamage/BBE (%)", "HR", "SBO", "SB", "Takeoff% Against"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,

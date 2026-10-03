@@ -339,6 +339,9 @@ def render_table(
     fixed_scale_cols: dict[str, tuple[float, float, float]] | None = None,
     plot_label_count: int | None = None,
     conditional_formatting: bool = True,
+    official_hitting_details: bool = False,
+    official_pitching_details: bool = False,
+    official_team_details: bool = False,
 ) -> None:
     if df.empty:
         st.info("No data available yet.")
@@ -454,6 +457,13 @@ def render_table(
         df_page_display = df_display.copy()
         df_page_full = df.copy()
 
+    def display_table(table):
+        if official_hitting_details or official_pitching_details:
+            from app.official_hitting import render_official_table
+            render_official_table(table, df_page_full, table_key + "_official", pitching=official_pitching_details, team=official_team_details)
+        else:
+            st.dataframe(table, width="stretch", hide_index=True)
+
     max_elements = pd.get_option("styler.render.max_elements")
     total_cells = df_page_display.shape[0] * df_page_display.shape[1]
     reverse_cols = reverse_cols or set()
@@ -475,7 +485,7 @@ def render_table(
         similarity_cols = [col for col in format_cols if col.startswith("Similarity")]
         stats_format_cols = [col for col in format_cols if col in stats_source.columns]
         if not stats_format_cols and not similarity_cols:
-            st.dataframe(df_page_display, width="stretch", hide_index=True)
+            display_table(df_page_display)
             return
         similarity_medians: dict[str, float] = {}
         for col in similarity_cols:
@@ -617,7 +627,7 @@ def render_table(
                 if any(kw in col for kw in int_substr_kws) or col.endswith("Pctile"):
                     format_map[col] = "{:.0f}"
             styler = styler.format(format_map)
-        st.dataframe(styler, width="stretch", hide_index=True)
+        display_table(styler)
         return
     if len(float_cols) > 0:
         # Identify columns that should display as integers
@@ -638,4 +648,4 @@ def render_table(
                 df_page_display[col] = df_page_display[col].apply(
                     lambda x: f"{x:.0f}" if pd.notna(x) else x
                 )
-    st.dataframe(df_page_display, width="stretch", hide_index=True)
+    display_table(df_page_display)

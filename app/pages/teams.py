@@ -146,6 +146,8 @@ def _team_hitting_season():
             group_cols=["__season", "__level"],
             stats_df=stats_df,
             include_team_label=True,
+            official_hitting_details=game_type_group == "Regular Season",
+            official_team_details=True,
         )
         download_button(df, "team_hitting", "team_hitting_download")
 
@@ -263,6 +265,8 @@ def _team_pitching_season():
             group_cols=["__season", "__level"],
             stats_df=stats_df,
             include_team_label=True,
+            official_pitching_details=game_type_group == "Regular Season",
+            official_team_details=True,
         )
         download_button(df, "team_pitching", "team_pitching_download")
 

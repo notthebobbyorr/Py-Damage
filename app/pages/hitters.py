@@ -176,16 +176,40 @@ def hitter_individual_stats():
                 df = numeric_filter(df, "bbe", min_value)
 
             columns = [
-                "hitter_name", "batter_mlbid", "hitting_code", "season", "PA", "bbe", "HR",
-                "damage_rate", "EV90th", "max_EV", "pull_FB_pct", "LA_gte_20",
-                "LA_lte_0", "SEAGER", "selection_skill", "hittable_pitches_taken",
-                "chase", "z_con", "secondary_whiff_pct", "whiffs_vs_95",
+                "hitter_name",
+                "batter_mlbid",
+                "hitting_code",
+                "season",
+                "bbe",
+                "damage_rate",
+                "EV90th",
+                "max_EV",
+                "pull_FB_pct",
+                "LA_gte_20",
+                "LA_lte_0",
+                "SEAGER",
+                "selection_skill",
+                "hittable_pitches_taken",
+                "chase",
+                "z_con",
+                "secondary_whiff_pct",
+                "whiffs_vs_95",
                 "contact_vs_avg",
-                "Swing_pct", "p_Swing_with_loc_pct",
-                "bat_speed", "fast_swing_pct", "swing_length", "swing_path_tilt",
-                "attack_angle", "attack_direction", "intercept_x_inches", "intercept_y_inches",
-                "SBO", "SB", "takeoff_rate",
-                "__season", "__level",
+                "Swing_pct",
+                "p_Swing_with_loc_pct",
+                "bat_speed",
+                "fast_swing_pct",
+                "swing_length",
+                "swing_path_tilt",
+                "attack_angle",
+                "attack_direction",
+                "intercept_x_inches",
+                "intercept_y_inches",
+                "SBO",
+                "SB",
+                "takeoff_rate",
+                "__season",
+                "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
@@ -226,6 +250,7 @@ def hitter_individual_stats():
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
                 include_team_label=False,
+                official_hitting_details=(game_type_group == "Regular Season"),
             )
             download_button(df, "hitters", "hitters_download")
 
@@ -359,12 +384,25 @@ def hitter_percentiles():
                 )
 
             columns = [
-                "hitter_name", "batter_mlbid", "hitting_code", "season",
-                "SEAGER_pctile", "selection_skill_pctile", "hittable_pitches_taken_pctile",
-                "damage_rate_pctile", "EV90th_pctile", "max_EV_pctile",
-                "pull_FB_pct_pctile", "chase_pctile", "z_con_pctile",
-                "secondary_whiff_pct_pctile", "whiffs_vs_95_pctile",
-                "contact_vs_avg_pctile", "takeoff_rate_pctile", "__season", "__level",
+                "hitter_name",
+                "batter_mlbid",
+                "hitting_code",
+                "season",
+                "SEAGER_pctile",
+                "selection_skill_pctile",
+                "hittable_pitches_taken_pctile",
+                "damage_rate_pctile",
+                "EV90th_pctile",
+                "max_EV_pctile",
+                "pull_FB_pct_pctile",
+                "chase_pctile",
+                "z_con_pctile",
+                "secondary_whiff_pct_pctile",
+                "whiffs_vs_95_pctile",
+                "contact_vs_avg_pctile",
+                "takeoff_rate_pctile",
+                "__season",
+                "__level",
             ]
             df = df.assign(__season=df["season"], __level=df["level_id"])
             df = df[[col for col in columns if col in df.columns]].copy()
@@ -387,6 +425,7 @@ def hitter_percentiles():
             _pctile_scale = (1, 50, 100)
             render_table(
                 df,
+                official_hitting_details=(game_type_group == "Regular Season"),
                 round_decimals=0,
                 fixed_scale_cols={
                     col: _pctile_scale for col in [
@@ -587,16 +626,27 @@ def hitter_comps():
     eligible_comp["similarity_score"] = similarity.round(0)
     eligible_comp = eligible_comp.sort_values("similarity_score", ascending=False)
     eligible_comp = eligible_comp.assign(
-        __season=eligible_comp["season"], __level=eligible_comp["level_id"]
+        __season=eligible_comp["season"], __level=eligible_comp["level_id"],
+        __official_level=eligible_comp["level_id"],
+        __official_game_type=eligible_comp.get("game_type_group", "Regular Season")
     )
 
     base_rename = {
-        "hitter_name": "Name", "hitting_code": "Team", "season": "Season",
+        "hitter_name": "Name", "batter_mlbid": "Player ID", "hitting_code": "Team", "season": "Season",
         "bbe": "BBE", "similarity_score": "Similarity (0-100)",
     }
     display_cols = [
-        "hitter_name", "hitting_code", "season", "PA", "bbe", "similarity_score",
-        *feature_cols, "__season", "__level",
+        "hitter_name",
+        "batter_mlbid",
+        "hitting_code",
+        "season",
+        "bbe",
+        "similarity_score",
+        *feature_cols,
+        "__season",
+        "__level",
+        "__official_level",
+        "__official_game_type",
     ]
     df = eligible_comp[
         [col for col in display_cols if col in eligible_comp.columns]
@@ -609,9 +659,16 @@ def hitter_comps():
         __season=stats_df["season"], __level=stats_df["level_id"]
     )
     stats_columns = [
-        "hitter_name", "hitting_code", "season", "PA", "bbe",
+        "hitter_name",
+        "batter_mlbid",
+        "hitting_code",
+        "season",
+        "bbe",
         *list(dict.fromkeys(default_feature_cols + feature_cols)),
-        "__season", "__level",
+        "__season",
+        "__level",
+        "__official_level",
+        "__official_game_type",
     ]
     stats_df = stats_df[
         [col for col in stats_columns if col in stats_df.columns]
@@ -619,12 +676,21 @@ def hitter_comps():
     stats_df = stats_df.loc[:, ~stats_df.columns.duplicated()]
 
     target_cols = [
-        "hitter_name", "hitting_code", "season", "PA", "bbe",
+        "hitter_name",
+        "batter_mlbid",
+        "hitting_code",
+        "season",
+        "bbe",
         *list(dict.fromkeys(default_feature_cols + feature_cols)),
-        "__season", "__level",
+        "__season",
+        "__level",
+        "__official_level",
+        "__official_game_type",
     ]
     target_df = player_df.assign(
-        __season=player_df["season"], __level=player_df["level_id"]
+        __season=player_df["season"], __level=player_df["level_id"],
+        __official_level=player_df["level_id"],
+        __official_game_type=player_df.get("game_type_group", "Regular Season")
     )
     target_df = target_df[
         [col for col in target_cols if col in target_df.columns]
@@ -653,6 +719,7 @@ def hitter_comps():
         st.caption("Selected season")
     render_table(
         target_df,
+        official_hitting_details=True,
         reverse_cols=reverse_hitters,
         group_cols=["__season", "__level"],
         stats_df=stats_df,
@@ -667,6 +734,7 @@ def hitter_comps():
         st.caption("Most similar MLB seasons (PA >= 200)")
     render_table(
         df,
+        official_hitting_details=True,
         reverse_cols=reverse_hitters,
         group_cols=["__season", "__level"],
         stats_df=stats_df,
@@ -933,14 +1001,32 @@ def hitter_ar():
                 df = numeric_filter(df, "bbe", min_value)
 
             columns = [
-                "hitter_name", "batter_mlbid", "hitting_code", "season", "PA", "bbe", "HR",
-                "damage_rate_reg", "EV90th_reg", "max_EV_reg", "pull_FB_pct_reg",
-                "LA_gte_20_reg", "LA_lte_0_reg", "SEAGER_reg", "selection_skill_reg",
-                "hittable_pitches_taken_reg", "chase_reg", "z_con_reg",
-                "secondary_whiff_pct_reg", "whiffs_vs_95_reg", "contact_vs_avg_reg",
-                "Swing_pct_reg", "p_Swing_with_loc_pct_reg",
-                "SBO", "SB", "takeoff_rate_reg",
-                "__season", "__level",
+                "hitter_name",
+                "batter_mlbid",
+                "hitting_code",
+                "season",
+                "bbe",
+                "damage_rate_reg",
+                "EV90th_reg",
+                "max_EV_reg",
+                "pull_FB_pct_reg",
+                "LA_gte_20_reg",
+                "LA_lte_0_reg",
+                "SEAGER_reg",
+                "selection_skill_reg",
+                "hittable_pitches_taken_reg",
+                "chase_reg",
+                "z_con_reg",
+                "secondary_whiff_pct_reg",
+                "whiffs_vs_95_reg",
+                "contact_vs_avg_reg",
+                "Swing_pct_reg",
+                "p_Swing_with_loc_pct_reg",
+                "SBO",
+                "SB",
+                "takeoff_rate_reg",
+                "__season",
+                "__level",
             ]
             df = df.assign(__season=df["season"], __level=df["level_id"])
             df = df[[col for col in columns if col in df.columns]].copy()
@@ -970,6 +1056,7 @@ def hitter_ar():
             ].rename(columns=rename_map)
             render_table(
                 df,
+                official_hitting_details=(game_type_group == "Regular Season"),
                 reverse_cols=HIGHER_IS_WORSE_COLS | {"LA<=0%", "Chase (%)"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,

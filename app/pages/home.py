@@ -6,6 +6,12 @@ import streamlit as st
 
 FEATURE_TIMELINE: list[dict[str, str]] = [
     {
+        "date": "2026-10-03",
+        "title": "MLB official stats popouts",
+        "page": "Hitters / Pitchers / Team Hitting / Team Pitching",
+        "description": "Click/Select a row on the Hitter, Pitcher, Team Hitting, or Team Pitching stats pages to view their official season totals. Click again to collapse. Available on Stats, Percentiles, and Comps pages for Hitters and Pitchers.",
+    },
+    {
         "date": "2026-10-02",
         "title": "Stat Filters and Team Plot Labels",
         "page": "Hitters / Pitchers / Individual Pitches / Leagues / Teams",
