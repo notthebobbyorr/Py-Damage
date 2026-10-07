@@ -622,7 +622,7 @@ def render_table(
         if len(float_cols) > 0:
             format_map = {col: f"{{:.{round_decimals}f}}" for col in float_cols}
             # Format integer-value columns without decimals
-            int_substr_kws = ["Similarity", "Pitch Grade", "BB Spin", "#"]
+            int_substr_kws = ["Similarity", "Pitch Grade", "BR spin", "#"]
             for col in df_page_display.columns:
                 if any(kw in col for kw in int_substr_kws) or col.endswith("Pctile"):
                     format_map[col] = "{:.0f}"
@@ -631,7 +631,7 @@ def render_table(
         return
     if len(float_cols) > 0:
         # Identify columns that should display as integers
-        int_substr_kws = ["Similarity", "Pitch Grade", "BB Spin", "#"]
+        int_substr_kws = ["Similarity", "Pitch Grade", "BR spin", "#"]
         int_cols = [
             col
             for col in df_page_display.columns

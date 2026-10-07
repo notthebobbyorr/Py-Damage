@@ -34,12 +34,9 @@ class PitchCompsSelectionTests(unittest.TestCase):
         target, comps = app.session_state['captured']
         self.assertEqual(target['__level'].tolist(), [11])
         self.assertTrue((comps['__level'] == 1).all())
-        app.selectbox(key='pitch_comps_game_type').select('Postseason').run()
-        self.assertFalse(app.exception)
-        target, comps = app.session_state['captured']
         self.assertEqual(len(target), 1)
-        self.assertIn(97, target.iloc[0].values)
-        self.assertTrue((comps['__level'] == 1).all())
+        self.assertIn(95, target.iloc[0].values)
+        self.assertNotIn('pitch_comps_game_type', [widget.key for widget in app.selectbox])
         app.selectbox(key='pitch_comps_target_level').select('Low-A').run()
         self.assertFalse(app.exception)
         self.assertEqual(app.session_state['captured'], [])

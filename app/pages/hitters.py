@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import streamlit as st
+from app.comps import comparison_columns, prepare_comparison_metrics
 
 from app.config import (
     ABS_GRADIENT_COLS_PITCHERS,
@@ -24,6 +25,7 @@ from app.datasets import (
     hitters_reg_df,
 )
 from app.filters import (
+    comparison_pool_filters,
     download_button,
     filter_by_game_type_group,
     filter_by_positions,
@@ -42,6 +44,7 @@ from app.utils import (
     _similarity_choice_labels,
     constant_pctile_subset,
     maybe_add_level_col,
+    hitter_export_with_positions,
     rank_for_display,
 )
 from app.viz import render_table
@@ -211,6 +214,7 @@ def hitter_individual_stats():
                 "__season",
                 "__level",
             ]
+            export_source = df
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
                 "hitter_name": "Name", "batter_mlbid": "Player ID",
@@ -252,7 +256,9 @@ def hitter_individual_stats():
                 include_team_label=False,
                 official_hitting_details=(game_type_group == "Regular Season"),
             )
-            download_button(df, "hitters", "hitters_download")
+            download_button(
+                hitter_export_with_positions(df, export_source), "hitters", "hitters_download"
+            )
 
 
 def hitter_percentiles():
@@ -324,7 +330,7 @@ def hitter_percentiles():
                 min_value = 0
                 value_type = "PA"
                 st.caption(
-                    "Constant mode: Regular Season, PA ≥ 150, ranked within each season + level. "
+                    "Constant mode: Regular Season, PA â‰¥ 150, ranked within each season + level. "
                     "Recommended when viewing a single player across years."
                 )
             team = st.selectbox(
@@ -405,6 +411,7 @@ def hitter_percentiles():
                 "__level",
             ]
             df = df.assign(__season=df["season"], __level=df["level_id"])
+            export_source = df
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
                 "hitter_name": "Name", "batter_mlbid": "Player ID",
@@ -436,7 +443,9 @@ def hitter_percentiles():
                     ]
                 },
             )
-            download_button(df, "hitter_percentiles", "hitter_pct_download")
+            download_button(
+                hitter_export_with_positions(df, export_source), "hitter_percentiles", "hitter_pct_download"
+            )
 
 
 def hitter_comps():
@@ -466,14 +475,11 @@ def hitter_comps():
         else:
             comp_df = hitters_mlb_eq_df.copy()
 
-    if "game_type_group" in comp_df.columns:
-        comp_df = comp_df[comp_df["game_type_group"] != "Spring Training"]
+    comp_df = filter_by_game_type_group(comp_df, "Regular Season")
+    comp_df = prepare_comparison_metrics(comp_df, "hitter", use_mlb_eq)
 
     if use_mlb_eq:
         player_pool = comp_df[(comp_df["PA"] >= 20)].copy()
-        eligible_all = comp_df[
-            (comp_df["level_id"] == 1) & (comp_df["PA"] >= 200)
-        ].copy()
         if player_pool.empty:
             st.info("No eligible hitter seasons (min 20 PA).")
             return
@@ -491,9 +497,13 @@ def hitter_comps():
         player_pool = player_pool[player_pool["level_id"] == target_level]
     else:
         player_pool = comp_df[(comp_df["level_id"] == 1) & (comp_df["PA"] >= 20)].copy()
-        eligible_all = comp_df[
-            (comp_df["level_id"] == 1) & (comp_df["PA"] >= 200)
-        ].copy()
+
+    eligible_all = comparison_pool_filters(
+        comp_df, "hitter_comps", ["PA", "pitches", "bbe"],
+        {"PA": 200}, allow_minors=use_mlb_eq,
+    )
+    if not use_mlb_eq:
+        st.caption("Enable MLB-equivalent translated stats to search minor league profiles.")
 
     position = st.multiselect(
         "Select Position",
@@ -511,7 +521,7 @@ def hitter_comps():
         st.info("No eligible MLB hitter seasons (min 20 PA).")
         return
     if eligible_all.empty:
-        st.info("No eligible MLB comparison seasons (min 200 PA).")
+        st.info("No comparison seasons match the result pool filters.")
         return
 
     seasons = season_options(player_pool, "season")[1:]
@@ -585,15 +595,10 @@ def hitter_comps():
         if use_mlb_eq
         else "hitter_comps_similarity_cols_raw"
     )
-    feature_cols = st.multiselect(
-        "Similarity Score Columns",
-        options=numeric_cols,
-        default=default_feature_cols,
-        key=similarity_key,
-        format_func=lambda col: similarity_labels.get(col, col),
+    feature_cols, similarity_labels = comparison_columns(
+        "hitter", eligible_all, display_map, default_feature_cols, similarity_key,
+        equivalent=use_mlb_eq, available=numeric_cols,
     )
-    feature_cols = [col for col in feature_cols if col in numeric_cols]
-    feature_cols = list(dict.fromkeys(feature_cols))
     if not feature_cols:
         st.info("Select at least one column to compute similarity scores.")
         return
@@ -605,7 +610,7 @@ def hitter_comps():
     eligible_comp = eligible_comp[~(eligible_comp["batter_mlbid"] == player_choice)]
     eligible_comp = eligible_comp[eligible_comp[feature_cols].notna().any(axis=1)]
     if eligible_comp.empty:
-        st.info("No comparable MLB rows found after filters.")
+        st.info("No comparable rows found after filters.")
         return
 
     stats = eligible_comp[feature_cols].copy()
@@ -614,8 +619,8 @@ def hitter_comps():
     stds = stats.std(ddof=0).replace(0, np.nan)
     zscores = ((stats - means) / stds).fillna(0)
     target_stats = player_df[feature_cols].copy().fillna(means)
-    target_vec = ((target_stats - means) / stds).fillna(0).iloc[0].to_numpy()
-    distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
+    target_vec = ((target_stats - means) / stds).fillna(0).iloc[0].to_numpy(dtype=float)
+    distances = np.linalg.norm(zscores.to_numpy(dtype=float) - target_vec, axis=1)
     max_dist = distances.max() if len(distances) else 0.0
     if max_dist == 0:
         similarity = np.full_like(distances, 100.0, dtype=float)
@@ -651,6 +656,7 @@ def hitter_comps():
     df = eligible_comp[
         [col for col in display_cols if col in eligible_comp.columns]
     ].copy()
+    df.insert(df.columns.get_loc("season") + 1, "Level", df["__official_level"].map(LEVEL_LABELS))
     df = df.rename(columns={**base_rename, **similarity_labels})
     df = df.loc[:, ~df.columns.duplicated()]
 
@@ -674,6 +680,9 @@ def hitter_comps():
         [col for col in stats_columns if col in stats_df.columns]
     ].rename(columns={**base_rename, **similarity_labels})
     stats_df = stats_df.loc[:, ~stats_df.columns.duplicated()]
+    if use_mlb_eq:
+        df["__level"] = 1
+        stats_df["__level"] = 1
 
     target_cols = [
         "hitter_name",
@@ -726,12 +735,7 @@ def hitter_comps():
         show_controls=False,
         hide_cols={"Team"},
     )
-    if use_mlb_eq:
-        st.caption(
-            "Most similar MLB seasons by translated MLB-equivalent stats (PA >= 200)"
-        )
-    else:
-        st.caption("Most similar MLB seasons (PA >= 200)")
+    st.caption("Most similar seasons matching the result pool filters")
     render_table(
         df,
         official_hitting_details=True,
@@ -739,6 +743,10 @@ def hitter_comps():
         group_cols=["__season", "__level"],
         stats_df=stats_df,
         default_sort_col="Similarity (0-100)",
+    )
+
+    download_button(
+        hitter_export_with_positions(df, eligible_comp), "hitter_comps", "hitter_comps_download"
     )
 
 
@@ -870,7 +878,10 @@ def hitter_mlb_equivalencies():
         group_cols=["__season", "__level"],
         stats_df=table_df,
     )
-    download_button(table_df, "hitter_mlb_equivalencies", "hitter_mlb_eq_download")
+    download_button(
+        hitter_export_with_positions(table_df, view),
+        "hitter_mlb_equivalencies", "hitter_mlb_eq_download",
+    )
 
     if not hitter_mlb_eq_coeffs.empty:
         with st.expander("Translation coefficients", expanded=False):
@@ -1029,6 +1040,7 @@ def hitter_ar():
                 "__level",
             ]
             df = df.assign(__season=df["season"], __level=df["level_id"])
+            export_source = df
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
                 "hitter_name": "Name", "batter_mlbid": "Player ID",
@@ -1061,7 +1073,9 @@ def hitter_ar():
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
             )
-            download_button(df, "hitters_ar", "hitters_ar_download")
+            download_button(
+                hitter_export_with_positions(df, export_source), "hitters_ar", "hitters_ar_download"
+            )
 
 
 def hitter_splits():
@@ -1242,7 +1256,7 @@ def hitter_gamelogs_page():
     hitter_gamelogs = get_hitter_gamelogs()
 
     if hitter_gamelogs.empty:
-        st.info("Missing hitter_gamelogs.parquet — run the daily pipeline to generate it.")
+        st.info("Missing hitter_gamelogs.parquet â€” run the daily pipeline to generate it.")
         return
 
     _HITTER_GL_COLS = [

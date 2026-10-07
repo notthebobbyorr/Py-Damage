@@ -6,6 +6,16 @@ import streamlit as st
 
 FEATURE_TIMELINE: list[dict[str, str]] = [
     {
+        "date": "2026-10-07",
+        "title": "Expanded Comps: Minor League Searches, Pool Filters & Presets",
+        "page": "Hitters / Pitchers / Individual Pitches → Comps",
+        "description": (
+            "- **Find minor league matches for MLB profiles**: Hitter, Pitcher, and Pitch Comps now let you search MLB, minor league, or combined result pools using an MLB or minor league target. Hitter and Pitcher Comps support MLB-equivalent translated profiles.\n\n"
+            "- **Control the result pool**: Choose minor league levels, batter or pitcher handedness, and playing-time minimums or optional maximums. Comparisons use regular-season records, and results show each row's source level.\n\n"
+            "- **Comparison presets**: Hitters offer **Overall, Over the plate, Batted Ball, and Bat Path**; Pitchers offer **Overall, Traits & Usage, and Outcomes**; Pitches offer **Shapes, Angles, and Outcomes**. Choose **Custom** to build your own comparison, or edit a preset's selected columns."
+        ),
+    },
+    {
         "date": "2026-10-03",
         "title": "MLB official stats popouts",
         "page": "Hitters / Pitchers / Team Hitting / Team Pitching",

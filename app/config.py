@@ -146,6 +146,7 @@ PITCHER_COMPS_BASE_FEATURE_COLS = [
     "inf_arm_angle",
 ]
 PITCHER_COMPS_EXTRA_FEATURE_COLS = [
+    "BB_pct", "OFF_pct", "BB_velo", "OFF_velo",
     "Zone_reg",
     "CSW_reg",
     "FA_spin_eff_reg",
@@ -154,6 +155,7 @@ PITCHER_COMPS_EXTRA_FEATURE_COLS = [
     "takeoff_rate_reg",
 ]
 PITCHER_MLB_PASS_THROUGH_COLS = {
+    "BB_pct", "OFF_pct", "BB_velo", "OFF_velo",
     "stuff",
     "stuff_raw_reg",
     "fastball_velo_reg",
@@ -372,7 +374,7 @@ RADAR_TEMPLATES: dict[str, dict[str, dict[str, list[tuple[str, str, bool]]]]] = 
                 ("fastball_velo", "FA Velo", False),
                 ("fastball_vaa", "FA VAA", True),
                 ("FA_pct", "FA Usage", False),
-                ("BB_rpm", "BB Spin", False),
+                ("BB_rpm", "BR spin", False),
                 ("rel_z", "Vertical Release", False),
                 ("rel_x", "Horizontal Release", False),
                 ("ext", "Extension", False),
@@ -384,7 +386,7 @@ RADAR_TEMPLATES: dict[str, dict[str, dict[str, list[tuple[str, str, bool]]]]] = 
                 ("fastball_velo_reg", "FA Velo", False),
                 ("fastball_vaa_reg", "FA VAA", True),
                 ("FA_pct_reg", "FA Usage", False),
-                ("BB_rpm_reg", "BB Spin", False),
+                ("BB_rpm_reg", "BR spin", False),
                 ("rel_z_reg", "Vertical Release", False),
                 ("rel_x_reg", "Horizontal Release", False),
                 ("ext_reg", "Extension", False),

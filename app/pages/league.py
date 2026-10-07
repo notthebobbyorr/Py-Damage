@@ -206,7 +206,7 @@ def league_pitching():
                 "fastball_velo": "FA mph",
                 "fastball_vaa": "FA VAA",
                 "FA_pct": "FA Usage (%)",
-                "BB_rpm": "BB Spin",
+                "BB_rpm": "BR spin",
                 "stuff": "Pitch Grade",
                 "stuff_z": "Pitch Grade Z",
                 "LA_lte_0": "LA<=0%",

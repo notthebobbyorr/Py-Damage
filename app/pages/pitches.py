@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import streamlit as st
+from app.comps import comparison_columns, prepare_comparison_metrics
 
 from app.aggregates import PITCH_TYPE_SPEC, render_span_tab
 from app.config import (
@@ -20,6 +21,7 @@ from app.datasets import (
     pitch_types_reg_df,
 )
 from app.filters import (
+    comparison_pool_filters,
     download_button,
     filter_by_game_type_group,
     filter_by_team_token,
@@ -670,8 +672,16 @@ def pitch_comps():
         return
 
     comp_df = pitch_types.copy()
-    if "game_type_group" in comp_df.columns:
-        comp_df = comp_df[comp_df["game_type_group"] != "Spring Training"]
+    comp_df = filter_by_game_type_group(comp_df, "Regular Season")
+    comp_df = prepare_comparison_metrics(comp_df, "pitch", False)
+
+    use_mlb_eq = st.toggle("Use MLB-equivalent fastball VAA", key="pitch_comps_use_mlb_eq")
+    if use_mlb_eq:
+        from app.comps import translate_fastball_vaa
+        from app.datasets import pitchers_reg_df, pitcher_mlb_eq_coeffs
+        comp_df = translate_fastball_vaa(comp_df, pitchers_reg_df, pitcher_mlb_eq_coeffs)
+        st.caption("Fastball VAA uses the existing pitcher-level translation as an approximation. Other metrics and non-fastball VAA remain observed values.")
+    st.caption("HR/pitches% uses total pitches; pitch-type TBF is unavailable in the saved data.")
 
     level_map = {"MLB": 1, "Triple-A": 11, "Low-A": 14, "Low Minors": 16}
     target_level = st.selectbox(
@@ -680,15 +690,15 @@ def pitch_comps():
     target_pool = comp_df[
         (comp_df["level_id"] == level_map[target_level]) & (comp_df["pitches"] >= 5)
     ].copy()
-    eligible_all = comp_df[
-        (comp_df["level_id"] == 1) & (comp_df["pitches"] >= 100)
-    ].copy()
+    eligible_all = comparison_pool_filters(
+        comp_df, "pitch_comps", ["pitches"], {"pitches": 100},
+    )
 
     if target_pool.empty:
         st.info(f"No eligible {target_level} pitch-seasons (min 5 pitches).")
         return
     if eligible_all.empty:
-        st.info("No eligible MLB comparison pitch-seasons (min 100 pitches).")
+        st.info("No comparison pitch-seasons match the result pool filters.")
         return
 
     seasons = season_options(target_pool, "season")[1:]
@@ -701,11 +711,7 @@ def pitch_comps():
         st.info("No pitch rows for this season selection.")
         return
 
-    game_type = st.selectbox(
-        "Game Type", game_type_group_options(season_df), index=0,
-        key="pitch_comps_game_type",
-    )
-    season_df = filter_by_game_type_group(season_df, game_type)
+    game_type = "Regular Season"
 
     player_options, player_name_map = player_id_options(
         season_df, "pitcher_mlbid", "name"
@@ -768,15 +774,10 @@ def pitch_comps():
         col for col in PITCH_COMPS_BASE_FEATURE_COLS if col in numeric_cols
     ]
 
-    feature_cols = st.multiselect(
-        "Similarity Score Columns",
-        options=numeric_cols,
-        default=default_feature_cols,
-        key="pitch_comps_similarity_cols",
-        format_func=lambda col: similarity_labels.get(col, col),
+    feature_cols, similarity_labels = comparison_columns(
+        "pitch", eligible_all, display_map, default_feature_cols, "pitch_comps_similarity_cols",
+        equivalent=False, available=numeric_cols,
     )
-    feature_cols = [col for col in feature_cols if col in numeric_cols]
-    feature_cols = list(dict.fromkeys(feature_cols))
     if not feature_cols:
         st.info("Select at least one column to compute similarity scores.")
         return
@@ -833,8 +834,8 @@ def pitch_comps():
     stds = stats.std(ddof=0).replace(0, np.nan)
     zscores = ((stats - means) / stds).fillna(0)
     target_stats = target_df[feature_cols].copy().fillna(means)
-    target_vec = ((target_stats - means) / stds).fillna(0).iloc[0].to_numpy()
-    distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
+    target_vec = ((target_stats - means) / stds).fillna(0).iloc[0].to_numpy(dtype=float)
+    distances = np.linalg.norm(zscores.to_numpy(dtype=float) - target_vec, axis=1)
     # Normalize against the 95th-percentile distance within the pitch_group pool
     # so the similarity scale isn't compressed by a few outlier pitch-seasons.
     # Rows farther than the 95th-percentile distance get clipped to 0.
@@ -867,6 +868,7 @@ def pitch_comps():
     ].copy()
     if "grade_v13" in df.columns:
         df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
+    df.insert(df.columns.get_loc("season") + 1, "Level", df["__level"].map({v: k for k, v in level_map.items()}))
     df = df.rename(columns={**display_map, **similarity_labels})
     df = df.loc[:, ~df.columns.duplicated()]
 
@@ -928,7 +930,7 @@ def pitch_comps():
         _pool_desc = "all non-fastballs"
     else:
         _pool_desc = "all pitches"
-    st.caption(f"Most similar pitches (MLB, min 100 pitches, pool: {_pool_desc})")
+    st.caption(f"Most similar pitches matching result filters (pool: {_pool_desc})")
     render_table(
         df,
         reverse_cols=PITCH_REVERSE_DISPLAY_COLS,

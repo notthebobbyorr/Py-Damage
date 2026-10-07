@@ -71,7 +71,7 @@ def glossary_pitching():
 
 **FA Usage (%)**: Percentage of pitches that are fastballs (4-seam fastballs, sinkers, or hard cutters).
 
-**BB Spin**: Avg spin rate (RPM) of a pitcher's breaking balls.
+**BR spin**: Avg spin rate (RPM) of a pitcher's breaking balls.
 
 **SwStr (%)**: Swinging strike percentage.
                 

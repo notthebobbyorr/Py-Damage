@@ -10,10 +10,67 @@ from app.auth import _is_user_subscribed
 from app.config import (
     GAME_TYPE_GROUP_NOTE,
     GAME_TYPE_GROUP_OPTIONS,
+    LEVEL_LABELS,
     POSITION_COUNT_THRESHOLD,
     POSITION_FILTER_COLS,
     PREVIEW_ROWS,
 )
+
+
+def comparison_pool_filters(
+    df: pd.DataFrame, key_prefix: str, workload_cols: list[str],
+    defaults: dict[str, float], allow_minors: bool = True,
+) -> pd.DataFrame:
+    """Filter source rows before scoring, independently of target/display columns."""
+    choices = ["MLB", "Minor leagues", "MLB + minor leagues"] if allow_minors else ["MLB"]
+    pool = st.selectbox("Result pool", choices, key=f"{key_prefix}_result_pool")
+    levels = [1] if pool == "MLB" else []
+    if pool != "MLB":
+        available = sorted(v for v in df["level_id"].dropna().unique() if v != 1)
+        levels = st.multiselect(
+            "Result minor league levels", available, default=available,
+            format_func=lambda v: LEVEL_LABELS.get(int(v), str(int(v))),
+            key=f"{key_prefix}_result_levels",
+        )
+        if pool == "MLB + minor leagues":
+            levels = [1, *levels]
+    filtered = df[df["level_id"].isin(levels)]
+    for hand_col, label in [("batter_hand", "Batter"), ("pitcher_hand", "Pitcher")]:
+        if hand_col not in df.columns:
+            continue
+        hands = sorted(df[hand_col].dropna().unique().tolist())
+        selected_hands = st.multiselect(
+            f"Result pool {label.lower()} handedness", ["All", *hands],
+            default=["All"], key=f"{key_prefix}_{hand_col}",
+        )
+        filtered = filter_by_values(filtered, hand_col, selected_hands)
+    defaults_key = f"{key_prefix}_workload_defaults"
+    if st.session_state.get(defaults_key) != defaults:
+        for col in workload_cols:
+            st.session_state.pop(f"{key_prefix}_{col}_minimum", None)
+        st.session_state[defaults_key] = defaults.copy()
+    with st.expander("Result pool playing time", expanded=True):
+        st.caption("Actual workload at the source level. Filters apply before similarity scoring.")
+        use_max = st.checkbox("Set maximums too", key=f"{key_prefix}_workload_max")
+        for col in workload_cols:
+            if col not in df.columns:
+                continue
+            minimum = st.number_input(
+                f"Minimum {col}", min_value=0.0, value=float(defaults.get(col, 0)),
+                key=f"{key_prefix}_{col}_minimum",
+            )
+            values = pd.to_numeric(filtered[col], errors="coerce")
+            if minimum > 0:
+                filtered = filtered[values >= minimum]
+            if use_max:
+                maximum = st.number_input(
+                    f"Maximum {col}", min_value=0.0,
+                    value=float(pd.to_numeric(df[col], errors="coerce").max())
+                    if df[col].notna().any() else 0.0,
+                    key=f"{key_prefix}_{col}_maximum",
+                )
+                filtered = filtered[pd.to_numeric(filtered[col], errors="coerce") <= maximum]
+    return filtered.copy()
 
 
 def season_options(df: pd.DataFrame, column: str = "season") -> list:

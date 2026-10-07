@@ -416,6 +416,12 @@ def main(
     if not dry_run:
         stitch_season_chunks(min_season, season)
 
+    # Rebuild historical and current arsenal metrics after stitching source chunks.
+    run(
+        [sys.executable, str(HERE / "pipeline" / "backfill_pitcher_arsenal.py")],
+        dry_run=dry_run,
+    )
+
     # ── Step 6a: Merge p(damage) into aggregated files ─────────────────────
     run(
         [sys.executable, str(HERE / "pipeline" / "merge_p_damage_into_sources.py")],

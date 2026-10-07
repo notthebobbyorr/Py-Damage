@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import streamlit as st
+from app.comps import comparison_columns, prepare_comparison_metrics
 
 from app.aggregates import PITCHER_SPEC, render_span_tab
 from app.config import (
@@ -23,6 +24,7 @@ from app.datasets import (
     pitchers_reg_df,
 )
 from app.filters import (
+    comparison_pool_filters,
     download_button,
     filter_by_game_type_group,
     filter_by_team_token,
@@ -173,7 +175,11 @@ def pitcher_individual_stats():
                 "max_velo",
                 "fastball_vaa",
                 "FA_pct",
+                "BB_pct",
+                "OFF_pct",
                 "BB_rpm",
+                "BB_velo",
+                "OFF_velo",
                 "SwStr",
                 "p_SwStr_pct",
                 "Swing_pct",
@@ -217,8 +223,10 @@ def pitcher_individual_stats():
                 "fastball_velo": "FA mph",
                 "max_velo": "Max FA mph",
                 "fastball_vaa": "FA VAA",
-                "FA_pct": "FA Usage (%)",
-                "BB_rpm": "BB Spin",
+                "FA_pct": "FA%",
+                "BB_pct": "BR%", "OFF_pct": "OFF%",
+                "BB_velo": "BR mph", "OFF_velo": "OFF mph",
+                "BB_rpm": "BR spin",
                 "SwStr": "SwStr (%)",
                 "p_SwStr_pct": "pSwStr (%)",
                 "Swing_pct": "Swing (%)",
@@ -328,7 +336,7 @@ def pitcher_percentiles():
                 min_value = 0
                 filter_type = "TBF"
                 st.caption(
-                    "Constant mode: Regular Season, TBF ≥ 150, ranked within each season + level. "
+                    "Constant mode: Regular Season, TBF â‰¥ 150, ranked within each season + level. "
                     "Recommended when viewing a single player across years."
                 )
             team = st.selectbox(
@@ -476,14 +484,11 @@ def pitcher_comps():
         else:
             comp_df = pitchers_mlb_eq_df.copy()
 
-    if "game_type_group" in comp_df.columns:
-        comp_df = comp_df[comp_df["game_type_group"] != "Spring Training"]
+    comp_df = filter_by_game_type_group(comp_df, "Regular Season")
+    comp_df = prepare_comparison_metrics(comp_df, "pitcher", use_mlb_eq)
 
     if use_mlb_eq:
         player_pool = comp_df[(comp_df["TBF"] >= 20)].copy()
-        eligible_all = comp_df[
-            (comp_df["level_id"] == 1) & (comp_df["TBF"] >= 200)
-        ].copy()
         if player_pool.empty:
             st.info("No eligible pitcher seasons (min 20 TBF).")
             return
@@ -501,9 +506,13 @@ def pitcher_comps():
         player_pool = player_pool[player_pool["level_id"] == target_level]
     else:
         player_pool = comp_df[(comp_df["level_id"] == 1) & (comp_df["IP"] >= 5)].copy()
-        eligible_all = comp_df[
-            (comp_df["level_id"] == 1) & (comp_df["IP"] >= 50)
-        ].copy()
+
+    eligible_all = comparison_pool_filters(
+        comp_df, "pitcher_comps", ["IP", "TBF", "GS", "pitches"],
+        {"TBF": 200} if use_mlb_eq else {"IP": 50}, allow_minors=use_mlb_eq,
+    )
+    if not use_mlb_eq:
+        st.caption("Enable MLB-equivalent translated stats to search minor league profiles.")
 
     if player_pool.empty:
         if use_mlb_eq:
@@ -512,10 +521,7 @@ def pitcher_comps():
             st.info("No eligible MLB pitcher seasons (min 5 IP).")
         return
     if eligible_all.empty:
-        if use_mlb_eq:
-            st.info("No eligible MLB comparison seasons (min 200 TBF).")
-        else:
-            st.info("No eligible MLB comparison seasons (min 50 IP).")
+        st.info("No comparison seasons match the result pool filters.")
         return
 
     seasons = season_options(player_pool, "season")[1:]
@@ -602,15 +608,10 @@ def pitcher_comps():
         if use_mlb_eq
         else "pitcher_comps_similarity_cols_raw"
     )
-    feature_cols = st.multiselect(
-        "Similarity Score Columns",
-        options=numeric_cols,
-        default=default_feature_cols,
-        key=similarity_key,
-        format_func=lambda col: similarity_labels.get(col, col),
+    feature_cols, similarity_labels = comparison_columns(
+        "pitcher", eligible_all, display_map, default_feature_cols, similarity_key,
+        equivalent=use_mlb_eq, available=numeric_cols,
     )
-    feature_cols = [col for col in feature_cols if col in numeric_cols]
-    feature_cols = list(dict.fromkeys(feature_cols))
     if not feature_cols:
         st.info("Select at least one column to compute similarity scores.")
         return
@@ -622,7 +623,7 @@ def pitcher_comps():
     eligible_comp = eligible_comp[~(eligible_comp["pitcher_mlbid"] == player_choice)]
     eligible_comp = eligible_comp[eligible_comp[feature_cols].notna().any(axis=1)]
     if eligible_comp.empty:
-        st.info("No comparable MLB rows found after filters.")
+        st.info("No comparable rows found after filters.")
         return
 
     stats = eligible_comp[feature_cols].copy()
@@ -631,8 +632,8 @@ def pitcher_comps():
     stds = stats.std(ddof=0).replace(0, np.nan)
     zscores = ((stats - means) / stds).fillna(0)
     target_stats = player_df[feature_cols].copy().fillna(means)
-    target_vec = ((target_stats - means) / stds).fillna(0).iloc[0].to_numpy()
-    distances = np.linalg.norm(zscores.to_numpy() - target_vec, axis=1)
+    target_vec = ((target_stats - means) / stds).fillna(0).iloc[0].to_numpy(dtype=float)
+    distances = np.linalg.norm(zscores.to_numpy(dtype=float) - target_vec, axis=1)
     max_dist = distances.max() if len(distances) else 0.0
     if max_dist == 0:
         similarity = np.full_like(distances, 100.0, dtype=float)
@@ -675,6 +676,7 @@ def pitcher_comps():
     ].copy()
     if "grade_v13" in df.columns:
         df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
+    df.insert(df.columns.get_loc("season") + 1, "Level", df["__official_level"].map(LEVEL_LABELS))
     df = df.rename(columns={**base_rename, **similarity_labels})
     df = df.loc[:, ~df.columns.duplicated()]
 
@@ -701,6 +703,9 @@ def pitcher_comps():
         stats_df["grade_v13"] = stats_df["grade_v13"].round(0).astype("Int64")
     stats_df = stats_df.rename(columns={**base_rename, **similarity_labels})
     stats_df = stats_df.loc[:, ~stats_df.columns.duplicated()]
+    if use_mlb_eq:
+        df["__level"] = 1
+        stats_df["__level"] = 1
 
     target_cols = [
         "name",
@@ -752,12 +757,7 @@ def pitcher_comps():
         show_controls=False,
         hide_cols={"Team"},
     )
-    if use_mlb_eq:
-        st.caption(
-            "Most similar MLB seasons by translated MLB-equivalent stats (TBF >= 200)"
-        )
-    else:
-        st.caption("Most similar MLB seasons (IP >= 50)")
+    st.caption("Most similar seasons matching the result pool filters")
     render_table(
         df,
         official_pitching_details=True,
@@ -1090,7 +1090,7 @@ def pitcher_ar():
                 "max_velo_reg": "Max FA mph",
                 "fastball_vaa_reg": "FA VAA",
                 "FA_pct_reg": "FA Usage (%)",
-                "BB_rpm_reg": "BB Spin",
+                "BB_rpm_reg": "BR spin",
                 "SwStr_reg": "SwStr (%)",
                 "p_SwStr_pct_reg": "pSwStr (%)",
                 "p_Swing_pct_reg": "pSwing (%)",
@@ -1290,7 +1290,7 @@ def pitcher_splits():
                     "max_velo": "Max FA mph",
                     "fastball_vaa": "FA VAA",
                     "FA_pct": "FA Usage (%)",
-                    "BB_rpm": "BB Spin",
+                    "BB_rpm": "BR spin",
                     "SwStr": "SwStr (%)",
                     "Ball_pct": "Ball (%)",
                     "Z_Contact": "Z-Contact (%)",
@@ -1327,7 +1327,7 @@ def pitcher_gamelogs_page():
     pitcher_gamelogs = get_pitcher_gamelogs()
 
     if pitcher_gamelogs.empty:
-        st.info("Missing pitcher_gamelogs.parquet — run the daily pipeline to generate it.")
+        st.info("Missing pitcher_gamelogs.parquet â€” run the daily pipeline to generate it.")
         return
 
     _PITCHER_GL_COLS = [

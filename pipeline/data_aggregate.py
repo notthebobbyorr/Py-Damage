@@ -832,6 +832,22 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
 
+    # Export game counts separately from the PA-based eligibility flags above.
+    position_keys = ["batter_mlbid", "level_id", "season", "game_type_group"]
+    games = (
+        df.filter(pl.col("game_pk").is_not_null())
+        .group_by(position_keys + ["position"])
+        .agg(pl.col("game_pk").n_unique().alias("games"))
+        .pivot(values="games", index=position_keys, on="position")
+        .fill_null(0)
+    )
+    for col in POSITION_COUNT_COLS:
+        if col not in games.columns:
+            games = games.with_columns(pl.lit(0).alias(col))
+    hitters = hitters.drop(POSITION_COUNT_COLS).join(
+        games.select(position_keys + POSITION_COUNT_COLS), on=position_keys, how="left"
+    ).with_columns(pl.col(POSITION_COUNT_COLS).fill_null(0))
+
     return hitters
 
 

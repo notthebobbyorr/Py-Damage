@@ -10,6 +10,7 @@ from app.config import (
     HITTER_MLB_MIN_SHIFT_SCALE,
     HITTER_MLB_MIN_SHIFT_SCALE_OVERRIDES,
     LEVEL_LABELS,
+    POSITION_FILTER_COLS,
     PITCHER_MLB_DIRECTION_MAP,
     PITCHER_MLB_MIN_SHIFT_SCALE,
     PITCHER_MLB_PASS_THROUGH_COLS,
@@ -178,8 +179,12 @@ def _pitcher_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
         "Zone_reg": "Zone (%)",
         "CSW_reg": "CSW (%)",
         "pWhiff_reg": "pWhiff (%)",
-        "FA_pct_reg": "FA (%)",
-        "BB_rpm_reg": "BB RPM",
+        "FA_pct_reg": "FA%",
+        "BB_pct": "BR%",
+        "OFF_pct": "OFF%",
+        "BB_velo": "BR mph",
+        "OFF_velo": "OFF mph",
+        "BB_rpm_reg": "BR spin",
         "FA_spin_eff_reg": "FA Spin Efficiency (%)",
         "LA_lte_0_reg": "LA<=0%",
         "LD_pct_reg": "0<LA<20 (%)",
@@ -806,6 +811,17 @@ def _build_pitcher_mlb_equivalencies(
     ]
     all_mlb_eq_metrics = list(dict.fromkeys(all_mlb_eq_metrics))
     return out, coeff_df, all_mlb_eq_metrics
+
+
+def hitter_export_with_positions(
+    display_df: pd.DataFrame, source_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Restore raw position counts using the source row index retained by the view."""
+    export_df = display_df.copy()
+    for col in POSITION_FILTER_COLS:
+        if col in source_df.columns:
+            export_df[col] = source_df[col].reindex(export_df.index)
+    return export_df
 
 
 def maybe_add_level_col(df: pd.DataFrame, level: str) -> pd.DataFrame:
