@@ -1,0 +1,13 @@
+target: season_contact_over_expected_percentage_points
+features: [observed_contact_vs_avg, recorded_swings, season, level_id]
+feature_importance: null  # Analytic shrinkage; no fitted feature rankings.
+method: empirical_bayes_mean_shrinkage
+formula: (observed_coe * swings + league_coe * K) / (swings + K)
+sampling: regular-season swings with finite pred_whiff_loc and recorded binary whiff
+minimum_swings_for_stability: 20
+minimum_players_for_stability: 10
+prior_mean: swing_weighted_league_coe_in_same_season_and_level
+stability: prior_season_within_swing_variance_divided_by_noise_corrected_between_player_variance
+fallback: same_season_stability_when_prior_season_is_unavailable
+units: percentage_points
+interpretation: Estimate the hitter's underlying season-level contact above pitch-based expectation.

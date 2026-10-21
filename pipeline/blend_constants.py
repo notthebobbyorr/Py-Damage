@@ -39,6 +39,10 @@ from stability_constants import (  # noqa: E402
     load_config,
     tag_pitch,
 )
+if __package__:
+    from .contact_stability import contact_players, contact_constants, align_constants
+else:
+    from contact_stability import contact_players, contact_constants, align_constants
 
 CONFIG_PATH = _REPO_DIR / "config" / "stability_config.yml"
 CONSTANTS_CSV = _REPO_DIR / "config" / "stability_constants.csv"
@@ -348,6 +352,19 @@ def main() -> None:
         min_players=args.min_players,
         transition_threshold=args.transition_threshold,
     )
+
+    # COE is regressed directly; retain prior-season stability and refresh league COE.
+    coe = contact_constants(contact_players(pitch.lazy()), args.min_denom, args.min_players)
+    prior_coe = prior.filter(
+        (pl.col("dataset") == "hitters") & (pl.col("stat") == "contact_vs_avg")
+    ).select("level_id", pl.col("K").alias("prior_K"))
+    coe = coe.join(prior_coe, on="level_id", how="left", validate="m:1").with_columns(
+        pl.coalesce("prior_K", "K").alias("K")
+    ).with_columns(pl.col("K").alias("n_50"), (pl.col("K") * 7 / 3).alias("n_70"),
+                   (pl.col("K") * 4).alias("n_80"))
+    blended = pl.concat([
+        blended.filter(pl.col("stat") != "contact_vs_avg"), align_constants(coe, blended),
+    ])
 
     # Write
     update_constants(blended, args.season, args.constants, parquet_out)

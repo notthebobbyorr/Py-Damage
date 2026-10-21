@@ -36,9 +36,10 @@ stats:
       kind: rate
       numerator: swing == False and decision_value < 0
       denominator: swing == False
-    - name: pred_whiff_loc_mean
-      kind: mean
-      value: pred_whiff_loc
+    - name: contact_vs_avg
+      kind: derived
+      # Direct mean regression uses swing residual priors from contact_stability.py.
+      value: 100 * (pred_whiff_loc - whiff)
       sample_n: swings
     - name: LA_lte_0
       kind: rate
