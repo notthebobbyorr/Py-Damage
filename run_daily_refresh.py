@@ -218,7 +218,9 @@ def _write_optimized_parquet(df: pd.DataFrame, path: Path) -> None:
         df[col] = pd.to_numeric(df[col], downcast="float")
     for col in df.select_dtypes(include=["int64"]).columns:
         df[col] = pd.to_numeric(df[col], downcast="integer")
-    df.to_parquet(path, index=False)
+    tmp_path = path.with_suffix(".parquet.tmp")
+    df.to_parquet(tmp_path, index=False)
+    tmp_path.replace(path)
 
 
 # Tables the app filters to season >= 2020 at load time. We mirror that at
@@ -382,6 +384,20 @@ def main(
         dry_run=dry_run,
     )
 
+    # Keep scraper repairs when overlapping DB pulls replace accumulator rows.
+    tracking_config = RAW_DIR / "bat_tracking" / "scraper_config.json"
+    if tracking_config.exists():
+        run(
+            [sys.executable, str(HERE / "pipeline" / "scrape_bat_tracking.py"),
+             "--update", "--end", str(end_date)],
+            dry_run=dry_run,
+        )
+        run(
+            [sys.executable, str(HERE / "pipeline" / "backfill_bat_tracking.py"),
+             "--input", str(accumulator_path), "--enrich-only"],
+            dry_run=dry_run,
+        )
+
     # ── Step 4: Re-aggregate current season chunk ──────────────────────────
     # Source tables (Steps 3a/3b) are already updated, so data_aggregate's
     # internal join will populate p_Damage/p_SwStr in the 2026 chunk directly.
@@ -459,6 +475,25 @@ def main(
             "--baserunning", str(DATA_DIR / "baserunning.parquet"),
             "--pitcher-baserunning", str(DATA_DIR / "pitcher_baserunning.parquet"),
         ],
+        dry_run=dry_run,
+    )
+
+    for scope in ["hitter", "team", "league"]:
+        run(
+            [sys.executable, str(HERE / "pipeline" / "build_hitter_pitch_splits.py"),
+             "--input", str(RAW_DIR / f"pitch_data_{season}.parquet"),
+             "--seasons", str(season), "--scope", scope],
+            dry_run=dry_run,
+        )
+
+    run(
+        [sys.executable, str(HERE / "pipeline" / "backfill_split_workloads.py"),
+         "--input", str(RAW_DIR / f"pitch_data_{season}.parquet"), "--seasons", str(season)],
+        dry_run=dry_run,
+    )
+    run(
+        [sys.executable, str(HERE / "pipeline" / "build_combined_splits.py"),
+         "--input", str(RAW_DIR / f"pitch_data_{season}.parquet"), "--seasons", str(season)],
         dry_run=dry_run,
     )
 

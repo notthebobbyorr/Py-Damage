@@ -69,6 +69,8 @@ def _merge_pitch_types(pitch_types: pl.DataFrame, source_dir: Path) -> pl.DataFr
         weight_col="n",
         value_cols=["SwStr_pct", "p_SwStr_pct", "p_SwStr_with_loc_pct", "Swing_pct", "p_Swing_pct", "p_Swing_with_loc_pct"],
     ).rename({"n": "p_SwStr_n"}).with_columns(pl.col("p_SwStr_n").alias("p_Swing_n"))
+    if "Swing_pct" in pitch_types.columns and "Swing_pct" in src.columns:
+        src = src.drop("Swing_pct")
     return pitch_types.join(src, on=join_keys, how="left")
 
 
@@ -83,7 +85,7 @@ def main() -> None:
     pitch_types = pl.read_parquet(args.pitch_types)
     drop_cols = ["SwStr_pct", "n", "p_SwStr_n", "p_SwStr_pct", "p_SwStr_with_loc_pct", "Swing_pct", "p_Swing_n", "p_Swing_pct", "p_Swing_with_loc_pct"]
     pitchers = pitchers.drop([c for c in drop_cols if c in pitchers.columns])
-    pitch_types = pitch_types.drop([c for c in drop_cols if c in pitch_types.columns])
+    pitch_types = pitch_types.drop([c for c in drop_cols if c in pitch_types.columns and c != "Swing_pct"])
     pitchers = _merge_pitchers(pitchers, args.source_dir)
     pitch_types = _merge_pitch_types(pitch_types, args.source_dir)
     pitchers.write_parquet(args.pitchers)

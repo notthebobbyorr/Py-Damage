@@ -375,6 +375,12 @@ def main() -> None:
                     ).alias("SEAGER_reg")
                 )
 
+        # Miss distance is displayed as observed; it has no trained regression prior.
+        if dataset in {"hitters", "pitchers", "pitch_types"} and "miss_distance" in df.columns:
+            observed = [c for c in ["miss_distance", "miss_distance_n"] if c in df.columns]
+            merged = merged.join(df.select(effective_keys + observed), on=effective_keys,
+                                 how="left", validate="1:1")
+
         merged = round_floats(merged, args.round)
         out_path = args.out_dir / f"{dataset}_regressed.parquet"
         merged.write_parquet(out_path)

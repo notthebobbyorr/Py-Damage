@@ -6,6 +6,7 @@ import streamlit as st
 
 from app.config import DATA_DIR
 from app.data_loader import load_csv, load_damage_df
+from app.swing_rates import add_swing_rates
 from app.utils import (
     _build_hitter_mlb_equivalencies,
     _build_pitcher_mlb_equivalencies,
@@ -702,6 +703,20 @@ def get_pitch_type_gamelogs() -> pd.DataFrame:
     return df
 
 
+def _merge_team_miss_distance(result, games, keys):
+    """Pool tracked misses, rather than averaging player averages equally."""
+    if not {"miss_distance", "miss_distance_n"}.issubset(games.columns):
+        return result
+    work = games[keys].copy()
+    values = pd.to_numeric(games["miss_distance"], errors="coerce")
+    counts = pd.to_numeric(games["miss_distance_n"], errors="coerce").where(values.notna(), 0)
+    work["__miss_sum"] = values.fillna(0) * counts
+    work["miss_distance_n"] = counts
+    totals = work.groupby(keys, observed=True, dropna=False)[["__miss_sum", "miss_distance_n"]].sum().reset_index()
+    totals["miss_distance"] = totals["__miss_sum"] / totals["miss_distance_n"].replace(0, np.nan)
+    return result.merge(totals.drop(columns="__miss_sum"), on=keys, how="left", validate="1:1")
+
+
 @st.cache_resource
 def get_team_hitter_gamelogs() -> pd.DataFrame:
     hgl = get_hitter_gamelogs()
@@ -710,9 +725,10 @@ def get_team_hitter_gamelogs() -> pd.DataFrame:
     _hgl_k = [c for c in _T_H_KEYS if c in hgl.columns]
     _hgl_s = [c for c in _T_H_SUM if c in hgl.columns]
     result = hgl.groupby(_hgl_k, observed=True)[_hgl_s].sum().reset_index()
+    result = _merge_team_miss_distance(result, hgl, _hgl_k)
     result = _cast_gamelog_ints(result)
     result = _normalize_gamelog_dates(result)
-    return result
+    return add_swing_rates(result)
 
 
 @st.cache_resource
@@ -723,6 +739,7 @@ def get_team_pitcher_gamelogs() -> pd.DataFrame:
     _pgl_k = [c for c in _T_P_KEYS if c in pgl.columns]
     _pgl_s = [c for c in _T_P_SUM if c in pgl.columns]
     result = pgl.groupby(_pgl_k, observed=True)[_pgl_s].sum().reset_index()
+    result = _merge_team_miss_distance(result, pgl, _pgl_k)
     result = _cast_gamelog_ints(result)
     result = _normalize_gamelog_dates(result)
     # TBF-weighted average of Pitch/Exec grades for each team game
@@ -749,4 +766,4 @@ def get_team_pitcher_gamelogs() -> pd.DataFrame:
             on=[c for c in _wg_keys if c in result.columns],
             how="left",
         )
-    return result
+    return add_swing_rates(result)

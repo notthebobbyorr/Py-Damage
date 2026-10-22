@@ -18,7 +18,7 @@ for player_id, level, velo in [(2, 1, 94), (3, 1, 96), (4, 11, 95)]:
                      pitches=200, pitch_tag='FF', pitch_group='FA', velo=velo))
 pitches.pitch_types = pd.DataFrame(rows)
 captured = []
-pitches.render_table = lambda frame, **kwargs: captured.append(frame)
+pitches.render_table = lambda frame, **kwargs: (captured.append(frame), frame)[1]
 pitches.download_button = lambda *args, **kwargs: None
 pitches.pitch_comps()
 st.session_state['captured'] = captured

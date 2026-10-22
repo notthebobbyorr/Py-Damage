@@ -56,6 +56,24 @@ export default function(component) {
         } else {
             cell.textContent = 'Official regular-season totals for this level are not available for this row.';
         }
+        const splits = data.pitch_splits?.[index];
+        if (splits) {
+            const title = document.createElement('p');
+            title.textContent = 'Pitch Type Splits';
+            const splitTable = document.createElement('table');
+            splitTable.setAttribute('aria-label', 'Pitch Type Splits');
+            const headings = splitTable.insertRow();
+            data.split_columns.forEach(name => {
+                const th = document.createElement('th');
+                th.textContent = name;
+                headings.appendChild(th);
+            });
+            splits.forEach(values => {
+                const splitRow = splitTable.insertRow();
+                values.forEach(value => { splitRow.insertCell().textContent = value; });
+            });
+            cell.append(title, splitTable);
+        }
         row.after(detail);
         const toggle = () => {
             detail.hidden = !detail.hidden;

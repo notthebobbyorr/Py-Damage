@@ -420,6 +420,7 @@ def read_pitch_data(
             sc.intercept_ball_minus_batter_pos_y_inches,
             sc.bat_speed,
             sc.swing_length,
+            NULLIF(to_jsonb(sc)->>'miss_distance', '')::double precision AS miss_distance,
             sc.estimated_woba_using_speedangle as xwoba,
             sc.estimated_ba_using_speedangle as xba,
             sc.estimated_slg_using_speedangle as xlsg,

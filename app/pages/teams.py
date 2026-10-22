@@ -1,4 +1,6 @@
 from __future__ import annotations
+from app.filters import apply_workload_maximum, maximum_workload_controls
+from app.filters import split_workload_controls, numeric_filter
 
 import pandas as pd
 import streamlit as st
@@ -28,6 +30,7 @@ from app.filters import (
 from app.viz import render_table
 from app.utils import maybe_add_level_col
 from app.config import LEVEL_LABELS
+from app.hitter_pitch_splits import BAT_TRACKING_COLUMNS
 
 
 def team_hitting():
@@ -38,7 +41,10 @@ def team_hitting():
         st.info("Missing new_team_damage.csv")
         return
 
-    tab_season, tab_splits, tab_changes = st.tabs(["Season Stats", "Splits", "Changes"])
+    tab_season, tab_splits, tab_changes, tab_pitch_types, tab_combined = st.tabs(["Season Stats", "Splits", "Changes", "Pitch Type Splits", "Combined Splits"])
+    with tab_combined:
+        from app.combined_splits import render_combined_splits
+        render_combined_splits("team_hitter")
     with tab_season:
         _team_hitting_season()
     with tab_splits:
@@ -47,6 +53,10 @@ def team_hitting():
         from app.changes import render_changes
 
         render_changes(team_damage, team_hitter_splits_df, "Hitter", team=True)
+    with tab_pitch_types:
+        from app.hitting_pitch_split_tables import render_hitting_pitch_splits
+
+        render_hitting_pitch_splits(team=True)
 
 
 def _team_hitting_season():
@@ -74,6 +84,7 @@ def _team_hitting_season():
             index=0,
             key="team_hitting_game_type_group",
         )
+        workload_column, minimum = split_workload_controls(team_damage,'_team_hitting_season_workload',pitching=False,default_minimum=0)
     with right:
         if game_type_group != "Regular Season":
             st.info(GAME_TYPE_GROUP_NOTE.format(game_type_group))
@@ -89,12 +100,16 @@ def _team_hitting_season():
             __season=base_stats["season"], __level=base_stats["level_id"]
         )
         df = team_damage.copy()
+        df = numeric_filter(df,workload_column,minimum)
+        df = apply_workload_maximum(df,'_team_hitting_season_workload')
         df = df[df["level_id"].isin(level_map[level])]
         df = filter_by_values(df, "season", season)
         df = filter_by_game_type_group(df, game_type_group)
         df = df.assign(__season=df["season"], __level=df["level_id"])
 
         columns = [
+            'whiff_pct', 'Swing_pct', 'SwStr',
+
             "hitting_code",
             "season",
             "PA",
@@ -112,11 +127,14 @@ def _team_hitting_season():
             "secondary_whiff_pct",
             "whiffs_vs_95",
             "contact_vs_avg",
+            *BAT_TRACKING_COLUMNS,
             "__season",
             "__level",
         ]
         df = df[[col for col in columns if col in df.columns]].copy()
         rename_map = {
+            'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)', 'SwStr': 'SwStr (%)',
+            "miss_distance": "Avg Miss Distance (in.)",
             "hitting_code": "Team",
             "season": "Season",
             "bbe": "BBE",
@@ -132,6 +150,7 @@ def _team_hitting_season():
             "secondary_whiff_pct": "Whiff vs. Secondaries (%)",
             "whiffs_vs_95": "Whiff vs. 95+ (%)",
             "contact_vs_avg": "Contact Over Expected (%)",
+            **BAT_TRACKING_COLUMNS,
         }
         df = df.rename(columns=rename_map)
         df = maybe_add_level_col(df, level)
@@ -139,10 +158,10 @@ def _team_hitting_season():
         stats_df = base_stats[
             [col for col in columns if col in base_stats.columns]
         ].rename(columns=rename_map)
-        render_table(
-            df,
+        df = render_table(
+            df, show_maximum_filters=False,
             plot_label_count=30,
-            reverse_cols=HIGHER_IS_WORSE_COLS | {"Chase (%)", "LA<=0%"},
+            reverse_cols=HIGHER_IS_WORSE_COLS | {"Chase (%)", "LA<=0%", "Swing Length"},
             group_cols=["__season", "__level"],
             stats_df=stats_df,
             include_team_label=True,
@@ -160,7 +179,10 @@ def team_pitching():
         st.info("Missing new_team_stuff.csv")
         return
 
-    tab_season, tab_splits, tab_changes = st.tabs(["Season Stats", "Splits", "Changes"])
+    tab_season, tab_splits, tab_changes, tab_combined = st.tabs(["Season Stats", "Splits", "Changes", "Combined Splits"])
+    with tab_combined:
+        from app.combined_splits import render_combined_splits
+        render_combined_splits("team_pitcher")
     with tab_season:
         _team_pitching_season()
     with tab_splits:
@@ -196,6 +218,7 @@ def _team_pitching_season():
             index=0,
             key="team_pitching_game_type_group",
         )
+        workload_column, minimum = split_workload_controls(team_stuff,'_team_pitching_season_workload',pitching=True,default_minimum=0)
     with right:
         if game_type_group != "Regular Season":
             st.info(GAME_TYPE_GROUP_NOTE.format(game_type_group))
@@ -211,12 +234,15 @@ def _team_pitching_season():
             __season=base_stats["season"], __level=base_stats["level_id"]
         )
         df = team_stuff.copy()
+        df = numeric_filter(df,workload_column,minimum)
+        df = apply_workload_maximum(df,'_team_pitching_season_workload')
         df = df[df["level_id"].isin(level_map[level])]
         df = filter_by_values(df, "season", season)
         df = filter_by_game_type_group(df, game_type_group)
         df = df.assign(__season=df["season"], __level=df["level_id"])
 
         columns = [
+            'whiff_pct', 'Swing_pct',
             "pitching_code",
             "season",
             "IP",
@@ -231,13 +257,15 @@ def _team_pitching_season():
             "Chase",
             "CSW",
             "LA_lte_0",
-            "__season",
+            "miss_distance", "__season",
             "__level",
         ]
         df = df[[col for col in columns if col in df.columns]].copy()
         if "grade_v13" in df.columns:
             df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
         rename_map = {
+            'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)',
+            "miss_distance": "Avg Miss Distance (in.)",
             "pitching_code": "Team",
             "season": "Season",
             "stuff": "Pitch Grade",
@@ -258,8 +286,8 @@ def _team_pitching_season():
         stats_df = base_stats[
             [col for col in columns if col in base_stats.columns]
         ].rename(columns=rename_map)
-        render_table(
-            df,
+        df = render_table(
+            df, show_maximum_filters=False,
             plot_label_count=30,
             reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "pDamage/BBE (%)", "pDamage+Loc/BBE (%)"},
             group_cols=["__season", "__level"],
@@ -267,7 +295,7 @@ def _team_pitching_season():
             include_team_label=True,
             official_pitching_details=game_type_group == "Regular Season",
             official_team_details=True,
-        )
+         workload_kind="pitcher")
         download_button(df, "team_pitching", "team_pitching_download")
 
 
@@ -319,6 +347,7 @@ def _team_hitting_splits():
                     index=0,
                     key=f"team_hitting_splits_game_type_group_{idx}",
                 )
+                workload_column, minimum = split_workload_controls(split_df, f"_team_hitting_splits_{idx}", pitching=False)
                 split_choice = st.multiselect(
                     "Select Split",
                     ["All"] + sorted(split_df["split"].dropna().unique().tolist()),
@@ -345,7 +374,8 @@ def _team_hitting_splits():
                 base_stats = base_stats.assign(
                     __season=base_stats["season"], __level=base_stats["level_id"]
                 )
-                df = split_df.copy()
+                df = numeric_filter(split_df.copy(), workload_column, minimum)
+                df = apply_workload_maximum(df,f"_team_hitting_splits_{idx}")
                 df = df[df["level_id"].isin(level_map[level])]
                 df = filter_by_values(df, "season", season)
                 df = filter_by_game_type_group(df, game_type_group)
@@ -354,6 +384,7 @@ def _team_hitting_splits():
                 df = df.assign(__season=df["season"], __level=df["level_id"])
 
                 columns = [
+                    'whiff_pct', 'Swing_pct', 'SwStr',
                     "hitting_code",
                     "season",
                     "split",
@@ -372,11 +403,15 @@ def _team_hitting_splits():
                     "secondary_whiff_pct",
                     "whiffs_vs_95",
                     "contact_vs_avg",
-                    "__season",
+                    *[c for c in BAT_TRACKING_COLUMNS if c != "miss_distance"],
+                    "miss_distance", "__season",
                     "__level",
                 ]
                 df = df[[col for col in columns if col in df.columns]].copy()
                 rename_map = {
+                    'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)', 'SwStr': 'SwStr (%)',
+                    **BAT_TRACKING_COLUMNS,
+                    "miss_distance": "Avg Miss Distance (in.)",
                     "hitting_code": "Team",
                     "season": "Season",
                     "split": "Split",
@@ -400,8 +435,7 @@ def _team_hitting_splits():
                 stats_df = base_stats[
                     [col for col in columns if col in base_stats.columns]
                 ].rename(columns=rename_map)
-                render_table(
-                    df,
+                df = render_table(df, show_maximum_filters=False,
                     plot_label_count=30,
                     reverse_cols=HIGHER_IS_WORSE_COLS | {"Chase (%)", "LA<=0%"},
                     group_cols=["__season", "__level"],
@@ -454,6 +488,7 @@ def _team_pitching_splits():
                     index=0,
                     key=f"team_pitching_splits_game_type_group_{idx}",
                 )
+                workload_column, minimum = split_workload_controls(split_df, f"_team_pitching_splits_{idx}", pitching=True)
                 split_choice = st.multiselect(
                     "Select Split",
                     ["All"] + sorted(split_df["split"].dropna().unique().tolist()),
@@ -480,7 +515,8 @@ def _team_pitching_splits():
                 base_stats = base_stats.assign(
                     __season=base_stats["season"], __level=base_stats["level_id"]
                 )
-                df = split_df.copy()
+                df = numeric_filter(split_df.copy(), workload_column, minimum)
+                df = apply_workload_maximum(df,f"_team_pitching_splits_{idx}")
                 df = df[df["level_id"].isin(level_map[level])]
                 df = filter_by_values(df, "season", season)
                 df = filter_by_game_type_group(df, game_type_group)
@@ -489,6 +525,7 @@ def _team_pitching_splits():
                 df = df.assign(__season=df["season"], __level=df["level_id"])
 
                 columns = [
+                    'whiff_pct', 'Swing_pct',
                     "pitching_code",
                     "season",
                     "split",
@@ -503,11 +540,13 @@ def _team_pitching_splits():
                     "Chase",
                     "CSW",
                     "LA_lte_0",
-                    "__season",
+                    "miss_distance", "__season",
                     "__level",
                 ]
                 df = df[[col for col in columns if col in df.columns]].copy()
                 rename_map = {
+                    'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)',
+                    "miss_distance": "Avg Miss Distance (in.)",
                     "pitching_code": "Team",
                     "season": "Season",
                     "split": "Split",
@@ -529,15 +568,14 @@ def _team_pitching_splits():
                 stats_df = base_stats[
                     [col for col in columns if col in base_stats.columns]
                 ].rename(columns=rename_map)
-                render_table(
-                    df,
+                df = render_table(df, show_maximum_filters=False,
                     plot_label_count=30,
                     reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)"},
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
                     include_team_label=True,
                     label_cols=["Team", "Split"],
-                )
+                 workload_kind="pitcher")
                 download_button(
                     df, f"team_pitching_splits_{split_type}", f"team_pitching_splits_download_{idx}"
                 )
@@ -553,13 +591,17 @@ def team_hitting_gamelogs():
         return
 
     _T_H_GL_COLS = [
+        'whiff_pct', 'Swing_pct', 'SwStr',
         "game_date", "hitting_code", "game_pk", "opp_team",
         "PA", "bbe", "HR", "XBH", "hits", "damaged_bbe",
         "pulled_fbs", "la_gte_20_bbe", "la_lte_0_bbe", "BB", "K",
         "pitches", "FA", "BR", "OFF", "swings", "chases", "whiffs",
         "selective_takes", "hittable_takes", "vs_RHP", "vs_LHP",
+        "miss_distance",
     ]
     _RENAME = {
+        'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)', 'SwStr': 'SwStr (%)',
+        "miss_distance": "Avg Miss Distance (in.)",
         "game_date": "Date", "hitting_code": "Team",
         "game_pk": "Game ID", "opp_team": "vs",
         "bbe": "BBE", "damaged_bbe": "Damage BBE", "hits": "H",
@@ -620,7 +662,7 @@ def team_hitting_gamelogs():
             df = df.rename(columns=_RENAME)
             if "level_id" in df.columns:
                 df["Level"] = df.pop("level_id").map(LEVEL_LABELS)
-            render_table(df, stats_df=pd.DataFrame(), plot_label_count=30)
+            df = render_table(df, stats_df=pd.DataFrame(), plot_label_count=30)
             download_button(df, "team_hitting_gamelogs_date", "thgl_date_dl")
 
     with tab_team:
@@ -660,7 +702,7 @@ def team_hitting_gamelogs():
             df = df.rename(columns=_RENAME)
             if "level_id" in df.columns:
                 df["Level"] = df.pop("level_id").map(LEVEL_LABELS)
-            render_table(df, stats_df=pd.DataFrame(), plot_label_count=30)
+            df = render_table(df, stats_df=pd.DataFrame(), plot_label_count=30)
             download_button(df, "team_hitting_gamelogs_team", "thgl_tm_dl")
 
     with tab_range:
@@ -685,14 +727,18 @@ def team_pitching_gamelogs():
         return
 
     _T_P_GL_COLS = [
+        'whiff_pct', 'Swing_pct', 'SwStr',
         "game_date", "pitching_code", "game_pk", "opp_team",
         "TBF", "bbe", "pitches", "whiffs", "chases", "stuff", "grade_v13",
         "HR", "XBH", "hits", "damaged_bbe",
         "la_gte_20_bbe", "la_lte_0_bbe", "BB", "K",
         "strikes", "balls", "swings",
         "zone_pitches", "out_of_zone", "FA", "BR", "OFF", "vs_LHB", "vs_RHB",
+        "miss_distance",
     ]
     _RENAME = {
+        'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)', 'SwStr': 'SwStr (%)',
+        "miss_distance": "Avg Miss Distance (in.)",
         "game_date": "Date", "pitching_code": "Team",
         "game_pk": "Game ID", "opp_team": "vs",
         "bbe": "BBE", "damaged_bbe": "Damage BBE", "hits": "H",
@@ -755,7 +801,7 @@ def team_pitching_gamelogs():
             df = df.rename(columns=_RENAME)
             if "level_id" in df.columns:
                 df["Level"] = df.pop("level_id").map(LEVEL_LABELS)
-            render_table(df, stats_df=pd.DataFrame(), plot_label_count=30)
+            df = render_table(df, stats_df=pd.DataFrame(), plot_label_count=30, workload_kind="pitcher")
             download_button(df, "team_pitching_gamelogs_date", "tpgl_date_dl")
 
     with tab_team:
@@ -795,7 +841,7 @@ def team_pitching_gamelogs():
             df = df.rename(columns=_RENAME)
             if "level_id" in df.columns:
                 df["Level"] = df.pop("level_id").map(LEVEL_LABELS)
-            render_table(df, stats_df=pd.DataFrame(), plot_label_count=30)
+            df = render_table(df, stats_df=pd.DataFrame(), plot_label_count=30, workload_kind="pitcher")
             download_button(df, "team_pitching_gamelogs_team", "tpgl_tm_dl")
 
     with tab_range:

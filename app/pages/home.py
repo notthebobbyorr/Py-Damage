@@ -6,6 +6,22 @@ import streamlit as st
 
 FEATURE_TIMELINE: list[dict[str, str]] = [
     {
+        "date": "2026-10-22",
+        "title": "Pitch Type Splits, Bat Tracking, Combined Splits, Updated Filtering & Plots",
+        "page": "Hitters / Pitchers / Individual Pitches / Team Hitting / Team Pitching / Leagues",
+        "description": (
+            "- Added **Pitch Type Splits** to Hitter popouts: hitter skill measures and bat-tracking stats (when available) against Fastballs, Sinkers, Breaking, and Offspeed groups.\n\n"
+            "- A sortable, filterable **Pitch Type Splits leaderboard** is available as a tab on the Hitter Splits page.\n\n"
+            "- Added **Pitch Type Splits** tabs to the Team Hitting and League Hitting pages.\n\n"
+            "- Expanded available stats for Team and League Hitting to include **bat-tracking metrics** where available.\n\n"
+            "- Created **Combined Splits** tabs in the Splits area for Hitters, Pitchers, and Individual Pitches, and on the Team Hitting and Team Pitching pages. These let you create new combinations of splits, such as pitch usage by month and batter handedness.\n\n"
+            "- Added **upper limits** to the filter panel options. For example, limit tables to pitchers who made fewer than five starts to examine mostly relievers. Available filtering options are pitches, PA/TBF, IP, GS, and BBE.\n\n"
+            "- Expanded the **plot feature** to include line plots and categorical (discrete/factor), continuous, and chronological data types. Also added customizable plot labels.\n\n"
+            "- Added **Miss Distance** and **Whiff% (Total Whiffs / Total Swings)** to all tables.\n\n"
+            "- Added **bat-tracking percentiles** to the Hitter Percentiles page."
+        ),
+    },
+    {
         "date": "2026-10-07",
         "title": "Expanded Comps: Minor League Searches, Pool Filters & Presets",
         "page": "Hitters / Pitchers / Individual Pitches → Comps",

@@ -1,4 +1,6 @@
 from __future__ import annotations
+from app.hitter_pitch_splits import BAT_TRACKING_COLUMNS
+from app.filters import apply_workload_maximum, maximum_workload_controls
 
 import numpy as np
 import pandas as pd
@@ -25,6 +27,7 @@ from app.datasets import (
     hitters_reg_df,
 )
 from app.filters import (
+    split_workload_controls,
     comparison_pool_filters,
     download_button,
     filter_by_game_type_group,
@@ -48,15 +51,22 @@ from app.utils import (
     rank_for_display,
 )
 from app.viz import render_table
+from functools import partial
+
+render_table = partial(render_table, workload_kind='hitter')
 
 
 _HITTER_PCT_COLS = [
     "SEAGER", "selection_skill", "hittable_pitches_taken", "damage_rate",
     "EV90th", "max_EV", "pull_FB_pct", "chase", "z_con",
     "secondary_whiff_pct", "whiffs_vs_95", "contact_vs_avg", "takeoff_rate",
+    "miss_distance",
+    "whiff_pct", "Swing_pct", "SwStr", "bat_speed", "fast_swing_pct", "swing_length", "swing_path_tilt", "attack_angle", "attack_direction", "intercept_x_inches", "intercept_y_inches",
 ]
 _HITTER_PCT_REVERSE = {
     "hittable_pitches_taken", "chase", "secondary_whiff_pct", "whiffs_vs_95",
+    "miss_distance",
+    "whiff_pct", "SwStr", "swing_length", "swing_path_tilt", "attack_angle",
 }
 
 
@@ -103,17 +113,18 @@ def hitter_individual_stats():
                 index=0,
                 key="hitter_stats_game_type_group",
             )
+            value_type = st.selectbox(
+                "Filter By", ["PA", "BBE"], index=1, key="hitter_stats_value_type"
+            )
             min_value = st.number_input(
-                "Minimum Value",
+                "Minimum " + value_type,
                 min_value=0,
                 max_value=500,
                 value=25,
                 step=1,
                 key="hitter_stats_min_value",
             )
-            value_type = st.selectbox(
-                "Filter By", ["PA", "BBE"], index=1, key="hitter_stats_value_type"
-            )
+            maximum_workload_controls({'PA': 'PA', 'BBE': 'bbe'},'hitter_individual_stats_workload')
             handedness = st.multiselect(
                 "Bats",
                 ["All", "L", "R", "S"],
@@ -178,7 +189,9 @@ def hitter_individual_stats():
             else:
                 df = numeric_filter(df, "bbe", min_value)
 
+            df = apply_workload_maximum(df,'hitter_individual_stats_workload')
             columns = [
+                'whiff_pct', 'SwStr',
                 "hitter_name",
                 "batter_mlbid",
                 "hitting_code",
@@ -211,12 +224,14 @@ def hitter_individual_stats():
                 "SBO",
                 "SB",
                 "takeoff_rate",
-                "__season",
+                "miss_distance", "__season",
                 "__level",
             ]
             export_source = df
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
+                'whiff_pct': 'Whiff (%)', 'SwStr': 'SwStr (%)',
+                "miss_distance": "Avg Miss Distance (in.)",
                 "hitter_name": "Name", "batter_mlbid": "Player ID",
                 "hitting_code": "Team", "season": "Season", "bbe": "BBE", "HR": "HR",
                 "damage_rate": "Damage/BBE (%)", "EV90th": "90th Pctile EV",
@@ -248,8 +263,8 @@ def hitter_individual_stats():
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
             ].rename(columns=rename_map)
-            render_table(
-                df,
+            df = render_table(
+                df, show_maximum_filters=False,
                 reverse_cols=HIGHER_IS_WORSE_COLS | {"Chase (%)", "LA<=0%", "Swing Length"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
@@ -314,16 +329,16 @@ def hitter_percentiles():
                     index=0,
                     key="hitter_pct_game_type_group",
                 )
+                value_type = st.selectbox(
+                    "Filter By", ["PA", "BBE"], index=1, key="hitter_pct_value_type"
+                )
                 min_value = st.number_input(
-                    "Minimum Value",
+                    "Minimum " + value_type,
                     min_value=0,
                     max_value=2000,
                     value=20,
                     step=1,
                     key="hitter_pct_min_value",
-                )
-                value_type = st.selectbox(
-                    "Filter By", ["PA", "BBE"], index=1, key="hitter_pct_value_type"
                 )
             else:
                 game_type_group = "Regular Season"
@@ -333,6 +348,7 @@ def hitter_percentiles():
                     "Constant mode: Regular Season, PA â‰¥ 150, ranked within each season + level. "
                     "Recommended when viewing a single player across years."
                 )
+            maximum_workload_controls({'PA': 'PA', 'BBE': 'bbe'},'hitter_percentiles_workload')
             team = st.selectbox(
                 "Select Team",
                 team_options(hitter_pct, "hitting_code"),
@@ -389,6 +405,7 @@ def hitter_percentiles():
                     reverse_cols=_HITTER_PCT_REVERSE,
                 )
 
+            df = apply_workload_maximum(df,'hitter_percentiles_workload')
             columns = [
                 "hitter_name",
                 "batter_mlbid",
@@ -407,13 +424,15 @@ def hitter_percentiles():
                 "whiffs_vs_95_pctile",
                 "contact_vs_avg_pctile",
                 "takeoff_rate_pctile",
-                "__season",
+                "whiff_pct_pctile", "Swing_pct_pctile", "SwStr_pctile", "bat_speed_pctile", "fast_swing_pct_pctile", "swing_length_pctile", "swing_path_tilt_pctile", "attack_angle_pctile", "attack_direction_pctile", "intercept_x_inches_pctile", "intercept_y_inches_pctile", "miss_distance_pctile", "__season",
                 "__level",
             ]
             df = df.assign(__season=df["season"], __level=df["level_id"])
             export_source = df
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
+                'whiff_pct_pctile': 'Whiff (%)', 'Swing_pct_pctile': 'Swing (%)', 'SwStr_pctile': 'SwStr (%)', 'bat_speed_pctile': 'Avg Swing Speed Pctile', 'fast_swing_pct_pctile': 'Fast Swing (%) Pctile', 'swing_length_pctile': 'Swing Length Pctile', 'swing_path_tilt_pctile': 'VBA Pctile', 'attack_angle_pctile': 'Attack Angle Pctile', 'attack_direction_pctile': 'Attack Direction Pctile', 'intercept_x_inches_pctile': 'Intercept X Pctile', 'intercept_y_inches_pctile': 'Intercept Y Pctile',
+                "miss_distance_pctile": "Avg Miss Distance Pctile",
                 "hitter_name": "Name", "batter_mlbid": "Player ID",
                 "hitting_code": "Team", "season": "Season",
                 "SEAGER_pctile": "SEAGER", "selection_skill_pctile": "Selection Skill",
@@ -430,12 +449,14 @@ def hitter_percentiles():
             df = maybe_add_level_col(df, level)
             df = df.sort_values(by="Damage Rate", ascending=False)
             _pctile_scale = (1, 50, 100)
-            render_table(
-                df,
+            df = render_table(
+                df, show_maximum_filters=False,
                 official_hitting_details=(game_type_group == "Regular Season"),
                 round_decimals=0,
                 fixed_scale_cols={
                     col: _pctile_scale for col in [
+                    'Whiff (%)', 'Swing (%)', 'SwStr (%)', 'Avg Swing Speed Pctile', 'Fast Swing (%) Pctile', 'Swing Length Pctile', 'VBA Pctile', 'Attack Angle Pctile', 'Attack Direction Pctile', 'Intercept X Pctile', 'Intercept Y Pctile',
+                        "Avg Miss Distance Pctile",
                         "SEAGER", "Selection Skill", "Hittable Pitch Take", "Damage Rate",
                         "90th Pctile EV", "Max EV", "Pulled FB", "Chase", "Z-Contact",
                         "Whiff vs Secondaries", "Whiff vs 95+", "Contact Over Expected",
@@ -637,10 +658,13 @@ def hitter_comps():
     )
 
     base_rename = {
+        'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)', 'SwStr': 'SwStr (%)',
+        "miss_distance": "Avg Miss Distance (in.)",
         "hitter_name": "Name", "batter_mlbid": "Player ID", "hitting_code": "Team", "season": "Season",
         "bbe": "BBE", "similarity_score": "Similarity (0-100)",
     }
     display_cols = [
+        'whiff_pct', 'Swing_pct', 'SwStr',
         "hitter_name",
         "batter_mlbid",
         "hitting_code",
@@ -648,7 +672,7 @@ def hitter_comps():
         "bbe",
         "similarity_score",
         *feature_cols,
-        "__season",
+        "miss_distance", "__season",
         "__level",
         "__official_level",
         "__official_game_type",
@@ -665,13 +689,14 @@ def hitter_comps():
         __season=stats_df["season"], __level=stats_df["level_id"]
     )
     stats_columns = [
+        'whiff_pct', 'Swing_pct', 'SwStr',
         "hitter_name",
         "batter_mlbid",
         "hitting_code",
         "season",
         "bbe",
         *list(dict.fromkeys(default_feature_cols + feature_cols)),
-        "__season",
+        "miss_distance", "__season",
         "__level",
         "__official_level",
         "__official_game_type",
@@ -685,13 +710,14 @@ def hitter_comps():
         stats_df["__level"] = 1
 
     target_cols = [
+        'whiff_pct', 'Swing_pct', 'SwStr',
         "hitter_name",
         "batter_mlbid",
         "hitting_code",
         "season",
         "bbe",
         *list(dict.fromkeys(default_feature_cols + feature_cols)),
-        "__season",
+        "miss_distance", "__season",
         "__level",
         "__official_level",
         "__official_game_type",
@@ -736,7 +762,7 @@ def hitter_comps():
         hide_cols={"Team"},
     )
     st.caption("Most similar seasons matching the result pool filters")
-    render_table(
+    df = render_table(
         df,
         official_hitting_details=True,
         reverse_cols=reverse_hitters,
@@ -782,6 +808,8 @@ def hitter_mlb_equivalencies():
             key="hitter_mlb_eq_min_pa",
         )
         view = view[view["PA"] >= min_pa]
+        maximum_workload_controls({'PA':'PA'},'hitters_mlb_eq')
+        view = apply_workload_maximum(view,'hitters_mlb_eq')
 
     season_vals = season_options(view)
     season = st.selectbox(
@@ -872,7 +900,7 @@ def hitter_mlb_equivalencies():
 
     reverse_cols = HIGHER_IS_WORSE_COLS | {"LA<=0%", "Chase (%)"}
     reverse_cols = reverse_cols | {f"{name} MLB Eq" for name in reverse_cols}
-    render_table(
+    table_df = render_table(
         table_df,
         reverse_cols=reverse_cols,
         group_cols=["__season", "__level"],
@@ -944,17 +972,18 @@ def hitter_ar():
                 index=0,
                 key="hitter_ar_game_type_group",
             )
+            value_type = st.selectbox(
+                "Filter By", ["PA", "BBE"], index=1, key="hitter_ar_value_type"
+            )
             min_value = st.number_input(
-                "Minimum Value",
+                "Minimum " + value_type,
                 min_value=0,
                 max_value=500,
                 value=100,
                 step=1,
                 key="hitter_ar_min_value",
             )
-            value_type = st.selectbox(
-                "Filter By", ["PA", "BBE"], index=1, key="hitter_ar_value_type"
-            )
+            maximum_workload_controls({'PA': 'PA', 'BBE': 'bbe'},'hitter_ar_workload')
             team = st.selectbox(
                 "Select Team",
                 team_options(hitters_reg_df, "hitting_code"),
@@ -1011,7 +1040,9 @@ def hitter_ar():
             else:
                 df = numeric_filter(df, "bbe", min_value)
 
+            df = apply_workload_maximum(df,'hitter_ar_workload')
             columns = [
+                'whiff_pct', 'SwStr',
                 "hitter_name",
                 "batter_mlbid",
                 "hitting_code",
@@ -1036,13 +1067,15 @@ def hitter_ar():
                 "SBO",
                 "SB",
                 "takeoff_rate_reg",
-                "__season",
+                "miss_distance", "__season",
                 "__level",
             ]
             df = df.assign(__season=df["season"], __level=df["level_id"])
             export_source = df
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
+                'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)', 'SwStr': 'SwStr (%)',
+                "miss_distance": "Avg Miss Distance (in.)",
                 "hitter_name": "Name", "batter_mlbid": "Player ID",
                 "hitting_code": "Team", "season": "Season", "bbe": "BBE", "HR": "HR",
                 "damage_rate_reg": "Damage/BBE (%)", "EV90th_reg": "90th Pctile EV",
@@ -1066,8 +1099,8 @@ def hitter_ar():
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
             ].rename(columns=rename_map)
-            render_table(
-                df,
+            df = render_table(
+                df, show_maximum_filters=False,
                 official_hitting_details=(game_type_group == "Regular Season"),
                 reverse_cols=HIGHER_IS_WORSE_COLS | {"LA<=0%", "Chase (%)"},
                 group_cols=["__season", "__level"],
@@ -1082,11 +1115,21 @@ def hitter_splits():
     """Hitters - Splits page"""
     st.title("Hitter Splits")
 
+    tabs = st.tabs(["vL / vR", "Home / Away", "1H / 2H", "Monthly", "Pitch Type Splits", "Combined Splits"])
+    with tabs[-1]:
+        from app.combined_splits import render_combined_splits
+        render_combined_splits("hitter")
+
+    with tabs[-2]:
+        from app.hitting_pitch_split_tables import render_hitter_pitch_split_leaderboard
+
+        render_hitter_pitch_split_leaderboard(damage_df)
+
     if hitter_splits_df.empty:
-        st.info("Missing hitter_splits.csv")
+        with tabs[0]:
+            st.info("Missing hitter_splits.csv")
         return
 
-    tabs = st.tabs(["vL / vR", "Home / Away", "1H / 2H", "Monthly"])
     split_map = {
         "vL / vR": "vs L/R",
         "Home / Away": "Home/Away",
@@ -1131,20 +1174,8 @@ def hitter_splits():
                     index=0,
                     key=f"hitter_splits_game_type_group_{idx}",
                 )
-                min_value = st.number_input(
-                    "Minimum Value",
-                    min_value=0,
-                    max_value=500,
-                    value=100,
-                    step=1,
-                    key=f"hitter_splits_min_value_{idx}",
-                )
-                value_type = st.selectbox(
-                    "Filter By",
-                    ["PA", "BBE"],
-                    index=1,
-                    key=f"hitter_splits_value_type_{idx}",
-                )
+                workload_column, min_value = split_workload_controls(hitter_splits_df, f"hitter_splits_workload_{idx}", pitching=False)
+
                 split_choice = st.multiselect(
                     "Select Split",
                     ["All"] + sorted(split_df["split"].dropna().unique().tolist()),
@@ -1205,20 +1236,24 @@ def hitter_splits():
                 df = filter_by_values(df, "batter_mlbid", player)
                 df = df.assign(__season=df["season"], __level=df["level_id"])
 
-                if value_type == "PA":
-                    df = numeric_filter(df, "PA", min_value)
-                else:
-                    df = numeric_filter(df, "bbe", min_value)
+                df = numeric_filter(df, workload_column, min_value)
+                df = apply_workload_maximum(df,f"hitter_splits_workload_{idx}")
 
                 columns = [
+                    'whiff_pct', 'Swing_pct', 'SwStr',
                     "hitter_name", "batter_mlbid", "hitting_code", "season", "split",
-                    "PA", "bbe", "HR", "damage_rate", "EV90th", "max_EV", "pull_FB_pct",
+                    "pitches", "PA", "bbe", "HR", "damage_rate", "EV90th", "max_EV", "pull_FB_pct",
                     "LA_gte_20", "LA_lte_0", "SEAGER", "selection_skill",
                     "hittable_pitches_taken", "chase", "z_con", "secondary_whiff_pct",
-                    "whiffs_vs_95", "contact_vs_avg", "__season", "__level",
+                    "whiffs_vs_95", "contact_vs_avg",
+                    *[c for c in BAT_TRACKING_COLUMNS if c != "miss_distance"], "miss_distance", "__season", "__level",
                 ]
                 df = df[[col for col in columns if col in df.columns]].copy()
                 rename_map = {
+                    'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)', 'SwStr': 'SwStr (%)',
+                    **BAT_TRACKING_COLUMNS,
+                    "miss_distance": "Avg Miss Distance (in.)",
+                    "pitches": "#",
                     "hitter_name": "Name", "batter_mlbid": "Player ID",
                     "hitting_code": "Team", "season": "Season", "split": "Split",
                     "bbe": "BBE", "HR": "HR", "damage_rate": "Damage/BBE (%)",
@@ -1237,8 +1272,7 @@ def hitter_splits():
                 stats_df = base_stats[
                     [col for col in columns if col in base_stats.columns]
                 ].rename(columns=rename_map)
-                render_table(
-                    df,
+                df = render_table(df, show_maximum_filters=False,
                     reverse_cols=HIGHER_IS_WORSE_COLS | {"Chase (%)", "LA<=0%"},
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
@@ -1260,14 +1294,18 @@ def hitter_gamelogs_page():
         return
 
     _HITTER_GL_COLS = [
+        'whiff_pct', 'Swing_pct', 'SwStr',
         "game_date", "hitter_name", "batter_mlbid", "hitting_code",
         "game_pk", "opp_team",
         "PA", "bbe", "HR", "XBH", "hits", "damaged_bbe",
         "pulled_fbs", "la_gte_20_bbe", "la_lte_0_bbe", "BB", "K",
         "pitches", "FA", "BR", "OFF", "swings", "chases", "whiffs",
         "selective_takes", "hittable_takes", "vs_RHP", "vs_LHP",
+        "miss_distance",
     ]
     _RENAME = {
+        'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)', 'SwStr': 'SwStr (%)',
+        "miss_distance": "Avg Miss Distance (in.)",
         "game_date": "Date", "hitter_name": "Name",
         "batter_mlbid": "Player ID", "hitting_code": "Team", "game_pk": "Game ID",
         "opp_team": "vs",
@@ -1328,7 +1366,7 @@ def hitter_gamelogs_page():
                 df = df.sort_values(_sort, ascending=[False] + [True] * (len(_sort) - 1))
                 df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
             df = df.rename(columns=_RENAME)
-            render_table(df, stats_df=pd.DataFrame())
+            df = render_table(df, stats_df=pd.DataFrame())
             download_button(df, "hitter_gamelogs_date", "hgl_date_dl")
 
     with tab_player:
@@ -1376,7 +1414,7 @@ def hitter_gamelogs_page():
                 if "game_date" in df.columns:
                     df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
                 df = df.rename(columns=_RENAME)
-                render_table(df, stats_df=pd.DataFrame())
+                df = render_table(df, stats_df=pd.DataFrame())
                 download_button(df, "hitter_gamelogs_player", "hgl_pl_dl")
 
     with tab_range:

@@ -17,6 +17,12 @@ from time import perf_counter
 import numpy as np
 import pandas as pd
 import polars as pl
+if __package__ in {None, ""}:
+    from tracking_metrics import miss_distance_expressions
+    from swing_rates import swing_count_expressions, add_swing_rates
+else:
+    from pipeline.tracking_metrics import miss_distance_expressions
+    from pipeline.swing_rates import swing_count_expressions, add_swing_rates
 try:
     import psutil
 except ImportError:  # optional dependency
@@ -423,6 +429,7 @@ def build_pitching_splits(
             pitch_types_split = build_pitch_types(subset)
             pitch_types_split = apply_stuff_grade(pitch_types_split, stuff_percentiles)
             pitchers_split = build_pitchers(subset)
+            pitch_types_split = pitch_types_split.join(pitchers_split.select(["pitcher_mlbid", "name", "pitcher_hand", "season", "level_id", "game_type_group", "TBF", "GS", "IP"]), on=["pitcher_mlbid", "name", "pitcher_hand", "season", "level_id", "game_type_group"], how="left")
             if not pitch_types_split.is_empty():
                 pitcher_stuff = (
                     pitch_types_split.filter(pl.col("stuff").is_not_null())
@@ -545,7 +552,7 @@ def build_team_pitching_splits(
     return pl.concat(frames, how="diagonal")
 
 
-def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
+def build_hitters(df: pl.DataFrame, group_keys: list[str] | None = None) -> pl.DataFrame:
     if df.is_empty():
         return df
     hitter_age_expr = _optional_age_expr(df, "batter_age")
@@ -556,9 +563,11 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
     )
 
     hitters = (
-        df.group_by(["batter_mlbid", "hitter_name", "level_id", "season", "game_type_group"])
+        df.group_by(group_keys if group_keys is not None else ["batter_mlbid", "hitter_name", "level_id", "season", "game_type_group"])
         .agg(
             [
+                *swing_count_expressions(df),
+                *miss_distance_expressions(df),
                 hitter_age_expr,
                 pl.when(pl.col("batter_hand").filter(pl.col("batter_hand").is_in(["L", "R"])).n_unique() == 2)
                 .then(pl.lit("S"))
@@ -792,6 +801,9 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
         )
     )
 
+    if group_keys is not None:
+        return add_swing_rates(hitters)
+
     pos_counts = (
         df.group_by(
             [
@@ -848,12 +860,22 @@ def build_hitters(df: pl.DataFrame) -> pl.DataFrame:
         games.select(position_keys + POSITION_COUNT_COLS), on=position_keys, how="left"
     ).with_columns(pl.col(POSITION_COUNT_COLS).fill_null(0))
 
-    return hitters
+    return add_swing_rates(hitters)
 
 
-def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
+def _damage_rate_expressions() -> list[pl.Expr]:
+    damaged = ((pl.col('is_in_play') == True) & pl.col('damage_pred').is_not_null()
+               & (pl.col('exit_velo') >= pl.col('damage_pred')) & (pl.col('launch_angle') > 0)
+               & pl.col('spray_angle_adj').is_between(-50, 50))
+    bbe = (pl.col('is_in_play') == True).sum()
+    return [pl.when(bbe > 0).then(100 * damaged.sum() / bbe).alias('Damage_pct'),
+            damaged.sum().alias('Damage_pct_num'), bbe.alias('Damage_pct_den')]
+
+
+def build_pitchers(df: pl.DataFrame, extra_group_cols: list[str] | None = None) -> pl.DataFrame:
     if df.is_empty():
         return df
+    extra_group_cols = extra_group_cols or []
 
     pitcher_age_expr = _optional_age_expr(df, "pitcher_age")
     starter_role = _starter_role_expr(df)
@@ -866,33 +888,37 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
     fastball_tags = ["FA", "SI", "HC", "SP"]
     fb_primary_tag = (
         df.filter(pl.col("pitch_tag").is_in(fastball_tags))
-        .group_by(["pitcher_mlbid", "level_id", "season", "game_type_group", "pitch_tag"])
+        .group_by(['pitcher_mlbid', 'level_id', 'season', 'game_type_group', 'pitch_tag'] + extra_group_cols)
         .agg(pl.len().alias("pitch_count"))
         .sort(
-            ["pitcher_mlbid", "level_id", "season", "game_type_group", "pitch_count"],
-            descending=[False, False, False, False, True],
+            ['pitcher_mlbid', 'level_id', 'season', 'game_type_group'] + extra_group_cols + ["pitch_count"],
+            descending=[False] * (4 + len(extra_group_cols)) + [True],
         )
-        .group_by(["pitcher_mlbid", "level_id", "season", "game_type_group"])
+        .group_by(['pitcher_mlbid', 'level_id', 'season', 'game_type_group'] + extra_group_cols)
         .agg(pl.first("pitch_tag").alias("primary_fb_tag"))
     )
     fb_vaa = (
         df.join(
             fb_primary_tag,
-            on=["pitcher_mlbid", "level_id", "season", "game_type_group"],
+            on=['pitcher_mlbid', 'level_id', 'season', 'game_type_group'] + extra_group_cols,
             how="left",
         )
         .filter(pl.col("pitch_tag") == pl.col("primary_fb_tag"))
-        .group_by(["pitcher_mlbid", "level_id", "season", "game_type_group"])
+        .group_by(['pitcher_mlbid', 'level_id', 'season', 'game_type_group'] + extra_group_cols)
         .agg(pl.mean("vaa").alias("fastball_vaa_override"))
     )
 
     pitchers = df.group_by(
-        ["pitcher_mlbid", "name", "season", "level_id", "pitcher_hand", "game_type_group"]
+        ['pitcher_mlbid', 'name', 'season', 'level_id', 'pitcher_hand', 'game_type_group'] + extra_group_cols
     ).agg(
         [
+            *swing_count_expressions(df),
+            *_damage_rate_expressions(),
+            *miss_distance_expressions(df),
             pitcher_age_expr,
             pl.len().alias("pitches"),
             pl.n_unique("pa_id").alias("TBF"),
+            pl.sum("bbe").alias("bbe"),
             gs_expr,
             (pl.sum("outs_recorded") / 3).round(1).alias("IP"),
             (pl.n_unique("pa_id") / pl.n_unique("game_pk")).alias("TBF_per_G"),
@@ -1046,47 +1072,40 @@ def build_pitchers(df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
     pitchers = pitchers.join(
-        fb_vaa, on=["pitcher_mlbid", "level_id", "season", "game_type_group"], how="left"
+        fb_vaa, on=['pitcher_mlbid', 'level_id', 'season', 'game_type_group'] + extra_group_cols, how="left"
     ).with_columns(
         pl.coalesce(["fastball_vaa_override", "fastball_vaa"]).alias("fastball_vaa")
     ).drop("fastball_vaa_override")
-    return pitchers
+    return add_swing_rates(pitchers)
 
 
-def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
+def build_pitch_types(df: pl.DataFrame, extra_group_cols: list[str] | None = None) -> pl.DataFrame:
     if df.is_empty():
         return df
+    extra_group_cols = extra_group_cols or []
     pitcher_age_expr = _optional_age_expr(df, "pitcher_age")
     df = _tag_pitch(df)
     df = df.with_columns(
         pl.len()
         .over(
-            [
-                "name",
-                "level_id",
-                "pitcher_mlbid",
-                "pitcher_hand",
-                "season",
-                "game_type_group",
-            ]
+            ['name', 'level_id', 'pitcher_mlbid', 'pitcher_hand', 'season', 'game_type_group'] + extra_group_cols
         )
         .alias("total_pitches")
     )
     pitch_types = df.group_by(
-        [
-            "name",
-            "level_id",
-            "pitcher_mlbid",
-            "pitcher_hand",
-            "season",
-            "game_type_group",
-            "pitch_tag",
-        ]
+        ['name', 'level_id', 'pitcher_mlbid', 'pitcher_hand', 'season', 'game_type_group', 'pitch_tag'] + extra_group_cols
     ).agg(
         [
+            *swing_count_expressions(df),
+            *_damage_rate_expressions(),
+            *miss_distance_expressions(df),
             pitcher_age_expr,
             pl.len().alias("pitches"),
             (pl.len() / pl.first("total_pitches") * 100).alias("pct"),
+            pl.sum("bbe").alias("bbe"),
+            (100 * (pl.col("swing") == 1).sum() / pl.len()).alias("Swing_pct"),
+            (pl.col("swing") == 1).sum().alias("Swing_pct_num"),
+            pl.len().alias("Swing_pct_den"),
             pl.mean("stuff_raw").alias("stuff_raw"),
             pl.col("stuff_raw").is_not_null().sum().alias("stuff_raw_n"),
             pl.mean("pitch_velo").alias("velo"),
@@ -1242,7 +1261,7 @@ def build_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
                 pl.lit(0).alias("LA_lte_0_den"),
             ]
         )
-    return pitch_types
+    return add_swing_rates(pitch_types)
 
 
 def build_league_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
@@ -1253,6 +1272,8 @@ def build_league_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
         ["season", "level_id", "game_type_group", "pitcher_hand", "pitch_tag"]
     ).agg(
         [
+            *swing_count_expressions(df),
+            *miss_distance_expressions(df),
             pl.len().alias("pitches"),
             pl.mean("pitch_velo").alias("velo"),
             pl.mean("vaa").alias("vaa"),
@@ -1299,7 +1320,7 @@ def build_league_pitch_types(df: pl.DataFrame) -> pl.DataFrame:
         ).alias("pct"),
         pl.col("pitcher_hand").alias("throws"),
     )
-    return league_pitch_types
+    return add_swing_rates(league_pitch_types)
 
 
 _TEAM_CODE_ALIASES: dict[str, str] = {
@@ -1318,6 +1339,29 @@ def _normalize_team_codes(df: pl.DataFrame, col: str) -> pl.DataFrame:
     )
 
 
+def bat_tracking_expressions(df: pl.DataFrame) -> list[pl.Expr]:
+    """Aggregate each tracking metric over its own recorded measurements."""
+    sources = {
+        "bat_speed": "bat_speed", "swing_length": "swing_length",
+        "swing_path_tilt": "swing_path_tilt", "attack_angle": "attack_angle",
+        "attack_direction": "attack_direction",
+        "intercept_ball_minus_batter_pos_x_inches": "intercept_x_inches",
+        "intercept_ball_minus_batter_pos_y_inches": "intercept_y_inches",
+    }
+    expressions = []
+    for source, output in sources.items():
+        value = pl.col(source).cast(pl.Float64, strict=False) if source in df.columns else pl.lit(None, dtype=pl.Float64)
+        expressions.extend([value.mean().alias(output), value.is_not_null().sum().alias(output + "_n")])
+    speed = pl.col("bat_speed").cast(pl.Float64, strict=False) if "bat_speed" in df.columns else pl.lit(None, dtype=pl.Float64)
+    count = speed.is_not_null().sum()
+    expressions.extend([
+        pl.when(count > 0).then(100 * (speed >= 75).sum() / count).otherwise(None).alias("fast_swing_pct"),
+        count.alias("fast_swing_pct_n"),
+    ])
+    expressions.extend(miss_distance_expressions(df))
+    return expressions
+
+
 def build_team_hitting(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty():
         return df
@@ -1330,6 +1374,9 @@ def build_team_hitting(df: pl.DataFrame) -> pl.DataFrame:
         .group_by(["hitting_code", "level_id", "season", "game_type_group"])
         .agg(
             [
+                *swing_count_expressions(df),
+                pl.len().alias("pitches"),
+                *bat_tracking_expressions(df),
                 pl.n_unique("pa_id").alias("PA"),
                 pl.sum("bbe").alias("bbe"),
                 pl.quantile("exit_velo", 0.9).alias("EV90th"),
@@ -1432,7 +1479,7 @@ def build_team_hitting(df: pl.DataFrame) -> pl.DataFrame:
             )
         )
     )
-    return team
+    return add_swing_rates(team)
 
 
 def build_league_hitting(df: pl.DataFrame) -> pl.DataFrame:
@@ -1442,6 +1489,9 @@ def build_league_hitting(df: pl.DataFrame) -> pl.DataFrame:
         df.group_by(["level_id", "season", "game_type_group"])
         .agg(
             [
+                *swing_count_expressions(df),
+                pl.len().alias("pitches"),
+                *bat_tracking_expressions(df),
                 pl.n_unique("pa_id").alias("PA"),
                 pl.sum("bbe").alias("bbe"),
                 pl.quantile("exit_velo", 0.9).alias("EV90th"),
@@ -1544,10 +1594,10 @@ def build_league_hitting(df: pl.DataFrame) -> pl.DataFrame:
             )
         )
     )
-    return league
+    return add_swing_rates(league)
 
 
-def build_team_pitching(df: pl.DataFrame) -> pl.DataFrame:
+def build_team_pitching(df: pl.DataFrame, extra_group_cols: list[str] | None = None) -> pl.DataFrame:
     if df.is_empty():
         return df
     df = _normalize_team_codes(df, "pitching_code")
@@ -1556,9 +1606,11 @@ def build_team_pitching(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("pitching_code").is_not_null()
             & ~pl.col("pitching_code").str.contains(r"^\d+$")
         )
-        .group_by(["pitching_code", "level_id", "season", "game_type_group"])
+        .group_by(["pitching_code", "level_id", "season", "game_type_group"] + (extra_group_cols or []))
         .agg(
             [
+                *swing_count_expressions(df),
+                *miss_distance_expressions(df),
                 pl.n_unique("pa_id").alias("TBF"),
                 (pl.sum("outs_recorded") / 3).round(1).alias("IP"),
                 pl.sum("bbe").alias("bbe"),
@@ -1628,7 +1680,7 @@ def build_team_pitching(df: pl.DataFrame) -> pl.DataFrame:
             ]
         )
     )
-    return team
+    return add_swing_rates(team)
 
 
 def build_league_pitching(df: pl.DataFrame) -> pl.DataFrame:
@@ -1636,6 +1688,8 @@ def build_league_pitching(df: pl.DataFrame) -> pl.DataFrame:
         return df
     league = df.group_by(["level_id", "season", "game_type_group"]).agg(
         [
+            *swing_count_expressions(df),
+            *miss_distance_expressions(df),
             pl.n_unique("pa_id").alias("TBF"),
             (pl.sum("outs_recorded") / 3).round(1).alias("IP"),
             pl.sum("bbe").alias("bbe"),
@@ -1692,7 +1746,7 @@ def build_league_pitching(df: pl.DataFrame) -> pl.DataFrame:
             pl.mean("primary_vaa").alias("fastball_vaa"),
         ]
     )
-    return league
+    return add_swing_rates(league)
 
 
 def build_park_data(df: pl.DataFrame) -> pl.DataFrame:
@@ -1753,6 +1807,7 @@ def build_park_data(df: pl.DataFrame) -> pl.DataFrame:
         .group_by(["park_mlbid", "home_team", "stands", "season", "level_id"])
         .agg(
             [
+                *miss_distance_expressions(df),
                 damage_mask.sum().alias("damage_bbe"),
                 non_damage_mask.sum().alias("non_damage_bbe"),
                 non_damage_la20_mask.sum().alias("non_damage_la_gte_20_bbe"),
@@ -1968,14 +2023,14 @@ def add_percentiles(
             return pl.from_pandas(df_pd)
 
         for col in value_list:
-            pct = qualified.groupby(group_list, group_keys=False)[col].apply(
+            pct = qualified.groupby(group_list, group_keys=False, observed=True)[col].apply(
                 _pctile_bins
             )
             df_pd[f"{col}_pctile"] = pd.NA
             df_pd.loc[pct.index, f"{col}_pctile"] = pct
     else:
         for col in value_list:
-            pct = df_pd.groupby(group_list, group_keys=False)[col].apply(_pctile_bins)
+            pct = df_pd.groupby(group_list, group_keys=False, observed=True)[col].apply(_pctile_bins)
             df_pd[f"{col}_pctile"] = pct
 
     return pl.from_pandas(df_pd)
@@ -2707,6 +2762,7 @@ def _build_outputs(
         "vbreak",
         "hbreak",
         "SwStr",
+        "Swing_pct",
         "LA_lte_0",
         "Ball_pct",
         "Z_Contact",
@@ -2870,7 +2926,10 @@ def main(
     for final_name, parts in chunk_map.items():
         lazy_frames = [pl.scan_parquet(p) for p in parts]
         combined = pl.concat(lazy_frames, how="diagonal_relaxed")
-        combined.sink_parquet(out_dir / final_name)
+        out_path = out_dir / final_name
+        tmp_path = out_path.with_suffix(".parquet.tmp")
+        combined.sink_parquet(tmp_path)
+        tmp_path.replace(out_path)
         print(f"Wrote {final_name} from {len(parts)} chunks")
 
     print("Aggregation complete!")

@@ -99,11 +99,12 @@ def park_data_page():
             "HR_per_damage_BBE_pct",
             "XBH_per_damage_BBE_pct",
             "Hits_per_BBE_pct",
-            "__season",
+            "miss_distance", "__season",
             "__level",
         ]
         df = df[[col for col in columns if col in df.columns]].copy()
         rename_map = {
+            "miss_distance": "Avg Miss Distance (in.)",
             "park_mlbid": "Park ID",
             "home_team": "Home Team",
             "stands": "Batter Hand",
@@ -115,7 +116,7 @@ def park_data_page():
         }
         df = df.rename(columns=rename_map)
         df = df.sort_values(by="HR per Damage BBE (%)", ascending=False)
-        render_table(
+        df = render_table(
             df,
             group_cols=["__season", "__level"],
             no_format_cols=DEFAULT_NO_FORMAT_COLS | {"Park ID", "Damage BBE"},

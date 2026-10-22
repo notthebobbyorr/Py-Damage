@@ -51,7 +51,6 @@ def comparison_pool_filters(
         st.session_state[defaults_key] = defaults.copy()
     with st.expander("Result pool playing time", expanded=True):
         st.caption("Actual workload at the source level. Filters apply before similarity scoring.")
-        use_max = st.checkbox("Set maximums too", key=f"{key_prefix}_workload_max")
         for col in workload_cols:
             if col not in df.columns:
                 continue
@@ -62,14 +61,8 @@ def comparison_pool_filters(
             values = pd.to_numeric(filtered[col], errors="coerce")
             if minimum > 0:
                 filtered = filtered[values >= minimum]
-            if use_max:
-                maximum = st.number_input(
-                    f"Maximum {col}", min_value=0.0,
-                    value=float(pd.to_numeric(df[col], errors="coerce").max())
-                    if df[col].notna().any() else 0.0,
-                    key=f"{key_prefix}_{col}_maximum",
-                )
-                filtered = filtered[pd.to_numeric(filtered[col], errors="coerce") <= maximum]
+        maximum_workload_controls({c:c for c in workload_cols if c in df},key_prefix)
+        filtered = apply_workload_maximum(filtered,key_prefix)
     return filtered.copy()
 
 
@@ -190,10 +183,85 @@ def player_id_options(
     return ["All"] + ids, name_map
 
 
-def numeric_filter(df: pd.DataFrame, column: str, min_value: float) -> pd.DataFrame:
+def numeric_filter(df: pd.DataFrame, column: str, min_value: float, max_value: float | None = None) -> pd.DataFrame:
     if df.empty:
         return df
-    return df[df[column] >= min_value]
+    values = pd.to_numeric(df[column], errors="coerce")
+    mask = values >= min_value
+    if max_value is not None:
+        mask &= values <= max_value
+    return df[mask]
+
+
+def split_workload_controls(df, key_prefix, pitching=False, default_minimum=100.0):
+    choices = {"# (pitches)": "pitches"} if "pitches" in df else {}
+    for label in (["TBF", "GS", "IP", "BBE"] if pitching else ["PA", "BBE"]):
+        column = "bbe" if label == "BBE" else label
+        if column in df.columns:
+            choices[label] = column
+    choice = st.selectbox("Filter By", list(choices), key=key_prefix + "_metric")
+    minimum = st.number_input("Minimum " + choice, min_value=0.0,
+                              value=float(default_minimum) if choice == "# (pitches)" else 0.0,
+                              key=key_prefix + "_minimum_" + choices[choice])
+    maximum_workload_controls(choices,key_prefix)
+    return choices[choice], minimum
+
+
+def maximum_workload_controls(choices, key_prefix):
+    def clear_maximum():
+        st.session_state[key_prefix + "_limit_by"] = None
+        st.session_state[key_prefix + "_maximum"] = None
+    def clear_value():
+        st.session_state[key_prefix + "_maximum"] = None
+    label = st.selectbox("Limit By",list(choices),index=None,placeholder="No limit",
+        key=key_prefix+"_limit_by",on_change=clear_value)
+    maximum = st.number_input("Maximum" + (" " + label if label else ""),min_value=0.0,value=None,
+        placeholder="No maximum",disabled=label is None,key=key_prefix+"_maximum")
+    st.session_state[key_prefix+"_limit_column"] = choices.get(label)
+    if label is not None or maximum is not None:
+        st.button("Clear maximum",key=key_prefix+"_clear_maximum",on_click=clear_maximum)
+    return choices.get(label),maximum
+
+
+def apply_workload_maximum(df, key_prefix):
+    column = st.session_state.get(key_prefix+"_limit_column")
+    maximum = st.session_state.get(key_prefix+"_maximum")
+    if column is None or maximum is None:
+        return df
+    return df[pd.to_numeric(df[column],errors="coerce") <= maximum].copy()
+
+
+def apply_maximum_filters(df, key_prefix, workload_kind=None):
+    """Optional caps on every rendered table; zero is a valid maximum."""
+    values = {c: pd.to_numeric(df[c], errors="coerce") for c in df.select_dtypes(include="number")
+              if not c.startswith("__") and c not in {"Player ID", "Season", "level_id", "season"}}
+    # Pitch-type/profile tables may omit season workload from their display.
+    if workload_kind and {"Player ID", "Season"}.issubset(df.columns):
+        from app.data_loader import load_csv, load_damage_df
+        source = load_csv("pitcher_stuff_new.parquet") if workload_kind == "pitcher" else load_damage_df()
+        id_col = "pitcher_mlbid" if workload_kind == "pitcher" else "batter_mlbid"
+        source = filter_by_game_type_group(source, "Regular Season")
+        keys = [id_col, "season", "level_id"]
+        lookup = df[["Player ID", "Season"]].rename(columns={"Player ID": id_col, "Season": "season"}).copy()
+        source_level = "__official_level" if "__official_level" in df else "__level"
+        lookup["level_id"] = df[source_level].values if source_level in df else (
+            df["Level"].astype(str).map({v: k for k, v in LEVEL_LABELS.items()}).values if "Level" in df else 1)
+        wanted = [c for c in ["PA", "TBF", "GS", "IP", "pitches", "bbe"] if c in source]
+        if wanted:
+            # Workload is season context, not an average of split rows.
+            context = source.groupby(keys, observed=True, as_index=False)[wanted].max()
+            lookup = lookup.merge(context, on=keys, how="left", validate="many_to_one")
+            for column in wanted:
+                values["Season " + ("BBE" if column == "bbe" else column) + " (regular season)"] = pd.Series(lookup[column].values, index=df.index)
+    with st.expander("Maximum filters", expanded=False):
+        selected = st.multiselect("Cap columns", list(values), key=key_prefix + "_cap_columns")
+        mask = pd.Series(True, index=df.index)
+        for column in selected:
+            finite = values[column].replace([np.inf, -np.inf], np.nan).dropna()
+            default = 0.0 if column in {"GS", "Season GS (regular season)"} else (float(finite.max()) if len(finite) else 0.0)
+            maximum = st.number_input("Maximum " + column, value=default, key=key_prefix + "_cap_" + column)
+            mask &= values[column] <= maximum
+    return df[mask].copy()
 
 
 def game_type_group_options(df: pd.DataFrame) -> list[str]:
@@ -219,7 +287,7 @@ def pitcher_workload_filter(
 ) -> pd.DataFrame:
     if df.empty:
         return df
-    metric = filter_type if filter_type in {"IP", "TBF", "GS"} else "TBF"
+    metric = filter_type if filter_type in {"IP", "TBF", "GS", "pitches", "bbe"} else "TBF"
     if metric not in df.columns:
         return df
     return numeric_filter(df, metric, min_value)

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.filters import apply_workload_maximum, maximum_workload_controls
 
 import numpy as np
 import pandas as pd
@@ -21,6 +22,7 @@ from app.datasets import (
     pitch_types_reg_df,
 )
 from app.filters import (
+    split_workload_controls,
     comparison_pool_filters,
     download_button,
     filter_by_game_type_group,
@@ -39,14 +41,19 @@ from app.utils import (
     rank_for_display,
 )
 from app.viz import render_table
+from functools import partial
+
+render_table = partial(render_table, workload_kind='pitcher', pitch_outcomes_after_csw=True)
 
 
 _PITCH_PCT_COLS = [
     "pct", "stuff", "grade_v13", "velo", "max_velo", "vaa", "haa",
     "vbreak", "hbreak", "rpm", "spin_efficiency",
-    "SwStr", "LA_lte_0", "Ball_pct",
+    "SwStr", "Swing_pct", "LA_lte_0", "Ball_pct",
     "Z_Contact", "Chase", "CSW",
     "p_SwStr_pct", "Damage_pct", "p_Damage_pct", "takeoff_rate",
+    "miss_distance",
+    "whiff_pct",
 ]
 _PITCH_PCT_REVERSE = {
     "vaa", "Ball_pct", "Z_Contact", "takeoff_rate",
@@ -98,14 +105,7 @@ def pitch_shapes_outcomes():
                 index=0,
                 key="pitch_types_shapes_game_type_group",
             )
-            min_pitches = st.number_input(
-                "Minimum # Pitches",
-                min_value=0,
-                max_value=1000,
-                value=20,
-                step=1,
-                key="pitch_shapes_min_pitches",
-            )
+            minimum_column, min_pitches = split_workload_controls(pitch_types,'pitch_shapes_outcomes_workload',pitching=True,default_minimum=20)
             handedness = st.multiselect(
                 "Throws",
                 ["All", "L", "R", "S"],
@@ -167,16 +167,18 @@ def pitch_shapes_outcomes():
             df = filter_by_values(df, "pitcher_mlbid", pitcher)
             df = filter_by_values(df, "pitch_group", pitch_group)
             df = filter_by_values(df, "pitch_tag", pitch_tag)
-            df = df[df["pitches"] >= min_pitches]
+            df = df[df[minimum_column] >= min_pitches]
             df = df.assign(__season=df["season"], __level=df["level_id"])
 
+            df = apply_workload_maximum(df,'pitch_shapes_outcomes_workload')
             columns = [
+                'whiff_pct',
                 "name",
                 "pitcher_mlbid",
                 "pitching_code",
                 "season",
                 "pitch_tag",
-                "pitches",
+                "pitches", "bbe",
                 "pct",
                 "stuff",
                 "grade_v13",
@@ -206,7 +208,7 @@ def pitch_shapes_outcomes():
                 "rel_z",
                 "rel_x",
                 "ext",
-                "__season",
+                "miss_distance", "__season",
                 "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
@@ -218,12 +220,14 @@ def pitch_shapes_outcomes():
             if "rpm" in df.columns:
                 df["rpm"] = df["rpm"].round(0).astype("Int64")
             rename_map = {
+                'whiff_pct': 'Whiff (%)',
+                "miss_distance": "Avg Miss Distance (in.)",
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
                 "season": "Season",
                 "pitch_tag": "Pitch Type",
-                "pitches": "#",
+                "pitches": "#", "bbe": "BBE",
                 "pct": "Usage (%)",
                 "stuff": "Pitch Grade",
                 "grade_v13": "Execution Grade",
@@ -260,8 +264,8 @@ def pitch_shapes_outcomes():
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
             ].rename(columns=rename_map)
-            render_table(
-                df,
+            df = render_table(
+                df, show_maximum_filters=False,
                 reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA", "Damage/BBE (%)", "pDamage/BBE (%)", "HR"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
@@ -302,14 +306,7 @@ def pitch_ar():
                 index=0,
                 key="pitch_types_ar_game_type_group",
             )
-            min_pitches = st.number_input(
-                "Minimum # Pitches",
-                min_value=0,
-                max_value=1000,
-                value=50,
-                step=1,
-                key="pitch_ar_min_pitches",
-            )
+            minimum_column, min_pitches = split_workload_controls(pitch_types_reg_df,'pitch_ar_workload',pitching=True,default_minimum=20)
             team = st.selectbox(
                 "Select Team",
                 team_options(pitch_types_reg_df, "pitching_code"),
@@ -366,16 +363,18 @@ def pitch_ar():
             df = filter_by_values(df, "pitcher_mlbid", pitcher)
             df = filter_by_values(df, "pitch_group", pitch_group)
             df = filter_by_values(df, "pitch_tag", pitch_tag)
-            df = df[df["pitches"] >= min_pitches]
+            df = df[df[minimum_column] >= min_pitches]
             df = df.assign(__season=df["season"], __level=df["level_id"])
 
+            df = apply_workload_maximum(df,'pitch_ar_workload')
             columns = [
+                'whiff_pct',
                 "name",
                 "pitcher_mlbid",
                 "pitching_code",
                 "season",
                 "pitch_tag",
-                "pitches",
+                "pitches", "bbe",
                 "pct",
                 "stuff",
                 "grade_v13",
@@ -389,6 +388,7 @@ def pitch_ar():
                 "spin_efficiency_reg",
                 "SwStr_reg",
                 "p_SwStr_pct_reg",
+                "Swing_pct",
                 "p_Swing_pct_reg",
                 "Damage_pct_reg",
                 "HR",
@@ -400,7 +400,7 @@ def pitch_ar():
                 "rel_z_reg",
                 "rel_x_reg",
                 "ext_reg",
-                "__season",
+                "miss_distance", "__season",
                 "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
@@ -409,12 +409,14 @@ def pitch_ar():
             if "rpm_reg" in df.columns:
                 df["rpm_reg"] = df["rpm_reg"].round(0).astype("Int64")
             rename_map = {
+                'whiff_pct': 'Whiff (%)', 'SwStr': 'SwStr (%)',
+                "miss_distance": "Avg Miss Distance (in.)",
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
                 "season": "Season",
                 "pitch_tag": "Pitch Type",
-                "pitches": "#",
+                "pitches": "#", "bbe": "BBE",
                 "pct": "Usage (%)",
                 "stuff": "Pitch Grade",
                 "grade_v13": "Execution Grade",
@@ -429,6 +431,7 @@ def pitch_ar():
                 "CSW_reg": "CSW (%)",
                 "SwStr_reg": "SwStr (%)",
                 "p_SwStr_pct_reg": "pSwStr (%)",
+                "Swing_pct": "Swing (%)",
                 "p_Swing_pct_reg": "pSwing (%)",
                 "Damage_pct_reg": "Damage/BBE (%)",
                 "HR": "HR",
@@ -446,8 +449,8 @@ def pitch_ar():
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
             ].rename(columns=rename_map)
-            render_table(
-                df,
+            df = render_table(
+                df, show_maximum_filters=False,
                 reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA", "Damage/BBE (%)", "HR"},
                 group_cols=["__season", "__level"],
                 stats_df=stats_df,
@@ -510,14 +513,7 @@ def pitch_percentiles():
                     index=0,
                     key="pitch_types_pct_game_type_group",
                 )
-                min_pitches = st.number_input(
-                    "Minimum # Pitches",
-                    min_value=0,
-                    max_value=2000,
-                    value=20,
-                    step=1,
-                    key="pitch_pct_min_pitches",
-                )
+                minimum_column, min_pitches = split_workload_controls(pitch_types_pct,'pitch_percentiles_workload',pitching=True,default_minimum=20)
             else:
                 game_type_group = "Regular Season"
                 min_pitches = 0
@@ -525,6 +521,7 @@ def pitch_percentiles():
                     "Constant mode: Regular Season, pitches ≥ 150, ranked within each season + level + pitch type. "
                     "Recommended when viewing a single pitcher across years."
                 )
+                maximum_workload_controls({'# (pitches)': 'pitches', 'TBF': 'TBF', 'GS': 'GS', 'IP': 'IP', 'BBE': 'bbe'},'pitch_percentiles_workload')
             team = st.selectbox(
                 "Select Team",
                 team_options(pitch_types_pct, "pitching_code"),
@@ -567,7 +564,7 @@ def pitch_percentiles():
             df = filter_by_values(df, "pitch_tag", pitch_tag)
 
             if mode == "Customizable":
-                df = df[df["pitches"] >= min_pitches]
+                df = df[df[minimum_column] >= min_pitches]
 
                 df = rank_for_display(
                     df,
@@ -576,6 +573,7 @@ def pitch_percentiles():
                     reverse_cols=_PITCH_PCT_REVERSE,
                 )
 
+            df = apply_workload_maximum(df,'pitch_percentiles_workload')
             columns = [
                 "name",
                 "pitcher_mlbid",
@@ -594,7 +592,7 @@ def pitch_percentiles():
                 "hbreak_pctile",
                 "rpm_pctile",
                 "spin_efficiency_pctile",
-                "SwStr_pctile",
+                "SwStr_pctile", "Swing_pct_pctile",
                 "LA_lte_0_pctile",
                 "Ball_pct_pctile",
                 "Z_Contact_pctile",
@@ -604,12 +602,14 @@ def pitch_percentiles():
                 "Damage_pct_pctile",
                 "p_Damage_pct_pctile",
                 "takeoff_rate_pctile",
-                "__season",
+                "whiff_pct_pctile", "miss_distance_pctile", "__season",
                 "__level",
             ]
             df = df.assign(__season=df["season"], __level=df["level_id"])
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
+                'whiff_pct_pctile': 'Whiff (%)',
+                "miss_distance_pctile": "Avg Miss Distance Pctile",
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
@@ -627,7 +627,7 @@ def pitch_percentiles():
                 "rpm_pctile": "RPM",
                 "spin_efficiency_pctile": "Inferred Spin Efficiency (%)",
                 "CSW_pctile": "CSW (%)",
-                "SwStr_pctile": "SwStr (%)",
+                "SwStr_pctile": "SwStr (%)", "Swing_pct_pctile": "Swing (%)",
                 "LA_lte_0_pctile": "LA<=0%",
                 "Z_Contact_pctile": "Z-Contact (%)",
                 "Chase_pctile": "Chase (%)",
@@ -644,17 +644,19 @@ def pitch_percentiles():
             _pctile_scale = (1, 50, 100)
             _fixed = {
                 col: _pctile_scale for col in [
+                    'Whiff (%)',
+                    "Avg Miss Distance Pctile",
                     "Usage (%) Pctile",
                     "Pitch Grade Pctile", "Execution Grade Pctile",
                     "Velo", "Max Velo", "VAA", "HAA",
                     "IVB (in.)", "HB (in.)", "RPM", "Inferred Spin Efficiency (%)",
-                    "CSW (%)", "SwStr (%)", "LA<=0%",
+                    "CSW (%)", "SwStr (%)", "Swing (%)", "LA<=0%",
                     "Z-Contact (%)", "Chase (%)", "Ball (%)", "pSwStr (%)",
                     "Damage/BBE%", "pDamage/BBE%", "Takeoff Against (%)",
                 ]
             }
-            render_table(
-                df,
+            df = render_table(
+                df, show_maximum_filters=False,
                 abs_cols=ABS_GRADIENT_COLS_PITCH_TYPES,
                 label_cols=["Name", "Pitch Type", "Split", "split", "Split Type"],
                 round_decimals=0,
@@ -691,7 +693,7 @@ def pitch_comps():
         (comp_df["level_id"] == level_map[target_level]) & (comp_df["pitches"] >= 5)
     ].copy()
     eligible_all = comparison_pool_filters(
-        comp_df, "pitch_comps", ["pitches"], {"pitches": 100},
+        comp_df, "pitch_comps", ["pitches", "bbe"], {"pitches": 100},
     )
 
     if target_pool.empty:
@@ -853,14 +855,17 @@ def pitch_comps():
     )
 
     display_cols = [
+        'whiff_pct', 'SwStr',
         "name",
+        "pitcher_mlbid",
         "pitching_code",
         "season",
         "pitch_tag",
-        "pitches",
+        "pitches", "bbe",
         "similarity_score",
+        "Swing_pct",
         *feature_cols,
-        "__season",
+        "miss_distance", "__season",
         "__level",
     ]
     df = eligible_comp[
@@ -877,13 +882,14 @@ def pitch_comps():
         __season=stats_df["season"], __level=stats_df["level_id"]
     )
     stats_columns = [
+        'whiff_pct', 'Swing_pct', 'SwStr',
         "name",
         "pitching_code",
         "season",
         "pitch_tag",
-        "pitches",
+        "pitches", "bbe",
         *list(dict.fromkeys(default_feature_cols + feature_cols)),
-        "__season",
+        "miss_distance", "__season",
         "__level",
     ]
     stats_df = stats_df[
@@ -895,13 +901,16 @@ def pitch_comps():
     stats_df = stats_df.loc[:, ~stats_df.columns.duplicated()]
 
     target_cols = [
+        'whiff_pct', 'SwStr',
         "name",
+        "pitcher_mlbid",
         "pitching_code",
         "season",
         "pitch_tag",
-        "pitches",
+        "pitches", "bbe",
+        "Swing_pct",
         *list(dict.fromkeys(default_feature_cols + feature_cols)),
-        "__season",
+        "miss_distance", "__season",
         "__level",
     ]
     target_view = target_df.assign(
@@ -931,7 +940,7 @@ def pitch_comps():
     else:
         _pool_desc = "all pitches"
     st.caption(f"Most similar pitches matching result filters (pool: {_pool_desc})")
-    render_table(
+    df = render_table(
         df,
         reverse_cols=PITCH_REVERSE_DISPLAY_COLS,
         group_cols=["__season", "__level"],
@@ -946,11 +955,15 @@ def pitch_splits():
     """Individual Pitches - Splits page (placeholder)"""
     st.title("Individual Pitch Splits")
 
+    tabs = st.tabs(["vL / vR", "Home / Away", "1H / 2H", "Monthly", "Combined Splits"])
+    with tabs[-1]:
+        from app.combined_splits import render_combined_splits
+        render_combined_splits("pitch")
+
     if pitch_type_splits_df.empty:
         st.info("Missing pitch_types_splits.csv")
         return
 
-    tabs = st.tabs(["vL / vR", "Home / Away", "1H / 2H", "Monthly"])
     split_map = {
         "vL / vR": "vs L/R",
         "Home / Away": "Home/Away",
@@ -995,14 +1008,7 @@ def pitch_splits():
                     index=0,
                     key=f"pitch_types_splits_game_type_group_{idx}",
                 )
-                min_pitches = st.number_input(
-                    "Minimum # Pitches",
-                    min_value=0,
-                    max_value=1000,
-                    value=50,
-                    step=1,
-                    key=f"pitch_splits_min_pitches_{idx}",
-                )
+                workload_column, min_pitches = split_workload_controls(pitch_type_splits_df, f"pitch_splits_workload_{idx}", pitching=True)
                 split_choice = st.multiselect(
                     "Select Split",
                     ["All"] + sorted(split_df["split"].dropna().unique().tolist()),
@@ -1071,17 +1077,19 @@ def pitch_splits():
                 if "pitch_group" in df.columns:
                     df = filter_by_values(df, "pitch_group", pitch_group)
                 df = filter_by_values(df, "pitch_tag", pitch_tag)
-                df = df[df["pitches"] >= min_pitches]
+                df = df[df[workload_column] >= min_pitches]
+                df = apply_workload_maximum(df,f"pitch_splits_workload_{idx}")
                 df = df.assign(__season=df["season"], __level=df["level_id"])
 
                 columns = [
+                    'whiff_pct',
                     "name",
                     "pitcher_mlbid",
                     "pitching_code",
                     "season",
                     "split",
                     "pitch_tag",
-                    "pitches",
+                    "pitches", "bbe",
                     "pct",
                     "stuff",
                     "velo",
@@ -1091,6 +1099,7 @@ def pitch_splits():
                     "vbreak",
                     "hbreak",
                     "SwStr",
+                    "Swing_pct",
                     "Damage_pct",
                     "HR",
                     "Z_Contact",
@@ -1101,20 +1110,22 @@ def pitch_splits():
                     "rel_z",
                     "rel_x",
                     "ext",
-                    "__season",
+                    "miss_distance", "__season",
                     "__level",
                 ]
                 df = df[[col for col in columns if col in df.columns]].copy()
                 if "stuff" in df.columns:
                     df["stuff"] = df["stuff"].round(0)
                 rename_map = {
+                    'whiff_pct': 'Whiff (%)',
+                    "miss_distance": "Avg Miss Distance (in.)",
                     "name": "Name",
                     "pitcher_mlbid": "Player ID",
                     "pitching_code": "Team",
                     "season": "Season",
                     "split": "Split",
                     "pitch_tag": "Pitch Type",
-                    "pitches": "#",
+                    "pitches": "#", "bbe": "BBE",
                     "pct": "Usage (%)",
                     "stuff": "Pitch Grade",
                     "velo": "Velo",
@@ -1125,6 +1136,7 @@ def pitch_splits():
                     "hbreak": "HB (in.)",
                     "CSW": "CSW (%)",
                     "SwStr": "SwStr (%)",
+                    "Swing_pct": "Swing (%)",
                     "Damage_pct": "Damage/BBE (%)",
                     "HR": "HR",
                     "Z_Contact": "Z-Contact (%)",
@@ -1141,8 +1153,7 @@ def pitch_splits():
                 stats_df = base_stats[
                     [col for col in columns if col in base_stats.columns]
                 ].rename(columns=rename_map)
-                render_table(
-                    df,
+                df = render_table(df, show_maximum_filters=False,
                     reverse_cols={"Ball (%)", "Z-Contact (%)", "VAA", "Damage/BBE (%)", "HR"},
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
@@ -1165,17 +1176,23 @@ def pitch_type_gamelogs_page():
         st.info("Missing pitch_type_gamelogs.parquet — run the daily pipeline to generate it.")
         return
 
+    pitch_type_gamelogs = pitch_type_gamelogs.assign(Swing_pct=100*pitch_type_gamelogs.swings/pitch_type_gamelogs.pitches.where(pitch_type_gamelogs.pitches>0))
+
     _PT_GL_COLS = [
+        'whiff_pct', 'SwStr',
         "game_date", "pitcher_name", "pitcher_mlbid", "pitching_code",
         "pitch_tag", "pitcher_hand", "game_pk", "opp_team",
-        "bbe", "pitches", "whiffs", "chases", "velo", "vbreak", "hbreak", "rpm", "stuff", "grade_v13",
+        "bbe", "pitches", "Swing_pct", "whiffs", "chases", "velo", "vbreak", "hbreak", "rpm", "stuff", "grade_v13",
         "HR", "XBH", "hits", "damaged_bbe",
         "la_gte_20_bbe", "la_lte_0_bbe", "BB", "K",
         "strikes", "balls", "swings",
         "zone_pitches", "out_of_zone",
         "vs_LHB", "vs_RHB",
+        "miss_distance",
     ]
     _RENAME = {
+        'whiff_pct': 'Whiff (%)', 'SwStr': 'SwStr (%)',
+        "miss_distance": "Avg Miss Distance (in.)",
         "game_date": "Date", "pitcher_name": "Name",
         "pitcher_mlbid": "Player ID", "pitching_code": "Team",
         "pitch_tag": "Pitch Type", "pitcher_hand": "Hand", "game_pk": "Game ID",
@@ -1183,7 +1200,7 @@ def pitch_type_gamelogs_page():
         "bbe": "BBE", "damaged_bbe": "Damage BBE", "hits": "H",
         "la_gte_20_bbe": "LA >= 20", "la_lte_0_bbe": "LA<=0",
         "swings": "Swings", "chases": "Chases", "whiffs": "Whiffs",
-        "pitches": "Pitches",
+        "pitches": "Pitches", "Swing_pct": "Swing (%)",
         "zone_pitches": "Zone", "out_of_zone": "Out of Zone",
         "strikes": "Strikes", "balls": "Balls",
         "velo": "Avg mph", "vbreak": "IVB (in.)", "hbreak": "HB (in.)", "rpm": "RPM",
@@ -1247,7 +1264,7 @@ def pitch_type_gamelogs_page():
             df = df.rename(columns=_RENAME)
             if "RPM" in df.columns:
                 df["RPM"] = pd.to_numeric(df["RPM"], errors="coerce").round().astype("Int64")
-            render_table(df, stats_df=pd.DataFrame())
+            df = render_table(df, stats_df=pd.DataFrame())
             download_button(df, "pitch_type_gamelogs_date", "ptgl_date_dl")
 
     with tab_player:
@@ -1305,7 +1322,7 @@ def pitch_type_gamelogs_page():
                 df = df.rename(columns=_RENAME)
                 if "RPM" in df.columns:
                     df["RPM"] = pd.to_numeric(df["RPM"], errors="coerce").round().astype("Int64")
-                render_table(df, stats_df=pd.DataFrame())
+                df = render_table(df, stats_df=pd.DataFrame())
                 download_button(df, "pitch_type_gamelogs_player", "ptgl_pl_dl")
 
     with tab_range:

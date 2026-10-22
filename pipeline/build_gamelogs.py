@@ -20,6 +20,10 @@ from time import perf_counter
 from typing import Optional
 
 import polars as pl
+if __package__ in {None, ""}:
+    from tracking_metrics import miss_distance_expressions
+else:
+    from pipeline.tracking_metrics import miss_distance_expressions
 
 _REPO_DIR = Path(__file__).resolve().parent.parent
 CHUNK_DIR = _REPO_DIR / "data" / "output" / "_season_chunks"
@@ -58,7 +62,7 @@ def _bbe_expr() -> pl.Expr:
     return pl.col("bbe") == 1
 
 
-def _common_aggs(include_tbf: bool = False, include_pa: bool = False) -> list[pl.Expr]:
+def _common_aggs(df: pl.DataFrame, include_tbf: bool = False, include_pa: bool = False) -> list[pl.Expr]:
     bbe  = _bbe_expr()
     dmg  = _damage_expr()
     exprs = []
@@ -68,6 +72,7 @@ def _common_aggs(include_tbf: bool = False, include_pa: bool = False) -> list[pl
         exprs.append(pl.n_unique("pa_id").alias("TBF"))
         exprs.append(pl.len().alias("pitches"))
     exprs += [
+        *miss_distance_expressions(df),
         pl.sum("bbe").alias("bbe"),
         dmg.sum().alias("damaged_bbe"),
         (pl.col("pitch_outcome") == "HR").sum().alias("HR"),
@@ -93,7 +98,7 @@ def build_hitter_gamelogs(df: pl.DataFrame) -> pl.DataFrame:
         "batter_mlbid", "hitter_name", "hitting_code",
         "game_pk", "game_date", "season", "level_id", "game_type", "game_type_group",
     ] if c in df.columns]
-    hitter_aggs = _common_aggs(include_pa=True)
+    hitter_aggs = _common_aggs(df, include_pa=True)
     hitter_aggs += [
         pl.len().alias("pitches"),
         pl.col("pitching_code").first().alias("opp_team"),
@@ -122,7 +127,7 @@ def build_pitcher_gamelogs(df: pl.DataFrame) -> pl.DataFrame:
         "pitcher_mlbid", "pitcher_name", "pitching_code", "pitcher_hand",
         "game_pk", "game_date", "season", "level_id", "game_type", "game_type_group",
     ] if c in df.columns]
-    pitcher_aggs = _common_aggs(include_tbf=True)
+    pitcher_aggs = _common_aggs(df, include_tbf=True)
     pitcher_aggs += [
         (pl.col("is_inzone_pi") == True).sum().alias("zone_pitches"),
         (pl.col("pitch_group") == "FA").sum().alias("FA"),
@@ -157,7 +162,7 @@ def build_pitch_type_gamelogs(df: pl.DataFrame) -> pl.DataFrame:
         "game_pk", "game_date", "season", "level_id", "game_type", "game_type_group",
         "pitch_tag",
     ] if c in df.columns]
-    pt_aggs = [pl.len().alias("pitches")]
+    pt_aggs = [pl.len().alias("pitches"), *miss_distance_expressions(df)]
     pt_aggs += [
         pl.sum("bbe").alias("bbe"),
         _damage_expr().sum().alias("damaged_bbe"),

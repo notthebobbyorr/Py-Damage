@@ -95,7 +95,8 @@ def _merge_regressed(
     reg_cols = [
         c
         for c in reg_df.columns
-        if c.endswith("_reg") or c.endswith("_raw") or c.endswith("_n")
+        if (c.endswith("_reg") or c.endswith("_raw") or c.endswith("_n"))
+        and not (c == "miss_distance_n" and c in base_df.columns)
     ]
     keep_cols = list(dict.fromkeys(keys + reg_cols))
     reg_small = reg_df[keep_cols].drop_duplicates(subset=keys)
@@ -150,6 +151,10 @@ def _hitter_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
         "swing_path_tilt_reg": "VBA",
         "max_EV_reg": "Max EV",
         "takeoff_rate_reg": "Takeoff%",
+        "miss_distance": "Avg Miss Distance (in.)",
+        "SwStr": "SwStr (%)",
+        "Swing_pct": "Swing (%)",
+        "whiff_pct": "Whiff (%)",
     }
     if not include_mlb_eq:
         return display_map
@@ -162,6 +167,7 @@ def _hitter_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
 
 def _pitcher_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
     display_map = {
+        "bbe": "BBE",
         "name": "Name",
         "pitching_code": "Team",
         "season": "Season",
@@ -195,6 +201,10 @@ def _pitcher_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
         "inf_arm_angle": "Inferred Arm Angle",
         "takeoff_rate_reg": "Takeoff% Against",
         "similarity_score": "Similarity (0-100)",
+        "miss_distance": "Avg Miss Distance (in.)",
+        "SwStr": "SwStr (%)",
+        "Swing_pct": "Swing (%)",
+        "whiff_pct": "Whiff (%)",
     }
     if not include_mlb_eq:
         return display_map
@@ -208,6 +218,8 @@ def _pitcher_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
 def _pitch_display_map() -> dict[str, str]:
     return {
         "name": "Name",
+        "pitcher_mlbid": "Player ID",
+        "bbe": "BBE",
         "pitching_code": "Team",
         "season": "Season",
         "pitch_tag": "Pitch Type",
@@ -230,6 +242,7 @@ def _pitch_display_map() -> dict[str, str]:
         "x_angle_release": "HRA",
         "inf_arm_angle": "Inferred Arm Angle",
         "SwStr": "SwStr (%)",
+        "Swing_pct": "Swing (%)",
         "p_SwStr_pct": "pSwStr (%)",
         "Zone": "Zone (%)",
         "Chase": "Chase (%)",
@@ -240,6 +253,8 @@ def _pitch_display_map() -> dict[str, str]:
         "LA_lte_0": "LA<=0%",
         "HR": "HR",
         "similarity_score": "Similarity (0-100)",
+        "miss_distance": "Avg Miss Distance (in.)",
+        "whiff_pct": "Whiff (%)",
     }
 
 

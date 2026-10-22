@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from app.config import DATA_DIR
+from app.swing_rates import add_swing_rates
 
 _NAME_COLS = {"hitter_name", "name", "pitcher_name", "runner_name"}
 
@@ -23,10 +24,23 @@ def _load_csv_cached(path_str: str, mtime: float) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
     if path.suffix == ".parquet":
-        df = pd.read_parquet(path)
+        df = add_swing_rates(_read_parquet(path))
         return _optimize_dataframe_memory(df)
-    df = pd.read_csv(path)
+    df = add_swing_rates(pd.read_csv(path))
     return _optimize_dataframe_memory(df)
+
+
+def _read_parquet(path: Path) -> pd.DataFrame:
+    """Accept Polars dictionary encodings as well as pandas-written parquet."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(path)
+    for index, field in enumerate(table.schema):
+        if pa.types.is_dictionary(field.type) and pa.types.is_unsigned_integer(field.type.index_type):
+            signed = pa.dictionary(pa.int64(), field.type.value_type, ordered=field.type.ordered)
+            table = table.set_column(index, field.name, table.column(index).cast(signed))
+    return table.to_pandas()
 
 
 def _optimize_dataframe_memory(df: pd.DataFrame) -> pd.DataFrame:

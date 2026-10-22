@@ -36,7 +36,7 @@ else:
     setattr(page, '{kind}_reg_df', frame)
     setattr(page, '{kind}_mlb_eq_df', frame)
 captured = []
-page.render_table = lambda frame, **kwargs: captured.append(frame)
+page.render_table = lambda frame, **kwargs: (captured.append(frame), frame)[1]
 page.download_button = lambda *args, **kwargs: None
 page.{singular}_comps()
 st.session_state['captured'] = captured
@@ -75,9 +75,12 @@ st.session_state['captured'] = captured
                 app.selectbox(key=f"{singular}_comps_target_level").select('Triple-A' if kind == 'pitches' else 11).run()
                 self.assertFalse(app.exception)
                 self.assertEqual(set(app.session_state['captured'][1]['Name']), {'Player 3','Player 4'})
-                app.checkbox(key=f"{singular}_comps_workload_max").check().run()
-                app.number_input(key=f"{singular}_comps_{metric}_maximum").set_value(100.0).run()
+                app.selectbox(key=f"{singular}_comps_limit_by").select(metric).run()
+                app.number_input(key=f"{singular}_comps_maximum").set_value(100.0).run()
                 self.assertEqual(app.session_state['captured'][1]['Name'].tolist(), ['Player 4'])
+                app.button(key=f"{singular}_comps_clear_maximum").click().run()
+                self.assertEqual(set(app.session_state['captured'][1]['Name']), {'Player 3','Player 4'})
+                self.assertIsNone(app.selectbox(key=f"{singular}_comps_limit_by").value)
                 app.number_input(key=f"{singular}_comps_{metric}_minimum").set_value(400.0).run()
                 self.assertFalse(app.exception)
                 self.assertEqual(app.session_state['captured'], [])

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.filters import apply_workload_maximum, maximum_workload_controls
 
 import numpy as np
 import pandas as pd
@@ -24,6 +25,7 @@ from app.datasets import (
     pitchers_reg_df,
 )
 from app.filters import (
+    split_workload_controls,
     comparison_pool_filters,
     download_button,
     filter_by_game_type_group,
@@ -43,6 +45,9 @@ from app.utils import (
     rank_for_display,
 )
 from app.viz import render_table
+from functools import partial
+
+render_table = partial(render_table, workload_kind='pitcher', hide_cols={'HR'}, damage_after_la=True)
 
 
 _PITCHER_PCT_COLS = [
@@ -50,6 +55,8 @@ _PITCHER_PCT_COLS = [
     "SwStr", "Ball_pct", "Z_Contact", "Chase", "CSW",
     "rel_z", "rel_x", "ext",
     "p_SwStr_pct", "Damage_pct", "p_Damage_pct", "takeoff_rate",
+    "miss_distance",
+    "whiff_pct", "Swing_pct",
 ]
 _PITCHER_PCT_REVERSE = {
     "fastball_vaa", "Ball_pct", "Z_Contact", "takeoff_rate",
@@ -100,17 +107,18 @@ def pitcher_individual_stats():
                 index=0,
                 key="pitcher_stats_game_type_group",
             )
+            filter_type = st.selectbox(
+                "Filter By", ["IP", "TBF", "GS"], index=1, key="pitcher_stats_filter_type"
+            )
             min_value = st.number_input(
-                "Minimum Value",
+                "Minimum " + filter_type,
                 min_value=0,
                 max_value=1000,
                 value=50,
                 step=1,
                 key="pitcher_stats_min_value",
             )
-            filter_type = st.selectbox(
-                "Filter By", ["IP", "TBF", "GS"], index=1, key="pitcher_stats_filter_type"
-            )
+            maximum_workload_controls({'IP': 'IP', 'TBF': 'TBF', 'GS': 'GS'},'pitcher_individual_stats_workload')
             handedness = st.multiselect(
                 "Throws",
                 ["All", "L", "R", "S"],
@@ -162,12 +170,14 @@ def pitcher_individual_stats():
 
             df = pitcher_workload_filter(df, filter_type, min_value)
 
+            df = apply_workload_maximum(df,'pitcher_individual_stats_workload')
             columns = [
+                'whiff_pct',
                 "name",
                 "pitcher_mlbid",
                 "pitching_code",
                 "season",
-                "pitches",
+                "pitches", "bbe",
                 "HR",
                 "stuff",
                 "grade_v13",
@@ -199,7 +209,7 @@ def pitcher_individual_stats():
                 "SBO",
                 "SB",
                 "takeoff_rate",
-                "__season",
+                "miss_distance", "__season",
                 "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
@@ -211,7 +221,9 @@ def pitcher_individual_stats():
             if "grade_v13" in df.columns:
                 df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
             rename_map = {
-                "pitches": "Pitches",
+                'whiff_pct': 'Whiff (%)',
+                "miss_distance": "Avg Miss Distance (in.)",
+                "pitches": "Pitches", "bbe": "BBE",
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
@@ -253,8 +265,8 @@ def pitcher_individual_stats():
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
             ].rename(columns=rename_map)
-            render_table(
-                df,
+            df = render_table(
+                df, show_maximum_filters=False,
                 official_pitching_details=(game_type_group == "Regular Season"),
                 reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "Damage/BBE (%)", "pDamage/BBE (%)", "HR", "SBO", "SB", "Takeoff% Against"},
                 group_cols=["__season", "__level"],
@@ -317,19 +329,19 @@ def pitcher_percentiles():
                     index=0,
                     key="pitcher_pct_game_type_group",
                 )
-                min_value = st.number_input(
-                    "Minimum Value",
-                    min_value=0,
-                    max_value=2000,
-                    value=20,
-                    step=1,
-                    key="pitcher_pct_min_value",
-                )
                 filter_type = st.selectbox(
                     "Filter By",
                     ["TBF", "IP", "GS"],
                     index=0,
                     key="pitcher_pct_filter_type",
+                )
+                min_value = st.number_input(
+                    "Minimum " + filter_type,
+                    min_value=0,
+                    max_value=2000,
+                    value=20,
+                    step=1,
+                    key="pitcher_pct_min_value",
                 )
             else:
                 game_type_group = "Regular Season"
@@ -339,6 +351,7 @@ def pitcher_percentiles():
                     "Constant mode: Regular Season, TBF â‰¥ 150, ranked within each season + level. "
                     "Recommended when viewing a single player across years."
                 )
+            maximum_workload_controls({'TBF': 'TBF', 'IP': 'IP', 'GS': 'GS'},'pitcher_percentiles_workload')
             team = st.selectbox(
                 "Select Team",
                 team_options(pitcher_pct, "pitching_code"),
@@ -382,12 +395,13 @@ def pitcher_percentiles():
                     reverse_cols=_PITCHER_PCT_REVERSE,
                 )
 
+            df = apply_workload_maximum(df,'pitcher_percentiles_workload')
             columns = [
                 "name",
                 "pitcher_mlbid",
                 "pitching_code",
                 "season",
-                "pitches",
+                "pitches", "bbe",
                 "stuff_pctile",
                 "grade_v13_pctile",
                 "fastball_velo_pctile",
@@ -405,13 +419,15 @@ def pitcher_percentiles():
                 "Damage_pct_pctile",
                 "p_Damage_pct_pctile",
                 "takeoff_rate_pctile",
-                "__season",
+                "whiff_pct_pctile", "Swing_pct_pctile", "miss_distance_pctile", "__season",
                 "__level",
             ]
             df = df.assign(__season=df["season"], __level=df["level_id"])
             df = df[[col for col in columns if col in df.columns]].copy()
             rename_map = {
-                "pitches": "Pitches",
+                'whiff_pct_pctile': 'Whiff (%)', 'Swing_pct_pctile': 'Swing (%)',
+                "miss_distance_pctile": "Avg Miss Distance Pctile",
+                "pitches": "Pitches", "bbe": "BBE",
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
@@ -440,6 +456,8 @@ def pitcher_percentiles():
             _pctile_scale = (1, 50, 100)
             _fixed = {
                 col: _pctile_scale for col in [
+                    'Whiff (%)', 'Swing (%)',
+                    "Avg Miss Distance Pctile",
                     "Pitch Grade Pctile", "Execution Grade Pctile",
                     "Avg FA mph", "Max FA mph", "FA VAA",
                     "SwStr (%)", "Ball (%)", "Z-Contact (%)", "Chase (%)", "CSW (%)",
@@ -447,8 +465,8 @@ def pitcher_percentiles():
                     "pSwStr (%)", "Damage/BBE%", "pDamage/BBE%", "Takeoff Against (%)",
                 ]
             }
-            render_table(
-                df,
+            df = render_table(
+                df, show_maximum_filters=False,
                 official_pitching_details=(game_type_group == "Regular Season"),
                 abs_cols=ABS_GRADIENT_COLS_PITCHERS,
                 round_decimals=0,
@@ -508,7 +526,7 @@ def pitcher_comps():
         player_pool = comp_df[(comp_df["level_id"] == 1) & (comp_df["IP"] >= 5)].copy()
 
     eligible_all = comparison_pool_filters(
-        comp_df, "pitcher_comps", ["IP", "TBF", "GS", "pitches"],
+        comp_df, "pitcher_comps", ["IP", "TBF", "GS", "pitches", "bbe"],
         {"TBF": 200} if use_mlb_eq else {"IP": 50}, allow_minors=use_mlb_eq,
     )
     if not use_mlb_eq:
@@ -650,7 +668,9 @@ def pitcher_comps():
     )
 
     base_rename = {
-        "pitches": "Pitches",
+        'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)', 'SwStr': 'SwStr (%)',
+        "miss_distance": "Avg Miss Distance (in.)",
+        "pitches": "Pitches", "bbe": "BBE",
         "name": "Name",
         "pitcher_mlbid": "Player ID",
         "pitching_code": "Team",
@@ -659,14 +679,15 @@ def pitcher_comps():
     }
 
     display_cols = [
+        'whiff_pct', 'Swing_pct', 'SwStr',
         "name",
         "pitcher_mlbid",
         "pitching_code",
         "season",
-        "pitches",
+        "pitches", "bbe",
         "similarity_score",
         *feature_cols,
-        "__season",
+        "miss_distance", "__season",
         "__level",
         "__official_level",
         "__official_game_type",
@@ -685,13 +706,14 @@ def pitcher_comps():
         __season=stats_df["season"], __level=stats_df["level_id"]
     )
     stats_columns = [
+        'whiff_pct', 'Swing_pct', 'SwStr',
         "name",
         "pitcher_mlbid",
         "pitching_code",
         "season",
-        "pitches",
+        "pitches", "bbe",
         *list(dict.fromkeys(default_feature_cols + feature_cols)),
-        "__season",
+        "miss_distance", "__season",
         "__level",
         "__official_level",
         "__official_game_type",
@@ -708,13 +730,14 @@ def pitcher_comps():
         stats_df["__level"] = 1
 
     target_cols = [
+        'whiff_pct', 'Swing_pct', 'SwStr',
         "name",
         "pitcher_mlbid",
         "pitching_code",
         "season",
-        "pitches",
+        "pitches", "bbe",
         *list(dict.fromkeys(default_feature_cols + feature_cols)),
-        "__season",
+        "miss_distance", "__season",
         "__level",
         "__official_level",
         "__official_game_type",
@@ -755,7 +778,7 @@ def pitcher_comps():
         stats_df=stats_df,
         abs_cols=ABS_GRADIENT_COLS_PITCHERS,
         show_controls=False,
-        hide_cols={"Team"},
+        hide_cols={"Team", "HR"},
     )
     st.caption("Most similar seasons matching the result pool filters")
     render_table(
@@ -798,6 +821,8 @@ def pitcher_mlb_equivalencies():
             key="pitcher_mlb_eq_min_tbf",
         )
         view = view[view["TBF"] >= min_tbf]
+        maximum_workload_controls({'TBF':'TBF'},'pitchers_mlb_eq')
+        view = apply_workload_maximum(view,'pitchers_mlb_eq')
 
     season_vals = season_options(view)
     season = st.selectbox(
@@ -903,7 +928,7 @@ def pitcher_mlb_equivalencies():
     reverse_cols = PITCHER_REVERSE_DISPLAY_COLS | {
         f"{name} MLB Eq" for name in PITCHER_REVERSE_DISPLAY_COLS
     }
-    render_table(
+    table_df = render_table(
         table_df,
         reverse_cols=reverse_cols,
         group_cols=["__season", "__level"],
@@ -985,17 +1010,18 @@ def pitcher_ar():
                 index=0,
                 key="pitcher_ar_game_type_group",
             )
+            filter_type = st.selectbox(
+                "Filter By", ["IP", "TBF", "GS"], index=1, key="pitcher_ar_filter_type"
+            )
             min_value = st.number_input(
-                "Minimum Value",
+                "Minimum " + filter_type,
                 min_value=0,
                 max_value=1000,
                 value=100,
                 step=1,
                 key="pitcher_ar_min_value",
             )
-            filter_type = st.selectbox(
-                "Filter By", ["IP", "TBF", "GS"], index=1, key="pitcher_ar_filter_type"
-            )
+            maximum_workload_controls({'IP': 'IP', 'TBF': 'TBF', 'GS': 'GS'},'pitcher_ar_workload')
             team = st.selectbox(
                 "Select Team",
                 team_options(pitchers_reg_df, "pitching_code"),
@@ -1040,12 +1066,14 @@ def pitcher_ar():
 
             df = pitcher_workload_filter(df, filter_type, min_value)
 
+            df = apply_workload_maximum(df,'pitcher_ar_workload')
             columns = [
+                'whiff_pct', 'Swing_pct',
                 "name",
                 "pitcher_mlbid",
                 "pitching_code",
                 "season",
-                "pitches",
+                "pitches", "bbe",
                 "HR",
                 "stuff",
                 "grade_v13",
@@ -1070,14 +1098,16 @@ def pitcher_ar():
                 "SBO",
                 "SB",
                 "takeoff_rate_reg",
-                "__season",
+                "miss_distance", "__season",
                 "__level",
             ]
             df = df[[col for col in columns if col in df.columns]].copy()
             if "grade_v13" in df.columns:
                 df["grade_v13"] = df["grade_v13"].round(0).astype("Int64")
             rename_map = {
-                "pitches": "Pitches",
+                'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)', 'SwStr': 'SwStr (%)',
+                "miss_distance": "Avg Miss Distance (in.)",
+                "pitches": "Pitches", "bbe": "BBE",
                 "name": "Name",
                 "pitcher_mlbid": "Player ID",
                 "pitching_code": "Team",
@@ -1114,8 +1144,8 @@ def pitcher_ar():
             stats_df = base_stats[
                 [col for col in columns if col in base_stats.columns]
             ].rename(columns=rename_map)
-            render_table(
-                df,
+            df = render_table(
+                df, show_maximum_filters=False,
                 official_pitching_details=(game_type_group == "Regular Season"),
                 reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "Damage/BBE (%)", "pDamage/BBE (%)", "HR", "SBO", "SB", "Takeoff% Against"},
                 group_cols=["__season", "__level"],
@@ -1129,11 +1159,15 @@ def pitcher_splits():
     """Pitchers - Splits page (placeholder)"""
     st.title("Pitcher Splits")
 
+    tabs = st.tabs(["vL / vR", "Home / Away", "1H / 2H", "Monthly", "Combined Splits"])
+    with tabs[-1]:
+        from app.combined_splits import render_combined_splits
+        render_combined_splits("pitcher")
+
     if pitcher_splits_df.empty:
         st.info("Missing pitcher_splits.csv")
         return
 
-    tabs = st.tabs(["vL / vR", "Home / Away", "1H / 2H", "Monthly"])
     split_map = {
         "vL / vR": "vs L/R",
         "Home / Away": "Home/Away",
@@ -1178,20 +1212,8 @@ def pitcher_splits():
                     index=0,
                     key=f"pitcher_splits_game_type_group_{idx}",
                 )
-                min_value = st.number_input(
-                    "Minimum Value",
-                    min_value=0,
-                    max_value=1000,
-                    value=100,
-                    step=1,
-                    key=f"pitcher_splits_min_value_{idx}",
-                )
-                filter_type = st.selectbox(
-                    "Filter By",
-                    ["IP", "TBF", "GS"],
-                    index=1,
-                    key=f"pitcher_splits_filter_type_{idx}",
-                )
+                workload_column, min_value = split_workload_controls(pitcher_splits_df, f"pitcher_splits_workload_{idx}", pitching=True)
+
                 split_choice = st.multiselect(
                     "Select Split",
                     ["All"] + sorted(split_df["split"].dropna().unique().tolist()),
@@ -1242,14 +1264,17 @@ def pitcher_splits():
                 df = filter_by_values(df, "pitcher_mlbid", player)
                 df = df.assign(__season=df["season"], __level=df["level_id"])
 
-                df = pitcher_workload_filter(df, filter_type, min_value)
+                df = pitcher_workload_filter(df, workload_column, min_value)
+                df = apply_workload_maximum(df,f"pitcher_splits_workload_{idx}")
 
                 columns = [
+                    'whiff_pct', 'Swing_pct',
                     "name",
                     "pitcher_mlbid",
                     "split",
                     "pitching_code",
                     "season",
+                    "pitches", "bbe",
                     "TBF",
                     "IP",
                     "GS",
@@ -1269,7 +1294,7 @@ def pitcher_splits():
                     "rel_z",
                     "rel_x",
                     "ext",
-                    "__season",
+                    "miss_distance", "__season",
                     "__level",
                 ]
                 df = df[[col for col in columns if col in df.columns]].copy()
@@ -1278,6 +1303,9 @@ def pitcher_splits():
                 if "stuff" in df.columns:
                     df["stuff"] = df["stuff"].round(0)
                 rename_map = {
+                    'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)',
+                    "miss_distance": "Avg Miss Distance (in.)",
+                    "pitches": "#", "bbe": "BBE",
                     "name": "Name",
                     "pitcher_mlbid": "Player ID",
                     "pitching_code": "Team",
@@ -1307,8 +1335,7 @@ def pitcher_splits():
                 stats_df = base_stats[
                     [col for col in columns if col in base_stats.columns]
                 ].rename(columns=rename_map)
-                render_table(
-                    df,
+                df = render_table(df, show_maximum_filters=False,
                     reverse_cols={"Ball (%)", "FA VAA", "Z-Contact (%)", "pDamage/BBE (%)", "HR"},
                     group_cols=["__season", "__level"],
                     stats_df=stats_df,
@@ -1331,6 +1358,7 @@ def pitcher_gamelogs_page():
         return
 
     _PITCHER_GL_COLS = [
+        'whiff_pct', 'Swing_pct', 'SwStr',
         "game_date", "pitcher_name", "pitcher_mlbid", "pitching_code",
         "pitcher_hand", "game_pk", "opp_team",
         "TBF", "bbe", "pitches", "whiffs", "chases", "FA_mph", "stuff", "grade_v13",
@@ -1339,8 +1367,11 @@ def pitcher_gamelogs_page():
         "strikes", "balls", "swings",
         "zone_pitches", "out_of_zone", "FA", "BR", "OFF",
         "vs_LHB", "vs_RHB",
+        "miss_distance",
     ]
     _RENAME = {
+        'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)', 'SwStr': 'SwStr (%)',
+        "miss_distance": "Avg Miss Distance (in.)",
         "game_date": "Date", "pitcher_name": "Name",
         "pitcher_mlbid": "Player ID", "pitching_code": "Team",
         "pitcher_hand": "Hand", "game_pk": "Game ID",
@@ -1405,7 +1436,7 @@ def pitcher_gamelogs_page():
                 df = df.sort_values(_sort, ascending=[False] + [True] * (len(_sort) - 1))
                 df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
             df = df.rename(columns=_RENAME)
-            render_table(df, stats_df=pd.DataFrame())
+            df = render_table(df, stats_df=pd.DataFrame())
             download_button(df, "pitcher_gamelogs_date", "pgl_date_dl")
 
     with tab_player:
@@ -1453,7 +1484,7 @@ def pitcher_gamelogs_page():
                 if "game_date" in df.columns:
                     df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%m/%d/%Y")
                 df = df.rename(columns=_RENAME)
-                render_table(df, stats_df=pd.DataFrame())
+                df = render_table(df, stats_df=pd.DataFrame())
                 download_button(df, "pitcher_gamelogs_player", "pgl_pl_dl")
 
     with tab_range:

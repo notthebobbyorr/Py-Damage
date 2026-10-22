@@ -53,7 +53,9 @@ _HITTER_RATES = [
     ("K%", "K", "PA"),
     ("BB%", "BB", "PA"),
     ("HR/PA (%)", "HR", "PA"),
-    ("Whiff%", "whiffs", "swings"),
+    ("Whiff (%)", "whiffs", "swings"),
+    ("Swing (%)", "swings", "pitches"),
+    ("SwStr (%)", "whiffs", "pitches"),
 ]
 _HITTER_COUNTS = [
     "PA", "bbe", "HR", "XBH", "hits", "damaged_bbe", "pulled_fbs",
@@ -63,6 +65,7 @@ _HITTER_COUNTS = [
 ]
 
 _PITCHER_RATES = [
+    ("Whiff (%)", "whiffs", "swings"),
     ("SwStr (%)", "whiffs", "pitches"),
     ("Swing (%)", "swings", "pitches"),
     ("Zone (%)", "zone_pitches", "pitches"),
@@ -83,6 +86,7 @@ _PITCHER_COUNTS = [
 ]
 
 _PITCH_TYPE_RATES = [
+    ("Whiff (%)", "whiffs", "swings"),
     ("SwStr (%)", "whiffs", "pitches"),
     ("Swing (%)", "swings", "pitches"),
     ("Zone (%)", "zone_pitches", "pitches"),
@@ -103,6 +107,7 @@ HITTER_SPEC = SpanSpec(
     group_keys=["batter_mlbid"],
     count_cols=_HITTER_COUNTS,
     rate_specs=_HITTER_RATES,
+    wmean_specs=[("Avg Miss Distance (in.)", "miss_distance", "miss_distance_n")],
     context_cols=["PA", "bbe"],
     team_col="hitting_code",
     name_col="hitter_name",
@@ -112,6 +117,7 @@ PITCHER_SPEC = SpanSpec(
     count_cols=_PITCHER_COUNTS,
     rate_specs=_PITCHER_RATES,
     wmean_specs=[
+        ("Avg Miss Distance (in.)", "miss_distance", "miss_distance_n"),
         ("Avg FA mph", "FA_mph", "FA"),
         ("Pitch Grade", "stuff", "pitches"),
         ("Exec Grade", "grade_v13", "pitches"),
@@ -125,6 +131,7 @@ PITCH_TYPE_SPEC = SpanSpec(
     count_cols=_PITCH_TYPE_COUNTS,
     rate_specs=_PITCH_TYPE_RATES,
     wmean_specs=[
+        ("Avg Miss Distance (in.)", "miss_distance", "miss_distance_n"),
         ("Avg mph", "velo", "pitches"),
         ("IVB (in.)", "vbreak", "vbreak_n"),
         ("HB (in.)", "hbreak", "hbreak_n"),
@@ -140,6 +147,7 @@ TEAM_HITTER_SPEC = SpanSpec(
     group_keys=["hitting_code"],
     count_cols=_HITTER_COUNTS,
     rate_specs=_HITTER_RATES,
+    wmean_specs=[("Avg Miss Distance (in.)", "miss_distance", "miss_distance_n")],
     context_cols=["PA", "bbe"],
 )
 TEAM_PITCHER_SPEC = SpanSpec(
@@ -147,6 +155,7 @@ TEAM_PITCHER_SPEC = SpanSpec(
     count_cols=_PITCHER_COUNTS,
     rate_specs=_PITCHER_RATES,
     wmean_specs=[
+        ("Avg Miss Distance (in.)", "miss_distance", "miss_distance_n"),
         ("Pitch Grade", "stuff", "pitches"),
         ("Exec Grade", "grade_v13", "pitches"),
     ],
@@ -239,9 +248,9 @@ def aggregate_span(df_range: pd.DataFrame, spec: SpanSpec, mode: str) -> pd.Data
         )
         agg = agg.merge(teams, on=keys, how="left")
 
-    if mode == "Rates":
-        agg = _add_rates(agg, spec)
     if mode == "Rates" or spec is PITCH_TYPE_SPEC:
+        agg = _add_rates(agg, spec)
+    if mode in {"Rates", "Raw counts"}:
         for label, val, wt in spec.wmean_specs:
             if val in work.columns and wt in work.columns:
                 v = pd.to_numeric(work[val], errors="coerce")
@@ -280,8 +289,8 @@ def _display_columns(spec: SpanSpec, mode: str) -> list[str]:
             continue
         id_cols.append(col)
     if mode == "Raw counts":
-        traits = ["Avg mph", "IVB (in.)", "HB (in.)", "RPM"] if spec is PITCH_TYPE_SPEC else []
-        return id_cols + ["G"] + traits + spec.count_cols
+        traits = ["Avg mph", "IVB (in.)", "HB (in.)", "RPM", "Swing (%)"] if spec is PITCH_TYPE_SPEC else []
+        return id_cols + ["G"] + traits + ["Avg Miss Distance (in.)"] + spec.count_cols
     rate_labels = [lbl for lbl, _, _ in spec.rate_specs]
     wmean_labels = [lbl for lbl, _, _ in spec.wmean_specs]
     ctx = [c for c in spec.context_cols]
@@ -301,9 +310,9 @@ def build_span_table(
 
     agg = aggregate_span(df_range, spec, mode)
     games = df_range.copy()
-    if mode == "Rates":
-        games = _add_rates(games, spec)
     if mode == "Rates" or spec is PITCH_TYPE_SPEC:
+        games = _add_rates(games, spec)
+    if mode in {"Rates", "Raw counts"}:
         for label, val, _wt in spec.wmean_specs:
             if val in games.columns:
                 games[label] = pd.to_numeric(games[val], errors="coerce")
@@ -449,5 +458,9 @@ def render_span_tab(
                 "Aggregate row reflects rates computed from summed counts over the span. "
                 "Only rates derivable from stored gamelog counts are shown."
             )
-        render_table(table, stats_df=pd.DataFrame(), plot_label_count=30 if entity == "team" else None)
+        table = render_table(table, stats_df=pd.DataFrame(), plot_label_count=30 if entity == "team" else None,
+                             hide_cols={"HR"} if spec is PITCHER_SPEC else None,
+                             damage_after_la=(spec is PITCHER_SPEC),
+                             pitch_outcomes_after_csw=(spec is PITCH_TYPE_SPEC),
+                             workload_kind="pitcher" if spec in [PITCHER_SPEC, PITCH_TYPE_SPEC, TEAM_PITCHER_SPEC] else "hitter")
         download_button(table, f"{key_prefix}_span", f"{key_prefix}_span_dl")

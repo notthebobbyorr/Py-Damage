@@ -6,6 +6,7 @@ import streamlit as st
 import streamlit.components.v2 as components
 
 from app.config import DATA_DIR
+from app.hitter_pitch_splits import BAT_TRACKING_COLUMNS, COLUMNS, load_hitter_pitch_splits, split_values
 
 DETAIL_COLUMNS = ["GP", "PA", "AB", "H", "HR", "AVG/OBP/SLG", "OPS", "wRC+", "BABIP", "K%", "BB%", "R", "RBI", "SB", "CS"]
 
@@ -82,14 +83,22 @@ def render_official_table(display, full, key, pitching=False, team=False):
         official = load_official_hitting()
         format_values, columns = detail_values, DETAIL_COLUMNS
     details = []
+    pitch_splits = []
+    split_data = load_hitter_pitch_splits() if not pitching and not team else pd.DataFrame()
     for _, row in full.iterrows():
         entity = str(row["Team"]) if team else int(row["Player ID"])
         if team:
             entity = {"OAK": "ATH", "AZ": "ARI"}.get(entity, entity)
         identity = (entity, int(row["Season"]), int(row.get("__official_level", row["__level"])))
         details.append(format_values(official.loc[identity]) if row.get("__official_game_type", "Regular Season") == "Regular Season" and identity in official.index else None)
+        pitch_splits.append(split_values(split_data, identity) if row.get("__official_game_type", "Regular Season") == "Regular Season" else None)
     styler = display if hasattr(display, "hide") else display.style
+    if team and not pitching:
+        tracking = [column for column in BAT_TRACKING_COLUMNS.values() if column in styler.data.columns]
+        if tracking:
+            styler = styler.format("{:.1f}", subset=tracking, na_rep="")
     # Escape all source text before putting the existing table styles into HTML.
     html = styler.format(escape="html", subset=styler.data.select_dtypes(exclude="number").columns).format_index(escape="html", axis=1).hide(axis="index").to_html()
     st.caption(("Click a team row to show official regular-season team totals for this level." if team else "Click a player row to show official regular-season totals for this level across all teams.") + " Click again to collapse." + ((" Hld = holds; HA = hits allowed." + ("" if team else " Inh. Runners % = inherited runners who scored.")) if pitching else ""))
-    _component(data={"html": html, "details": details, "columns": columns}, key=key)
+    _component(data={"html": html, "details": details, "columns": columns,
+                     "pitch_splits": pitch_splits, "split_columns": ["Pitch Type"] + list(COLUMNS.values())}, key=key)
