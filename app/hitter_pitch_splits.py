@@ -5,10 +5,11 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from app.config import DATA_DIR
+from app.config import DATA_DIR, HIGHER_IS_WORSE_COLS
 from app.table_layout import order_stat_columns
 
 GROUPS = {"FA": "Fastball", "SI": "Sinker", "BR": "Breaking", "OFF": "Offspeed"}
+HITTING_REVERSE_COLUMNS = HIGHER_IS_WORSE_COLS | {"Chase (%)", "LA<=0%", "Swing Length"}
 COLUMNS = {
     "pitches": "#", "pitch_pct": "%", "bbe": "BBE", "HR": "HR",
     "damage_rate": "Damage/BBE (%)", "EV90th": "90th Pctile EV",

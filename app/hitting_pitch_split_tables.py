@@ -12,7 +12,7 @@ from app.filters import (
     _split_team_tokens,
     split_workload_controls,
 )
-from app.hitter_pitch_splits import COLUMNS, GROUPS
+from app.hitter_pitch_splits import COLUMNS, GROUPS, HITTING_REVERSE_COLUMNS
 from app.viz import render_table
 
 
@@ -71,13 +71,16 @@ def render_hitter_pitch_split_leaderboard(metadata):
                    "Minimums apply to each pitch-group row.")
         df["Level"] = df.level_id.map(LEVEL_LABELS)
         df["Pitch Type"] = df.pitch_group.map(GROUPS)
+        df = df.assign(__season=df.season, __level=df.level_id)
         identity = ["hitter_name", "batter_mlbid", "hitting_code", "Level", "season", "Pitch Type"]
-        display = df[identity + (["PA"] if "PA" in df else []) + list(COLUMNS)].rename(columns={
+        display = df[identity + (["PA"] if "PA" in df else []) + list(COLUMNS) + ["__season", "__level"]].rename(columns={
             "hitter_name": "Name", "batter_mlbid": "Player ID", "hitting_code": "Team",
             "season": "Season", **COLUMNS,
         }).replace([np.inf, -np.inf], np.nan)
-        display = render_table(display, show_maximum_filters=False, conditional_formatting=False, default_sort_col="Damage/BBE (%)", workload_kind="hitter",
-                     no_format_cols={"Name", "Player ID", "Team", "Level", "Season", "Pitch Type", "#", "BBE"})
+        stats = source[list(COLUMNS)].rename(columns=COLUMNS).assign(__season=source.season, __level=source.level_id)
+        display = render_table(display, show_maximum_filters=False, default_sort_col="Damage/BBE (%)", workload_kind="hitter",
+                     reverse_cols=HITTING_REVERSE_COLUMNS, group_cols=["__season", "__level"], stats_df=stats,
+                     no_format_cols={"Name", "Player ID", "Team", "Level", "Season", "Pitch Type", "#", "%", "BBE"})
         download_button(display, prefix, prefix + "_download")
 
 
@@ -119,11 +122,14 @@ def render_hitting_pitch_splits(team=False):
                    + " in this season. Whiff% = whiffs / swings. Unknown pitch types remain in the % denominator.")
         df["Level"] = df.level_id.map(LEVEL_LABELS)
         df["Pitch Type"] = pd.Categorical(df.pitch_group.map(GROUPS), categories=list(GROUPS.values()), ordered=True)
+        df = df.assign(__season=df.season, __level=df.level_id)
         identity = (["hitting_code"] if team else []) + ["Level", "season", "Pitch Type"]
         df = df.sort_values((["hitting_code"] if team else []) + ["level_id", "season", "Pitch Type"])
-        display = df[identity + (["PA"] if "PA" in df else []) + list(COLUMNS)].rename(columns={"hitting_code": "Team", "season": "Season", **COLUMNS})
+        display = df[identity + (["PA"] if "PA" in df else []) + list(COLUMNS) + ["__season", "__level"]].rename(columns={"hitting_code": "Team", "season": "Season", **COLUMNS})
         display = display.replace([np.inf, -np.inf], np.nan)
-        display = render_table(display, show_maximum_filters=False, conditional_formatting=False, show_controls=False,
+        stats = source[list(COLUMNS)].rename(columns=COLUMNS).assign(__season=source.season, __level=source.level_id)
+        display = render_table(display, show_maximum_filters=False, show_controls=False, workload_kind="hitter",
+                     reverse_cols=HITTING_REVERSE_COLUMNS, group_cols=["__season", "__level"], stats_df=stats,
                      hide_cols={"PA"} if team else None,
-                     no_format_cols={"Team", "Level", "Season", "Pitch Type", "#", "BBE"})
+                     no_format_cols={"Team", "Level", "Season", "Pitch Type", "#", "BBE"} | ({"%"} if team else set()))
         download_button(display, prefix, prefix + "_download")

@@ -433,3 +433,17 @@ focused tests passed, as did the required app.datasets import without Python or
 pandas warnings. Historical stability constants were verified unchanged; updated
 2026 constants accompany the refreshed outputs. The October 22 What's New entry
 is included. The app-release requirements comment triggers a clean cloud restart.
+
+Formatting follow-up: hitter, Team Hitting, and League Hitting pitch-type split
+pages now use the normal hitter conditional colors. All five Combined Splits
+views also use hitter or pitcher rules, with individual pitches retaining their
+absolute-value trait scales. Colors use the source population within season and
+level, so selecting a player/team does not erase the benchmark. Raw playing-time
+counts and HR remain uncolored; the team pitch-split PA column stays hidden.
+Popout detail rows retain their existing plain presentation. No data regeneration
+is needed for this display-only change.
+Validation: 27 focused tests and all eight split-page render checks passed,
+including a single-player filter and checks that counts have no background color.
+
+The literal `%` pitch-share column is also uncolored in Hitter and Team Hitting
+pitch-type and combined splits. Other percentage metrics retain their colors.

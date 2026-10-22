@@ -103,6 +103,26 @@ class SwingRateLayoutTests(unittest.TestCase):
                     self.assertTrue(all(not styles.get((row,index)) for row in range(3)))
                 self.assertEqual('Whiff (%)' in plot.call_args.args[3], role=='hitter')
 
+    def test_split_colors_follow_hitter_and_pitcher_meaning(self):
+        from app.viz import render_table
+        from app.hitter_pitch_splits import HITTING_REVERSE_COLUMNS
+        frame = pd.DataFrame({'Name': ['A', 'B', 'C'], '__season': [2026]*3, '__level': [1]*3,
+            'Whiff%': [10., 20., 30.], 'Avg Miss Distance (in.)': [1., 2., 3.],
+            'Damage/BBE (%)': [10., 20., 30.], 'Chase (%)': [10., 20., 30.],
+            '#': [100, 200, 300], 'BBE': [10, 20, 30], 'HR': [1, 2, 3]})
+        for role in ['hitter', 'pitcher']:
+            reverse = HITTING_REVERSE_COLUMNS if role == 'hitter' else {'Damage/BBE (%)'}
+            with patch('app.viz._is_user_subscribed', return_value=True), patch('app.viz._render_plot_controls'), patch('app.viz.st.dataframe') as display:
+                render_table(frame, workload_kind=role, reverse_cols=reverse, show_controls=False,
+                             group_cols=['__season', '__level'], stats_df=frame)
+                styler = display.call_args.args[0]
+                styles = styler._compute().ctx
+                for column in ['Whiff%', 'Avg Miss Distance (in.)', 'Damage/BBE (%)', 'Chase (%)']:
+                    color = dict(styles[(0, styler.data.columns.get_loc(column))])['background-color']
+                    red, green = [int(v) for v in color.split('(')[1].split(',')[:2]]
+                    low_is_better = (column != 'Damage/BBE (%)') if role == 'hitter' else (column == 'Damage/BBE (%)')
+                    self.assertEqual(green > red, low_is_better, (role, column))
+
 
 if __name__ == '__main__':
     unittest.main()

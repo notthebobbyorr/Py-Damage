@@ -3,10 +3,10 @@ import pandas as pd
 import streamlit as st
 from app.filters import apply_workload_maximum
 
-from app.config import DATA_DIR, LEVEL_LABELS
+from app.config import DATA_DIR, LEVEL_LABELS, ABS_GRADIENT_COLS_PITCHERS, ABS_GRADIENT_COLS_PITCH_TYPES, DEFAULT_NO_FORMAT_COLS
 from app.data_loader import load_csv
 from app.filters import split_workload_controls, numeric_filter, filter_by_values, download_button
-from app.hitter_pitch_splits import COLUMNS
+from app.hitter_pitch_splits import COLUMNS, HITTING_REVERSE_COLUMNS
 from app.viz import render_table
 from app.combined_split_config import DIMENSIONS, PITCH_COLUMNS
 
@@ -83,7 +83,13 @@ def render_combined_splits(kind):
         df = df.assign(__level=df.level_id, __season=df.season)
         keep = [c for c in mapping if c in df] + ["__level","__season"]
         display = df[keep].rename(columns=mapping).sort_values("#",ascending=False)
-        display = render_table(display,conditional_formatting=False,default_sort_col="#",workload_kind="hitter" if hitting else "pitcher",show_maximum_filters=False,
+        stats = source.assign(__level=source.level_id, __season=source.season)
+        stats = stats[[c for c in mapping if c in stats] + ["__level", "__season"]].rename(columns=mapping)
+        reverse = HITTING_REVERSE_COLUMNS if hitting else {"Ball (%)", "Z-Contact (%)", "VAA", "FA VAA", "Damage/BBE (%)", "pDamage/BBE (%)"}
+        display = render_table(display,default_sort_col="#",workload_kind="hitter" if hitting else "pitcher",show_maximum_filters=False,
+            reverse_cols=reverse, group_cols=["__season", "__level"], stats_df=stats,
+            no_format_cols=DEFAULT_NO_FORMAT_COLS | {"%"} if hitting else None,
+            abs_cols=(ABS_GRADIENT_COLS_PITCH_TYPES if kind == "pitch" else ABS_GRADIENT_COLS_PITCHERS) if not hitting else None,
             hide_cols={"TBF","GS","IP"} if kind == "pitch" else {"HR"} if kind == "pitcher" else None,
             damage_after_la=(kind == "pitcher"), pitch_outcomes_after_csw=(kind == "pitch"))
         download_button(display,"combined_splits",prefix+"_download")
