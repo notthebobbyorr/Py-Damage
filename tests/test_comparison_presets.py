@@ -4,13 +4,11 @@ from streamlit.testing.v1 import AppTest
 from app.comps import prepare_comparison_metrics, translate_fastball_vaa
 
 class PresetTests(unittest.TestCase):
-    def test_rates_preserve_missing_denominators(self):
+    def test_counts_do_not_create_unregressed_comp_rates(self):
         frame=pd.DataFrame(dict(HR=[2,2],SB=[3,3],PA=[100,0]))
         result=prepare_comparison_metrics(frame,'hitter',True)
-        self.assertEqual(result.HR_rate.iloc[0],2)
-        self.assertEqual(result.SB_rate.iloc[0],3)
-        self.assertTrue(pd.isna(result.HR_rate.iloc[1]))
-        self.assertTrue(result.HR_rate.equals(result.HR_rate_mlb_eq))
+        self.assertNotIn('HR_rate', result)
+        self.assertNotIn('SB_rate', result)
 
     def test_presets_and_custom_edits_all_pages(self):
         for kind in ['hitter','pitcher','pitch']:
@@ -19,9 +17,10 @@ class PresetTests(unittest.TestCase):
 import pandas as pd
 import streamlit as st
 from app.comps import PRESETS,comparison_columns
+from app.comparison_metrics import comparison_metric
 kind='{kind}'
 suffix={'_mlb_eq' if equivalent else ''!r}
-cols=list(dict.fromkeys(c+suffix for v in PRESETS[kind].values() for c in v.split()))
+cols=list(dict.fromkeys(comparison_metric(kind,c,{equivalent}) for v in PRESETS[kind].values() for c in v.split()))
 frame=pd.DataFrame({{c:[1.,2.] for c in cols}})
 selected,_=comparison_columns(kind,frame,{{}},cols[:2],'test',equivalent={equivalent})
 st.session_state['selected']=selected
@@ -37,7 +36,8 @@ st.session_state['selected']=selected
                     self.assertFalse(app.exception)
                     self.assertFalse(app.warning)
                     suffix='_mlb_eq' if equivalent else ''
-                    self.assertEqual(app.session_state['selected'],[c+suffix for c in columns.split()])
+                    from app.comparison_metrics import comparison_metric
+                    self.assertEqual(app.session_state['selected'],[comparison_metric(kind,c,equivalent) for c in columns.split()])
                 app.multiselect(key='test').set_value([]).run()
                 self.assertEqual(app.selectbox(key='test_preset').value,'Custom')
                 self.assertFalse(app.warning)

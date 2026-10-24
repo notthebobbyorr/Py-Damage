@@ -3,9 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import warnings
+import sys
 from pathlib import Path
 
 _REPO_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_DIR))
+from pipeline.comparison_rates import comparison_rate_counts
 from typing import Any, Dict, List, Optional
 
 import polars as pl
@@ -76,6 +79,7 @@ def apply_rate_from_agg(
     dataset: str,
     stat: str,
     key_cols: List[str],
+    require_prior: bool = False,
 ) -> Optional[pl.DataFrame]:
     num_col = f"{stat}_num"
     den_col = f"{stat}_den"
@@ -90,7 +94,11 @@ def apply_rate_from_agg(
         pl.col("den") + pl.col("K")
     )
     out = out.with_columns(
-        pl.when(pl.col("K").is_null() | pl.col("mu").is_null() | (pl.col("K") == 0))
+        pl.when(pl.lit(require_prior) & (
+            ~pl.col("K").is_finite() | ~pl.col("mu").is_finite() | (pl.col("K") < 0)
+        ).fill_null(True))
+        .then(None)
+        .when(pl.col("K").is_null() | pl.col("mu").is_null() | (pl.col("K") == 0))
         .then(raw_prop)
         .otherwise(reg_prop)
         .alias("reg_prop")
@@ -332,6 +340,7 @@ def main() -> None:
             df = pl.read_parquet(path)
         else:
             df = pl.read_csv(path)
+        df = comparison_rate_counts(df, dataset)
         frames: List[pl.DataFrame] = []
 
         for stat in stats_cfg.get(dataset, []):
@@ -340,7 +349,8 @@ def main() -> None:
             if kind == "derived":
                 continue
             if kind == "rate":
-                frame = apply_rate_from_agg(df, constants, dataset, name, keys)
+                frame = apply_rate_from_agg(df, constants, dataset, name, keys,
+                    require_prior=stat.get("require_prior", False))
             else:
                 frame = apply_mean_from_agg(df, constants, dataset, name, keys)
             if frame is not None:

@@ -1,0 +1,21 @@
+# Additional auto-regressed rates required by the Comps selectors.
+# Target: observed rate; features: numerator, denominator, season and level prior.
+# Method: existing binomial empirical-Bayes variance decomposition.
+# Fit regular-season player-seasons with >=20 opportunities, >=10 players/context.
+min_opportunities: 20
+min_players: 10
+model:
+  target: observed event percentage
+  features: [event_count, opportunity_count, season, level_id]
+  method: binomial empirical-Bayes shrinkage using noise-adjusted player variance
+  feature_importance:
+    observed_rate: n / (n + K)
+    season_level_mean: K / (n + K)
+stats:
+  hitters:
+    whiff_pct: [rate_whiffs, rate_swings]
+    SwStr: [rate_whiffs, rate_pitches]
+  pitchers:
+    whiff_pct: [rate_whiffs, rate_swings]
+    Swing_pct: [Swing_pct_num, Swing_pct_den]
+    Zone: [Zone_num, Zone_den]

@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from app.comps import comparison_columns, prepare_comparison_metrics
+from app.comparison_metrics import comparison_metric
 
 from app.config import (
     ABS_GRADIENT_COLS_PITCHERS,
@@ -620,6 +621,8 @@ def hitter_comps():
         "hitter", eligible_all, display_map, default_feature_cols, similarity_key,
         equivalent=use_mlb_eq, available=numeric_cols,
     )
+    default_feature_cols = list(dict.fromkeys(comparison_metric("hitter", c, use_mlb_eq)
+        for c in default_feature_cols))
     if not feature_cols:
         st.info("Select at least one column to compute similarity scores.")
         return
@@ -657,6 +660,9 @@ def hitter_comps():
         __official_game_type=eligible_comp.get("game_type_group", "Regular Season")
     )
 
+    comps_rate_columns = [comparison_metric("hitter", c, use_mlb_eq)
+        for c in ["whiff_pct_reg", "Swing_pct_reg", "SwStr_reg"]]
+
     base_rename = {
         'whiff_pct': 'Whiff (%)', 'Swing_pct': 'Swing (%)', 'SwStr': 'SwStr (%)',
         "miss_distance": "Avg Miss Distance (in.)",
@@ -664,7 +670,7 @@ def hitter_comps():
         "bbe": "BBE", "similarity_score": "Similarity (0-100)",
     }
     display_cols = [
-        'whiff_pct', 'Swing_pct', 'SwStr',
+        *comps_rate_columns,
         "hitter_name",
         "batter_mlbid",
         "hitting_code",
@@ -689,7 +695,7 @@ def hitter_comps():
         __season=stats_df["season"], __level=stats_df["level_id"]
     )
     stats_columns = [
-        'whiff_pct', 'Swing_pct', 'SwStr',
+        *comps_rate_columns,
         "hitter_name",
         "batter_mlbid",
         "hitting_code",
@@ -710,7 +716,7 @@ def hitter_comps():
         stats_df["__level"] = 1
 
     target_cols = [
-        'whiff_pct', 'Swing_pct', 'SwStr',
+        *comps_rate_columns,
         "hitter_name",
         "batter_mlbid",
         "hitting_code",

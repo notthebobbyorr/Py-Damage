@@ -156,6 +156,10 @@ def _hitter_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
         "Swing_pct": "Swing (%)",
         "whiff_pct": "Whiff (%)",
     }
+    display_map.update({"whiff_pct_reg": "Whiff (%)", "SwStr_reg": "SwStr (%)",
+        "Swing_pct_reg": "Swing (%)", "p_Swing_with_loc_pct_reg": "pSwing (%)"})
+    for column in ["bat_speed", "swing_length", "swing_path_tilt", "attack_angle"]:
+        display_map[column] = display_map[column + "_reg"]
     if not include_mlb_eq:
         return display_map
     eq_map = {}
@@ -206,6 +210,10 @@ def _pitcher_display_map(include_mlb_eq: bool = False) -> dict[str, str]:
         "Swing_pct": "Swing (%)",
         "whiff_pct": "Whiff (%)",
     }
+    display_map.update({"whiff_pct_reg": "Whiff (%)", "Swing_pct_reg": "Swing (%)",
+        "p_Swing_pct_reg": "pSwing (%)", "p_SwStr_pct_reg": "pSwStr (%)",
+        "Damage_pct_reg": "Damage/BBE (%)", "p_Damage_pct_reg": "pDamage/BBE (%)",
+        "FA_pct": "FA%"})
     if not include_mlb_eq:
         return display_map
     eq_map: dict[str, str] = {}
@@ -250,6 +258,8 @@ def _pitch_display_map() -> dict[str, str]:
         "Z_Contact": "Z-Contact (%)",
         "CSW": "CSW (%)",
         "p_Damage_pct": "pDamage/BBE (%)",
+        "Damage_pct": "Damage/BBE (%)",
+        "p_Swing_pct": "pSwing (%)",
         "LA_lte_0": "LA<=0%",
         "HR": "HR",
         "similarity_score": "Similarity (0-100)",
@@ -536,6 +546,8 @@ def _build_hitter_mlb_equivalencies(
                     out.loc[non_mlb_mask, col] - shift.loc[non_mlb_mask],
                 )
         pred.loc[mlb_mask] = out.loc[mlb_mask, col]
+        if col in {"whiff_pct_reg", "Swing_pct_reg", "SwStr_reg", "Zone_reg"}:
+            pred = pred.clip(0, 100)
         out[f"{col}_mlb_eq"] = pred
 
     helper_cols: list[str] = []
@@ -807,6 +819,8 @@ def _build_pitcher_mlb_equivalencies(
                 out.loc[non_mlb_mask, col] - shift.loc[non_mlb_mask],
             )
         pred.loc[mlb_mask] = out.loc[mlb_mask, col]
+        if col in {"whiff_pct_reg", "Swing_pct_reg", "SwStr_reg", "Zone_reg"}:
+            pred = pred.clip(0, 100)
         out[f"{col}_mlb_eq"] = pred
 
     for col in PITCHER_MLB_PASS_THROUGH_COLS:

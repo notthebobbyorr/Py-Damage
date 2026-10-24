@@ -92,6 +92,7 @@ HITTER_COMPS_EXTRA_FEATURE_COLS = [
     "takeoff_rate_reg",
 ]
 HITTER_HIGHER_IS_WORSE_METRICS = {
+    "whiff_pct_reg", "SwStr_reg",
     "hittable_pitches_taken_reg",
     "secondary_whiff_pct_reg",
     "whiffs_vs_95_reg",
@@ -102,6 +103,7 @@ HITTER_HIGHER_IS_WORSE_METRICS = {
     "swing_path_tilt_reg",
 }
 HITTER_MLB_DIRECTION_MAP = {
+    "whiff_pct_reg": "up", "SwStr_reg": "up",
     "damage_rate_reg": "down",
     "pull_FB_pct_reg": "down",
     "LA_gte_20_reg": "down",
@@ -172,6 +174,7 @@ PITCHER_MLB_HIGHER_IS_WORSE_METRICS = {
     "takeoff_rate_reg",
 }
 PITCHER_MLB_DIRECTION_MAP = {
+    "whiff_pct_reg": "down",
     "SwStr_reg": "down",
     "Chase_reg": "down",
     "LA_lte_0_reg": "down",

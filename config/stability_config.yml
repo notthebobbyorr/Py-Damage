@@ -4,6 +4,16 @@ notes:
   - "Team stats intentionally excluded."
 stats:
   hitters:
+    - name: whiff_pct
+      kind: rate
+      numerator: whiff == True and game_type == 'R'
+      denominator: swing == True and game_type == 'R'
+      require_prior: true
+    - name: SwStr
+      kind: rate
+      numerator: whiff == True and game_type == 'R'
+      denominator: game_type == 'R'
+      require_prior: true
     - name: pull_FB_pct
       kind: rate
       numerator: launch_angle >= 20 and spray_angle_adj < -15
@@ -113,6 +123,21 @@ stats:
       sample_n: bbe
 
   pitchers:
+    - name: whiff_pct
+      kind: rate
+      numerator: whiff == True and game_type == 'R'
+      denominator: swing == True and game_type == 'R'
+      require_prior: true
+    - name: Swing_pct
+      kind: rate
+      numerator: swing == True and game_type == 'R'
+      denominator: game_type == 'R'
+      require_prior: true
+    - name: Zone
+      kind: rate
+      numerator: is_inzone_pi == True and game_type == 'R'
+      denominator: game_type == 'R'
+      require_prior: true
     - name: SwStr
       kind: rate
       numerator: whiff == True
