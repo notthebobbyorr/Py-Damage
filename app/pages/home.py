@@ -6,6 +6,16 @@ import streamlit as st
 
 FEATURE_TIMELINE: list[dict[str, str]] = [
     {
+        "date": "2026-11-09",
+        "title": "Modeled Metrics in Pitching Splits",
+        "page": "Pitchers / Individual Pitches → Splits",
+        "description": (
+            "Execution Grade, pSwStr (%), and pDamage/BBE (%) are now available in the standard "
+            "and Combined Splits tabs. Execution Grade uses pitch types with at least five "
+            "scored pitches in the selected split."
+        ),
+    },
+    {
         "date": "2026-10-22",
         "title": "Pitch Type Splits, Bat Tracking, Combined Splits, Updated Filtering & Plots",
         "page": "Hitters / Pitchers / Individual Pitches / Team Hitting / Team Pitching / Leagues",

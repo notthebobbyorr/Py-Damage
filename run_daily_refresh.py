@@ -496,6 +496,11 @@ def main(
          "--input", str(RAW_DIR / f"pitch_data_{season}.parquet"), "--seasons", str(season)],
         dry_run=dry_run,
     )
+    run(
+        [sys.executable, str(HERE / "pipeline" / "build_pitch_split_models.py"),
+         "--input", str(accumulator_path), "--scored", str(_scored_path)],
+        dry_run=dry_run,
+    )
 
     # Refresh preloaded official MLB hitter totals for the inline detail rows.
     run(

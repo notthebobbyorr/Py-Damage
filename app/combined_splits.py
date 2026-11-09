@@ -71,8 +71,8 @@ def render_combined_splits(kind):
         df = apply_workload_maximum(df,prefix)
     with right:
         st.caption("Regular season only. Each row is the intersection of the selected splits. Usage includes all pitches in that same slice.")
-        if kind == "pitch":
-            st.caption("Execution Grade uses available 2026 scored pitches; blank when fewer than five scored pitches are available.")
+        if kind in {"pitch", "pitcher"}:
+            st.caption("Execution Grade uses pitch types with at least five scored pitches in the selected split.")
         mapping = {id_col:"Player ID",name_col:"Name","season":"Season","team":"Team","pitcher_hand":"Pitcher Hand","pitch_tag":"Pitch Type",
                    **{v:k for k,v in available.items()}, **(COLUMNS if hitting else PITCH_COLUMNS)}
         if team_mode:

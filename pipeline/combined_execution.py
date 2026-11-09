@@ -11,11 +11,15 @@ sys.path.insert(0,str(ROOT))
 def grade_slices(scored, dims, calibration):
     keys=["pitcher_mlbid","pitcher_hand","season","level_id","game_type_group",*dims,"pitch_tag"]
     means=scored.drop_nulls(dims).group_by(keys).agg(pl.col("pred_v13").mean().alias("pred_v13"),pl.col("pred_v13").count().alias("execution_n"))
+    return calibrate_means(means, calibration).select(keys+["grade_v13","execution_n"])
+
+
+def calibrate_means(means, calibration):
     pooled=calibration.group_by("pitch_tag").agg(pl.median("p1").alias("pool1"),pl.median("p99").alias("pool99"))
     means=means.join(calibration,on=["season","pitch_tag"],how="left").join(pooled,on="pitch_tag",how="left")
     means=means.with_columns(pl.coalesce("p1","pool1").alias("p1"),pl.coalesce("p99","pool99").alias("p99"))
     valid=(pl.col("execution_n")>=5)&(pl.col("p99")>pl.col("p1"))
-    return means.with_columns(pl.when(valid).then((80-60*(pl.col("pred_v13")-pl.col("p1"))/(pl.col("p99")-pl.col("p1"))).clip(20,80).round(1)).otherwise(None).alias("grade_v13")).select(keys+["grade_v13","execution_n"])
+    return means.with_columns(pl.when(valid).then((80-60*(pl.col("pred_v13")-pl.col("p1"))/(pl.col("p99")-pl.col("p1"))).clip(20,80).round(1)).otherwise(None).alias("grade_v13"))
 
 
 def update_execution(inputs, seasons=None):
